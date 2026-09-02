@@ -5,6 +5,7 @@ import {
   construirXmlMensaje,
   construirDatosRemesa,
   construirDatosManifiesto,
+  construirBloqueRemesasManifiesto,
   PROCESO_ID_REMESA,
   PROCESO_ID_MANIFIESTO,
   DatosViajeParaRndc,
@@ -49,6 +50,8 @@ despachoRouter.post("/", async (req, res) => {
 
   const fechaHoraCargue = new Date(b.fechaHoraCargue);
 
+  // El viaje ya nace con su CONSECUTIVOREMESA y NUMMANIFIESTOCARGA propios
+  // (generados en repo.viajes.create a partir del id interno).
   const viaje = await viajes.create({
     plantillaId: plantilla.id,
     vehiculoId: vehiculo.id,
@@ -73,24 +76,40 @@ despachoRouter.post("/", async (req, res) => {
     vehiculo: {
       placa: vehiculo.placa,
       placaRemolque: vehiculo.placaRemolque,
-      configuracion: vehiculo.configuracion,
     },
-    conductor: { cedula: conductor.cedula },
+    conductor: { codTipoId: conductor.codTipoId, cedula: conductor.cedula },
     plantilla: {
       ruta: {
-        ciudadOrigen: plantilla.ruta.ciudadOrigen,
-        ciudadDestino: plantilla.ruta.ciudadDestino,
         codigoOrigenRndc: plantilla.ruta.codigoOrigenRndc,
         codigoDestinoRndc: plantilla.ruta.codigoDestinoRndc,
       },
-      contratante: { nit: plantilla.contratante.nit },
-      remitente: { nit: plantilla.remitente.nit },
-      destinatario: { nit: plantilla.destinatario.nit },
+      contratante: {
+        codTipoId: plantilla.contratante.codTipoId,
+        nit: plantilla.contratante.nit,
+        codSede: plantilla.contratante.codSede,
+      },
+      remitente: {
+        codTipoId: plantilla.remitente.codTipoId,
+        nit: plantilla.remitente.nit,
+        codSede: plantilla.remitente.codSede,
+      },
+      destinatario: {
+        codTipoId: plantilla.destinatario.codTipoId,
+        nit: plantilla.destinatario.nit,
+        codSede: plantilla.destinatario.codSede,
+      },
+      codOperacionTransporte: plantilla.codOperacionTransporte,
+      codNaturalezaCarga: plantilla.codNaturalezaCarga,
+      codUnidadMedida: plantilla.codUnidadMedida,
+      codTipoEmpaque: plantilla.codTipoEmpaque,
+      codMercancia: plantilla.codMercancia,
       tipoMercancia: plantilla.tipoMercancia,
-      naturalezaCarga: plantilla.naturalezaCarga,
-      unidadMedida: plantilla.unidadMedida,
-      valorFleteBase: plantilla.valorFleteBase,
       observaciones: plantilla.observaciones,
+      horasPactoCargue: plantilla.horasPactoCargue,
+      minutosPactoCargue: plantilla.minutosPactoCargue,
+      horasPactoDescargue: plantilla.horasPactoDescargue,
+      minutosPactoDescargue: plantilla.minutosPactoDescargue,
+      valorFleteBase: plantilla.valorFleteBase,
     },
     pesoReal: viaje.pesoReal,
     cantidadReal: viaje.cantidadReal,
@@ -110,11 +129,14 @@ despachoRouter.post("/", async (req, res) => {
     simular: config.rndc.simular,
   });
 
-  // 2. PASO 1 DE 2: crear la remesa
+  const consecutivoRemesa = viaje.consecutivoRemesa!;
+  const consecutivoManifiesto = viaje.consecutivoManifiesto!;
+
+  // 2. PASO 1 DE 2: crear la remesa (procesoid=3)
   const xmlRemesa = construirXmlMensaje(
     credenciales,
     PROCESO_ID_REMESA,
-    construirDatosRemesa(datosViaje)
+    construirDatosRemesa(datosViaje, consecutivoRemesa)
   );
 
   let resultadoRemesa;
@@ -136,14 +158,20 @@ despachoRouter.post("/", async (req, res) => {
     return res.status(422).json(actualizado);
   }
 
-  const numeroRemesa = resultadoRemesa.radicado ?? "";
-  await viajes.update(viaje.id, { numeroRemesaRndc: numeroRemesa });
+  // El radicado (ingresoid) que devuelve el RNDC es solo para trazabilidad --
+  // el manifiesto se referencia con consecutivoRemesa (nuestro propio consecutivo),
+  // no con este radicado.
+  await viajes.update(viaje.id, { numeroRemesaRndc: resultadoRemesa.radicado ?? "" });
 
-  // 3. PASO 2 DE 2: crear el manifiesto, referenciando la remesa
+  // 3. PASO 2 DE 2: crear el manifiesto (procesoid=4), enlazando la remesa por
+  // su CONSECUTIVOREMESA dentro del bloque <REMESASMAN>.
+  const bloqueRemesas = construirBloqueRemesasManifiesto([consecutivoRemesa]);
   const xmlManifiesto = construirXmlMensaje(
     credenciales,
     PROCESO_ID_MANIFIESTO,
-    construirDatosManifiesto(datosViaje, numeroRemesa)
+    construirDatosManifiesto(datosViaje, consecutivoManifiesto),
+    "1",
+    bloqueRemesas
   );
 
   let resultadoManifiesto;
@@ -152,7 +180,7 @@ despachoRouter.post("/", async (req, res) => {
   } catch (exc) {
     const actualizado = await viajes.update(viaje.id, {
       estado: "MANIFIESTO_ERROR",
-      mensajeError: `Remesa ${numeroRemesa} creada, pero fallo el manifiesto: ${
+      mensajeError: `Remesa ${consecutivoRemesa} creada, pero fallo el manifiesto: ${
         (exc as RndcError).message
       }`,
     });
@@ -162,7 +190,7 @@ despachoRouter.post("/", async (req, res) => {
   if (!resultadoManifiesto.ok) {
     const actualizado = await viajes.update(viaje.id, {
       estado: "MANIFIESTO_ERROR",
-      mensajeError: `Remesa ${numeroRemesa} creada, pero el RNDC rechazo el manifiesto: ${resultadoManifiesto.error}`,
+      mensajeError: `Remesa ${consecutivoRemesa} creada, pero el RNDC rechazo el manifiesto: ${resultadoManifiesto.error}`,
     });
     return res.status(422).json(actualizado);
   }

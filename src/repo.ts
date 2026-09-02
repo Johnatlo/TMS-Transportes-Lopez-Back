@@ -7,12 +7,16 @@ export interface Vehiculo {
   placa: string;
   placaRemolque: string | null;
   marca: string | null;
-  configuracion: string | null;
+  configuracion: string | null; // codigo RNDC de configuracion (CODCONFIGURACIONUNIDADCARGA)
   capacidadKg: number | null;
   propietarioNit: string | null;
   fechaVencSoat: Date | null;
   fechaVencTecnomecanica: Date | null;
   activo: boolean;
+  codTipoIdTenedor: string; // C, N, etc. (tipo de identificacion del tenedor/propietario)
+  numIdTenedor: string | null;
+  codTipoCarroceria: string;
+  pesoVehiculoVacio: number | null;
 }
 
 export interface Conductor {
@@ -23,6 +27,7 @@ export interface Conductor {
   categoriaLicencia: string | null;
   fechaVencLicencia: Date | null;
   activo: boolean;
+  codTipoId: string; // C = Cedula (default), otros codigos segun diccionario RNDC
 }
 
 export interface Tercero {
@@ -33,13 +38,15 @@ export interface Tercero {
   ciudad: string | null;
   telefono: string | null;
   rol: string | null;
+  codTipoId: string; // N = NIT (default para empresas), C = Cedula para personas naturales
+  codSede: string; // codigo de sede del tercero, '0' por defecto
 }
 
 export interface Ruta {
   id: number;
   ciudadOrigen: string;
   ciudadDestino: string;
-  codigoOrigenRndc: string | null;
+  codigoOrigenRndc: string | null; // codigo de municipio RNDC (8 digitos, ej "11001000")
   codigoDestinoRndc: string | null;
   distanciaKm: number | null;
 }
@@ -51,12 +58,21 @@ export interface PlantillaViaje {
   remitenteId: number;
   destinatarioId: number;
   rutaId: number;
-  tipoMercancia: string | null;
+  tipoMercancia: string | null; // usado como DESCRIPCIONCORTAPRODUCTO (texto libre)
   naturalezaCarga: string | null;
   unidadMedida: string | null;
   valorFleteBase: number | null;
   observaciones: string | null;
   activa: boolean;
+  codOperacionTransporte: string; // CODOPERACIONTRANSPORTE, ej 'G'
+  codNaturalezaCarga: string; // CODNATURALEZACARGA (codigo de catalogo RNDC)
+  codUnidadMedida: string; // UNIDADMEDIDACAPACIDAD (codigo de catalogo RNDC)
+  codTipoEmpaque: string; // CODTIPOEMPAQUE (codigo de catalogo RNDC)
+  codMercancia: string | null; // MERCANCIAREMESA (codigo de producto RNDC)
+  horasPactoCargue: number;
+  minutosPactoCargue: number;
+  horasPactoDescargue: number;
+  minutosPactoDescargue: number;
 }
 
 export interface PlantillaViajeConRelaciones extends PlantillaViaje {
@@ -76,12 +92,14 @@ export interface Viaje {
   cantidadReal: number | null;
   valorFleteReal: number | null;
   estado: string;
-  numeroRemesaRndc: string | null;
-  numeroManifiestoRndc: string | null;
+  numeroRemesaRndc: string | null; // radicado (ingresoid) que devuelve el RNDC para la remesa
+  numeroManifiestoRndc: string | null; // radicado (ingresoid) que devuelve el RNDC para el manifiesto
   mec: string | null;
   codigoSeguridadQr: string | null;
   mensajeError: string | null;
   fechaCreacion: Date;
+  consecutivoRemesa: string | null; // CONSECUTIVOREMESA propio, generado por nosotros
+  consecutivoManifiesto: string | null; // NUMMANIFIESTOCARGA propio, generado por nosotros
 }
 
 // ---------- Helpers ----------
@@ -105,10 +123,15 @@ export const vehiculos = {
     const row = rows[0] as Vehiculo | undefined;
     return row ? mapBool(row) : null;
   },
-  async create(data: Omit<Vehiculo, "id" | "activo">): Promise<Vehiculo> {
+  async create(
+    data: Omit<Vehiculo, "id" | "activo" | "codTipoIdTenedor" | "numIdTenedor" | "codTipoCarroceria" | "pesoVehiculoVacio"> &
+      Partial<Pick<Vehiculo, "codTipoIdTenedor" | "numIdTenedor" | "codTipoCarroceria" | "pesoVehiculoVacio">>
+  ): Promise<Vehiculo> {
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO vehiculos (placa, placaRemolque, marca, configuracion, capacidadKg, propietarioNit, fechaVencSoat, fechaVencTecnomecanica)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO vehiculos
+        (placa, placaRemolque, marca, configuracion, capacidadKg, propietarioNit, fechaVencSoat, fechaVencTecnomecanica,
+         codTipoIdTenedor, numIdTenedor, codTipoCarroceria, pesoVehiculoVacio)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.placa,
         data.placaRemolque,
@@ -118,6 +141,10 @@ export const vehiculos = {
         data.propietarioNit,
         fechaMysql(data.fechaVencSoat),
         fechaMysql(data.fechaVencTecnomecanica),
+        data.codTipoIdTenedor ?? "N",
+        data.numIdTenedor ?? null,
+        data.codTipoCarroceria ?? "0",
+        data.pesoVehiculoVacio ?? null,
       ]
     );
     return (await this.findById(result.insertId))!;
@@ -135,11 +162,20 @@ export const conductores = {
     const row = rows[0] as Conductor | undefined;
     return row ? mapBool(row) : null;
   },
-  async create(data: Omit<Conductor, "id" | "activo">): Promise<Conductor> {
+  async create(
+    data: Omit<Conductor, "id" | "activo" | "codTipoId"> & Partial<Pick<Conductor, "codTipoId">>
+  ): Promise<Conductor> {
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO conductores (cedula, nombre, licencia, categoriaLicencia, fechaVencLicencia)
-       VALUES (?, ?, ?, ?, ?)`,
-      [data.cedula, data.nombre, data.licencia, data.categoriaLicencia, fechaMysql(data.fechaVencLicencia)]
+      `INSERT INTO conductores (cedula, nombre, licencia, categoriaLicencia, fechaVencLicencia, codTipoId)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        data.cedula,
+        data.nombre,
+        data.licencia,
+        data.categoriaLicencia,
+        fechaMysql(data.fechaVencLicencia),
+        data.codTipoId ?? "C",
+      ]
     );
     return (await this.findById(result.insertId))!;
   },
@@ -155,10 +191,22 @@ export const terceros = {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM terceros WHERE id = ?", [id]);
     return (rows[0] as Tercero) ?? null;
   },
-  async create(data: Omit<Tercero, "id">): Promise<Tercero> {
+  async create(
+    data: Omit<Tercero, "id" | "codTipoId" | "codSede"> & Partial<Pick<Tercero, "codTipoId" | "codSede">>
+  ): Promise<Tercero> {
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO terceros (nit, nombre, direccion, ciudad, telefono, rol) VALUES (?, ?, ?, ?, ?, ?)`,
-      [data.nit, data.nombre, data.direccion, data.ciudad, data.telefono, data.rol]
+      `INSERT INTO terceros (nit, nombre, direccion, ciudad, telefono, rol, codTipoId, codSede)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        data.nit,
+        data.nombre,
+        data.direccion,
+        data.ciudad,
+        data.telefono,
+        data.rol,
+        data.codTipoId ?? "N",
+        data.codSede ?? "0",
+      ]
     );
     return (await this.findById(result.insertId))!;
   },
@@ -211,11 +259,42 @@ export const plantillas = {
       ruta: ruta!,
     };
   },
-  async create(data: Omit<PlantillaViaje, "id" | "activa">): Promise<PlantillaViaje> {
+  async create(
+    data: Omit<
+      PlantillaViaje,
+      | "id"
+      | "activa"
+      | "codOperacionTransporte"
+      | "codNaturalezaCarga"
+      | "codUnidadMedida"
+      | "codTipoEmpaque"
+      | "codMercancia"
+      | "horasPactoCargue"
+      | "minutosPactoCargue"
+      | "horasPactoDescargue"
+      | "minutosPactoDescargue"
+    > &
+      Partial<
+        Pick<
+          PlantillaViaje,
+          | "codOperacionTransporte"
+          | "codNaturalezaCarga"
+          | "codUnidadMedida"
+          | "codTipoEmpaque"
+          | "codMercancia"
+          | "horasPactoCargue"
+          | "minutosPactoCargue"
+          | "horasPactoDescargue"
+          | "minutosPactoDescargue"
+        >
+      >
+  ): Promise<PlantillaViaje> {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO plantillas_viaje
-        (nombre, contratanteId, remitenteId, destinatarioId, rutaId, tipoMercancia, naturalezaCarga, unidadMedida, valorFleteBase, observaciones)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (nombre, contratanteId, remitenteId, destinatarioId, rutaId, tipoMercancia, naturalezaCarga, unidadMedida,
+         valorFleteBase, observaciones, codOperacionTransporte, codNaturalezaCarga, codUnidadMedida, codTipoEmpaque,
+         codMercancia, horasPactoCargue, minutosPactoCargue, horasPactoDescargue, minutosPactoDescargue)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.nombre,
         data.contratanteId,
@@ -227,6 +306,15 @@ export const plantillas = {
         data.unidadMedida,
         data.valorFleteBase,
         data.observaciones,
+        data.codOperacionTransporte ?? "G",
+        data.codNaturalezaCarga ?? "1",
+        data.codUnidadMedida ?? "1",
+        data.codTipoEmpaque ?? "0",
+        data.codMercancia ?? null,
+        data.horasPactoCargue ?? 1,
+        data.minutosPactoCargue ?? 0,
+        data.horasPactoDescargue ?? 1,
+        data.minutosPactoDescargue ?? 0,
       ]
     );
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE id = ?", [
@@ -271,7 +359,17 @@ export const viajes = {
         data.valorFleteReal,
       ]
     );
-    return (await this.findById(result.insertId))!;
+    // El consecutivo propio (CONSECUTIVOREMESA / NUMMANIFIESTOCARGA) se genera a partir
+    // del id interno una vez conocido, para garantizar unicidad sin coordinar con el RNDC.
+    const id = result.insertId;
+    const consecutivoRemesa = `REM${id}`;
+    const consecutivoManifiesto = `MAN${id}`;
+    await pool.query("UPDATE viajes SET consecutivoRemesa = ?, consecutivoManifiesto = ? WHERE id = ?", [
+      consecutivoRemesa,
+      consecutivoManifiesto,
+      id,
+    ]);
+    return (await this.findById(id))!;
   },
   async update(id: number, data: Partial<Omit<Viaje, "id">>): Promise<Viaje> {
     const campos = Object.keys(data);
