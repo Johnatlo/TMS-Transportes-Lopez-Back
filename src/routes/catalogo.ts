@@ -19,6 +19,10 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
     propietarioNit: b.propietarioNit ?? null,
     fechaVencSoat: b.fechaVencSoat ? new Date(b.fechaVencSoat) : null,
     fechaVencTecnomecanica: b.fechaVencTecnomecanica ? new Date(b.fechaVencTecnomecanica) : null,
+    codTipoIdTenedor: b.codTipoIdTenedor ?? "N",
+    numIdTenedor: b.numIdTenedor ?? null,
+    codTipoCarroceria: b.codTipoCarroceria ?? "0",
+    pesoVehiculoVacio: b.pesoVehiculoVacio ? Number(b.pesoVehiculoVacio) : null,
   });
   res.status(201).json(creado);
 });
@@ -36,6 +40,7 @@ catalogoRouter.post("/conductores", async (req, res) => {
     licencia: b.licencia ?? null,
     categoriaLicencia: b.categoriaLicencia ?? null,
     fechaVencLicencia: b.fechaVencLicencia ? new Date(b.fechaVencLicencia) : null,
+    codTipoId: b.codTipoId ?? "C",
   });
   res.status(201).json(creado);
 });
@@ -54,6 +59,8 @@ catalogoRouter.post("/terceros", async (req, res) => {
     ciudad: b.ciudad ?? null,
     telefono: b.telefono ?? null,
     rol: b.rol ?? null,
+    codTipoId: b.codTipoId ?? "N",
+    codSede: b.codSede ?? "0",
   });
   res.status(201).json(creado);
 });
@@ -93,6 +100,15 @@ catalogoRouter.post("/plantillas", async (req, res) => {
     unidadMedida: b.unidadMedida ?? null,
     valorFleteBase: b.valorFleteBase ? Number(b.valorFleteBase) : null,
     observaciones: b.observaciones ?? null,
+    codOperacionTransporte: b.codOperacionTransporte ?? "G",
+    codNaturalezaCarga: b.codNaturalezaCarga ?? "1",
+    codUnidadMedida: b.codUnidadMedida ?? "1",
+    codTipoEmpaque: b.codTipoEmpaque ?? "0",
+    codMercancia: b.codMercancia ?? null,
+    horasPactoCargue: b.horasPactoCargue ? Number(b.horasPactoCargue) : 1,
+    minutosPactoCargue: b.minutosPactoCargue ? Number(b.minutosPactoCargue) : 0,
+    horasPactoDescargue: b.horasPactoDescargue ? Number(b.horasPactoDescargue) : 1,
+    minutosPactoDescargue: b.minutosPactoDescargue ? Number(b.minutosPactoDescargue) : 0,
   });
   res.status(201).json(creada);
 });

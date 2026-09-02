@@ -79,12 +79,16 @@ como `CONSTRAINT ... FOREIGN KEY` de MySQL.
 | placa | TEXT UNIQUE | |
 | placaRemolque | TEXT | nullable |
 | marca | TEXT | nullable |
-| configuracion | TEXT | tipo de carroceria/config RNDC |
+| configuracion | TEXT | **codigo** RNDC de configuracion (`CODCONFIGURACIONUNIDADCARGA`), no texto libre |
 | capacidadKg | DOUBLE | nullable |
-| propietarioNit | TEXT | nullable — NIT del propietario si es afiliado |
+| propietarioNit | TEXT | nullable — NIT del propietario si es afiliado (uso interno) |
 | fechaVencSoat | DATE | nullable |
 | fechaVencTecnomecanica | DATE | nullable |
 | activo | TINYINT(1) | default 1 |
+| codTipoIdTenedor | VARCHAR(2) | default `N` — tipo de ID del tenedor/propietario ante el RNDC |
+| numIdTenedor | TEXT | nullable |
+| codTipoCarroceria | VARCHAR(5) | default `0` — codigo RNDC |
+| pesoVehiculoVacio | DOUBLE | nullable — `PESOVEHICULOVACIO` |
 
 ### `conductores`
 | Campo | Tipo | Notas |
@@ -96,6 +100,7 @@ como `CONSTRAINT ... FOREIGN KEY` de MySQL.
 | categoriaLicencia | TEXT | nullable |
 | fechaVencLicencia | DATE | nullable |
 | activo | TINYINT(1) | default 1 |
+| codTipoId | VARCHAR(2) | default `C` (Cedula) — `CODIDCONDUCTOR` |
 
 ### `terceros`
 Clientes: remitente, destinatario o contratante.
@@ -108,7 +113,9 @@ Clientes: remitente, destinatario o contratante.
 | direccion | TEXT | nullable |
 | ciudad | TEXT | nullable |
 | telefono | TEXT | nullable |
-| rol | TEXT | `REMITENTE` / `DESTINATARIO` / `CONTRATANTE` (informativo) |
+| rol | TEXT | `REMITENTE` / `DESTINATARIO` / `CONTRATANTE` (informativo, uso interno) |
+| codTipoId | VARCHAR(2) | default `N` (NIT) — `CODTIPOIDREMITENTE`/`...DESTINATARIO`/`...PROPIETARIO` segun el rol que cumpla en cada plantilla |
+| codSede | VARCHAR(10) | default `0` — `CODSEDEREMITENTE`/etc. |
 
 ### `rutas`
 | Campo | Tipo | Notas |
@@ -116,7 +123,7 @@ Clientes: remitente, destinatario o contratante.
 | id | INT PK | |
 | ciudadOrigen | TEXT | |
 | ciudadDestino | TEXT | |
-| codigoOrigenRndc | TEXT | nullable — codigo DIVIPOLA si se maneja |
+| codigoOrigenRndc | TEXT | nullable — **codigo de municipio RNDC de 8 digitos** (ej. Bogota D.C.=`11001000`), no DIVIPOLA de 5 digitos |
 | codigoDestinoRndc | TEXT | nullable |
 | distanciaKm | DOUBLE | nullable |
 
@@ -127,16 +134,25 @@ El "combo" precargado: todo lo fijo y repetitivo de un cliente/ruta.
 |---|---|---|
 | id | INT PK | |
 | nombre | TEXT | |
-| contratanteId | INTEGER FK -> terceros.id | |
+| contratanteId | INTEGER FK -> terceros.id | tambien usado como "propietario de la carga" y "titular del manifiesto" (ver nota en `builders.ts`) |
 | remitenteId | INTEGER FK -> terceros.id | |
 | destinatarioId | INTEGER FK -> terceros.id | |
 | rutaId | INTEGER FK -> rutas.id | |
-| tipoMercancia | TEXT | nullable |
-| naturalezaCarga | TEXT | nullable |
-| unidadMedida | TEXT | nullable |
+| tipoMercancia | TEXT | nullable — usado como `DESCRIPCIONCORTAPRODUCTO` (texto libre) |
+| naturalezaCarga | TEXT | nullable, uso interno (no confundir con `codNaturalezaCarga`) |
+| unidadMedida | TEXT | nullable, uso interno |
 | valorFleteBase | DOUBLE | nullable |
 | observaciones | TEXT | nullable |
 | activa | TINYINT(1) | default 1 |
+| codOperacionTransporte | VARCHAR(2) | default `G` — `CODOPERACIONTRANSPORTE` |
+| codNaturalezaCarga | VARCHAR(5) | default `1` — `CODNATURALEZACARGA` (codigo de catalogo) |
+| codUnidadMedida | VARCHAR(5) | default `1` — `UNIDADMEDIDACAPACIDAD` (codigo de catalogo) |
+| codTipoEmpaque | VARCHAR(5) | default `0` — `CODTIPOEMPAQUE` (codigo de catalogo) |
+| codMercancia | VARCHAR(15) | nullable — `MERCANCIAREMESA` (codigo de producto) |
+| horasPactoCargue | INT | default 1 |
+| minutosPactoCargue | INT | default 0 |
+| horasPactoDescargue | INT | default 1 |
+| minutosPactoDescargue | INT | default 0 |
 
 ### `viajes`
 El despacho real: hereda de la plantilla + los datos variables de esa noche.
@@ -152,8 +168,10 @@ El despacho real: hereda de la plantilla + los datos variables de esa noche.
 | cantidadReal | DOUBLE | nullable |
 | valorFleteReal | DOUBLE | nullable — si es null, se usa `valorFleteBase` de la plantilla |
 | estado | TEXT | ver seccion 6 (maquina de estados) |
-| numeroRemesaRndc | TEXT | nullable, se llena tras crear la remesa |
-| numeroManifiestoRndc | TEXT | nullable, se llena tras crear el manifiesto |
+| numeroRemesaRndc | TEXT | nullable — el **radicado** (`ingresoid`) que devuelve el RNDC al crear la remesa (solo trazabilidad) |
+| numeroManifiestoRndc | TEXT | nullable — el radicado que devuelve el RNDC al crear el manifiesto |
+| consecutivoRemesa | TEXT | generado automaticamente (`REM{id}`) — es el `CONSECUTIVOREMESA` **propio** que el manifiesto usa para referenciar la remesa |
+| consecutivoManifiesto | TEXT | generado automaticamente (`MAN{id}`) — es el `NUMMANIFIESTOCARGA` propio |
 | mec | TEXT | nullable |
 | codigoSeguridadQr | TEXT | nullable |
 | mensajeError | TEXT | nullable — detalle si algo fallo |
@@ -237,6 +255,27 @@ solo-manifiesto no esta implementado todavia, ver seccion 9).
 
 ## 7. Integracion con el RNDC
 
+**Estado: verificado contra el manual oficial** ("GUIA Uso de Web Service en el
+RNDC - V5", Ministerio de Transporte, mayo 2026). La primera version de este
+motor tenia varios errores estructurales que se corrigieron tras comparar
+campo por campo contra los ejemplos reales del manual:
+
+| Error encontrado | Correccion |
+|---|---|
+| IDs de proceso invertidos (`4`=remesa, `2`=manifiesto) | Corregido: `3`=Remesa, `4`=Manifiesto (confirmado en manual, pag. 9-10) |
+| El manifiesto referenciaba la remesa con el radicado (`ingresoid`) devuelto por el RNDC | Corregido: se referencia por `CONSECUTIVOREMESA`, un consecutivo **propio** de la empresa, dentro del bloque `<REMESASMAN>` (pag. 15-16) |
+| No se generaba ningun `CONSECUTIVOREMESA` ni `NUMMANIFIESTOCARGA` | Corregido: se generan automaticamente a partir del id interno del viaje (`REM{id}`, `MAN{id}`) |
+| Encoding `UTF-8` en el XML | Corregido a `ISO-8859-1`, tal como usan todos los ejemplos del manual |
+| Fecha y hora combinadas en un solo campo | Corregido: campos separados `FECHACITAPACTADACARGUE` (`DD/MM/AAAA`) y `HORACITAPACTADACARGUE` (`HH:MM`) |
+| Tags `NITCONTRATANTE`/`NITREMITENTE`/`NITDESTINATARIO` | Corregido a pares `CODTIPOIDxxx` + `NUMIDxxx` + `CODSEDExxx`, tal como exige el diccionario real |
+| Ciudad como texto en la remesa | Corregido: el municipio (codigo RNDC de 8 digitos) va en el manifiesto, no en la remesa |
+
+El script usado para esta verificacion (armar el XML real con datos del seed y
+compararlo linea por linea contra los ejemplos del manual) ya no forma parte
+del repositorio, pero el resultado quedo confirmado: la estructura, nombres de
+tags y orden de campos coinciden con los ejemplos de remesa y manifiesto del
+manual (pag. 12-16).
+
 ### Validaciones previas (sin red)
 Antes de gastar una llamada contra el RNDC, `routes/despacho.ts` valida:
 - SOAT del vehiculo no vencido
@@ -248,37 +287,65 @@ tarifario SICE-TAC antes de enviar.
 
 ### Construccion del XML (`rndc/builders.ts`)
 El Web Service del RNDC recibe un unico parametro de texto con un XML de la
-forma:
+forma (confirmada contra el manual, pag. 8):
 ```xml
 <root>
   <acceso><username/><password/></acceso>
   <solicitud><tipo>1</tipo><procesoid/></solicitud>
-  <variables><NITEMPRESATRANSPORTE/> ...campos del proceso... </variables>
+  <variables><NUMNITEMPRESATRANSPORTE/> ...campos del proceso... </variables>
 </root>
 ```
-Hay dos constructores de variables: `construirDatosRemesa()` y
-`construirDatosManifiesto()` (este ultimo recibe el numero de remesa ya
-creado para referenciarlo).
+Hay dos constructores de variables: `construirDatosRemesa()` (procesoid=3) y
+`construirDatosManifiesto()` (procesoid=4), mas `construirBloqueRemesasManifiesto()`
+que arma el bloque `<REMESASMAN>` que enlaza el manifiesto con sus remesas.
 
-**IDs de proceso** (constantes en `builders.ts`, marcadas como `TODO` porque
-son valores de referencia, no confirmados contra el manual oficial):
-- `PROCESO_ID_REMESA = "4"`
-- `PROCESO_ID_MANIFIESTO = "2"`
+**IDs de proceso** (constantes en `builders.ts`, confirmadas contra el manual):
+- `PROCESO_ID_REMESA = "3"` — Expedir Remesa Terrestre de Carga
+- `PROCESO_ID_MANIFIESTO = "4"` — Expedir Manifiesto de Carga
+
+### Lo que sigue pendiente de catalogos reales
+
+Varios campos del diccionario son **codigos de catalogo del RNDC**, no texto
+libre, y este proyecto los deja con valores placeholder genericos que deben
+verificarse antes de produccion consultando "Consultar Maestros" en el portal
+del RNDC (pag. 24 del manual):
+
+- `CODNATURALEZACARGA`, `UNIDADMEDIDACAPACIDAD`, `CODTIPOEMPAQUE`, `MERCANCIAREMESA` (configurables por plantilla, con default `1`/`1`/`0`/vacio)
+- `CODCONFIGURACIONUNIDADCARGA` y `CODTIPOCARROCERIA` del vehiculo (default `0`)
+- `CODMUNICIPIOORIGENMANIFIESTO`/`...DESTINOMANIFIESTO`: codigo de municipio RNDC de 8 digitos (ej. Bogota D.C.=`11001000`, Cali=`76001000`, confirmados en el manual; el resto hay que consultarlos)
+- `RETENCIONICAMANIFIESTOCARGA`, `VALORANTICIPOMANIFIESTO`: quedan en `0` hasta que se defina la logica de negocio real de retenciones y anticipos
+- El atributo `procesoid="43"` del bloque `<REMESASMAN>` viene tal cual del ejemplo del manual, pero no esta confirmado contra el diccionario completo de errores/procesos — verificar antes de produccion
 
 ### Cliente SOAP (`rndc/client.ts`)
 - Metodo remoto esperado: `AtenderMensajeRNDC` (WSDL del Ministerio).
+- Las 3 URLs oficiales balancean carga por tipo de operacion (pag. 5 del manual):
+  `rndcws2.mintransporte.gov.co:8080` (expedir remesas/manifiestos),
+  `plc.mintransporte.gov.co:8080` (consultas),
+  `rndcws.mintransporte.gov.co:8080` (el resto de procesos). Este proyecto usa
+  una sola URL configurable (`RNDC_WSDL_URL`); si se separan las operaciones
+  por tipo, ese balanceo habria que implementarlo en `client.ts`.
+- Existe tambien un **ambiente de pruebas real** (no solo nuestra simulacion):
+  `rndcpruebas.mintransporte.gov.co:8080` (pag. 11). Los radicados de ese
+  ambiente son siempre mayores a 900,000,000. Antes de ir a produccion, vale
+  la pena probar ahi con las mismas credenciales del ambiente productivo.
 - Si `RNDC_SIMULAR=true`: no hace ninguna llamada de red. Devuelve
-  `{ ok: true, radicado: "SIMULADO-XXXXX", ... }` de forma sincrona, util para
-  desarrollar y probar el flujo completo sin arriesgar datos reales.
+  `{ ok: true, radicado: "SIMULADO-XXXXX", ... }` de forma sincrona.
 - Si `RNDC_SIMULAR=false`: usa la libreria `soap` para conectarse al WSDL real
   y parsea la respuesta XML buscando `ErrorMSG`, `ingresoid`, `MEC`,
   `seguridadqr`.
+- **Nota sobre encoding**: el XML se declara como `ISO-8859-1` (tal como exige
+  el manual), pero no se verifico si la libreria `soap` transmite el cuerpo de
+  la peticion HTTP realmente en esa codificacion de bytes o si lo hace en
+  UTF-8 con la declaracion XML simplemente incluida como texto. Esto solo
+  importa si tus datos llevan tildes o "ñ"; probar especificamente ese caso
+  contra el ambiente de pruebas real antes de asumir que funciona.
 
 ### Antes de produccion
-Los nombres exactos de los tags XML, los IDs de proceso, y el formato de
-fecha/hora deben verificarse contra el **Manual RNDC Web-Service** vigente y
-el WSDL real (`https://plc.mintransporte.gov.co`), y contra credenciales de
-prueba si el Ministerio las ofrece. Ver tambien el `README.md` de la raiz.
+Ademas de los catalogos pendientes arriba, verificar:
+- El diccionario de datos completo y el diccionario de errores en el portal RNDC (pag. 24-28), usando la herramienta wstest (pag. 19-23) para confirmar cada XML antes de integrarlo.
+- El registro previo de terceros (procesoid=11) y vehiculos (procesoid=12) contra el RNDC real — este backend todavia asume que ya existen alla (ver seccion de pendientes).
+
+Contacto oficial: rndc@mintransporte.gov.co / linea 018000 112042.
 
 ## 8. Decision de arquitectura: por que no hay ORM
 

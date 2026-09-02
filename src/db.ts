@@ -23,7 +23,11 @@ export async function initSchema(): Promise<void> {
       propietarioNit VARCHAR(20),
       fechaVencSoat DATE,
       fechaVencTecnomecanica DATE,
-      activo TINYINT(1) NOT NULL DEFAULT 1
+      activo TINYINT(1) NOT NULL DEFAULT 1,
+      codTipoIdTenedor VARCHAR(2) NOT NULL DEFAULT 'N',
+      numIdTenedor VARCHAR(20),
+      codTipoCarroceria VARCHAR(5) NOT NULL DEFAULT '0',
+      pesoVehiculoVacio DOUBLE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -35,7 +39,8 @@ export async function initSchema(): Promise<void> {
       licencia VARCHAR(30),
       categoriaLicencia VARCHAR(10),
       fechaVencLicencia DATE,
-      activo TINYINT(1) NOT NULL DEFAULT 1
+      activo TINYINT(1) NOT NULL DEFAULT 1,
+      codTipoId VARCHAR(2) NOT NULL DEFAULT 'C'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -47,7 +52,9 @@ export async function initSchema(): Promise<void> {
       direccion VARCHAR(200),
       ciudad VARCHAR(80),
       telefono VARCHAR(30),
-      rol VARCHAR(20)
+      rol VARCHAR(20),
+      codTipoId VARCHAR(2) NOT NULL DEFAULT 'N',
+      codSede VARCHAR(10) NOT NULL DEFAULT '0'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -76,6 +83,15 @@ export async function initSchema(): Promise<void> {
       valorFleteBase DOUBLE,
       observaciones VARCHAR(255),
       activa TINYINT(1) NOT NULL DEFAULT 1,
+      codOperacionTransporte VARCHAR(2) NOT NULL DEFAULT 'G',
+      codNaturalezaCarga VARCHAR(5) NOT NULL DEFAULT '1',
+      codUnidadMedida VARCHAR(5) NOT NULL DEFAULT '1',
+      codTipoEmpaque VARCHAR(5) NOT NULL DEFAULT '0',
+      codMercancia VARCHAR(15),
+      horasPactoCargue INT NOT NULL DEFAULT 1,
+      minutosPactoCargue INT NOT NULL DEFAULT 0,
+      horasPactoDescargue INT NOT NULL DEFAULT 1,
+      minutosPactoDescargue INT NOT NULL DEFAULT 0,
       CONSTRAINT fk_plantilla_contratante FOREIGN KEY (contratanteId) REFERENCES terceros(id),
       CONSTRAINT fk_plantilla_remitente FOREIGN KEY (remitenteId) REFERENCES terceros(id),
       CONSTRAINT fk_plantilla_destinatario FOREIGN KEY (destinatarioId) REFERENCES terceros(id),
@@ -100,9 +116,37 @@ export async function initSchema(): Promise<void> {
       codigoSeguridadQr VARCHAR(60),
       mensajeError TEXT,
       fechaCreacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      consecutivoRemesa VARCHAR(30),
+      consecutivoManifiesto VARCHAR(30),
       CONSTRAINT fk_viaje_plantilla FOREIGN KEY (plantillaId) REFERENCES plantillas_viaje(id),
       CONSTRAINT fk_viaje_vehiculo FOREIGN KEY (vehiculoId) REFERENCES vehiculos(id),
       CONSTRAINT fk_viaje_conductor FOREIGN KEY (conductorId) REFERENCES conductores(id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  // Migraciones aditivas para bases de datos creadas con una version anterior del esquema.
+  // MariaDB 10.0.2+ / MySQL 8.0.29+ soportan "ADD COLUMN IF NOT EXISTS".
+  const migraciones = [
+    `ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS codTipoIdTenedor VARCHAR(2) NOT NULL DEFAULT 'N'`,
+    `ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS numIdTenedor VARCHAR(20)`,
+    `ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS codTipoCarroceria VARCHAR(5) NOT NULL DEFAULT '0'`,
+    `ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS pesoVehiculoVacio DOUBLE`,
+    `ALTER TABLE conductores ADD COLUMN IF NOT EXISTS codTipoId VARCHAR(2) NOT NULL DEFAULT 'C'`,
+    `ALTER TABLE terceros ADD COLUMN IF NOT EXISTS codTipoId VARCHAR(2) NOT NULL DEFAULT 'N'`,
+    `ALTER TABLE terceros ADD COLUMN IF NOT EXISTS codSede VARCHAR(10) NOT NULL DEFAULT '0'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codOperacionTransporte VARCHAR(2) NOT NULL DEFAULT 'G'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codNaturalezaCarga VARCHAR(5) NOT NULL DEFAULT '1'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codUnidadMedida VARCHAR(5) NOT NULL DEFAULT '1'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codTipoEmpaque VARCHAR(5) NOT NULL DEFAULT '0'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codMercancia VARCHAR(15)`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS horasPactoCargue INT NOT NULL DEFAULT 1`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS minutosPactoCargue INT NOT NULL DEFAULT 0`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS horasPactoDescargue INT NOT NULL DEFAULT 1`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS minutosPactoDescargue INT NOT NULL DEFAULT 0`,
+    `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS consecutivoRemesa VARCHAR(30)`,
+    `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS consecutivoManifiesto VARCHAR(30)`,
+  ];
+  for (const sql of migraciones) {
+    await pool.query(sql);
+  }
 }
