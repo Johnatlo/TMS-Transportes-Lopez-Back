@@ -1,7 +1,24 @@
 import { Router } from "express";
-import { vehiculos, conductores, terceros, rutas, plantillas } from "../repo";
+import { vehiculos, conductores, terceros, rutas, plantillas, remolques } from "../repo";
 
 export const catalogoRouter = Router();
+
+// ---------- REMOLQUES (trailers) ----------
+catalogoRouter.get("/remolques", async (_req, res) => {
+  res.json(await remolques.findMany());
+});
+
+catalogoRouter.post("/remolques", async (req, res) => {
+  const b = req.body;
+  const creado = await remolques.create({
+    placa: String(b.placa).toUpperCase().trim(),
+    numEjes: b.numEjes ? Number(b.numEjes) : null,
+    capacidadKg: b.capacidadKg ? Number(b.capacidadKg) : null,
+    fechaVencSoat: b.fechaVencSoat ? new Date(b.fechaVencSoat) : null,
+    fechaVencTecnomecanica: b.fechaVencTecnomecanica ? new Date(b.fechaVencTecnomecanica) : null,
+  });
+  res.status(201).json(creado);
+});
 
 // ---------- VEHICULOS ----------
 catalogoRouter.get("/vehiculos", async (_req, res) => {
@@ -109,6 +126,15 @@ catalogoRouter.post("/plantillas", async (req, res) => {
     minutosPactoCargue: b.minutosPactoCargue ? Number(b.minutosPactoCargue) : 0,
     horasPactoDescargue: b.horasPactoDescargue ? Number(b.horasPactoDescargue) : 1,
     minutosPactoDescargue: b.minutosPactoDescargue ? Number(b.minutosPactoDescargue) : 0,
+    retencionIcaManifiesto: b.retencionIcaManifiesto ? Number(b.retencionIcaManifiesto) : 0,
+    codResponsablePagoCargue: b.codResponsablePagoCargue ?? "E",
+    codResponsablePagoDescargue: b.codResponsablePagoDescargue ?? "E",
+    aceptacionElectronica: b.aceptacionElectronica ?? "NO",
+    codMunicipioPagoSaldo: b.codMunicipioPagoSaldo ?? null,
+    tomadorPolizaCarga: b.tomadorPolizaCarga ?? "Empresa Transporte",
+    numeroPolizaTransporte: b.numeroPolizaTransporte ?? null,
+    companiaSeguro: b.companiaSeguro ?? null,
+    fechaVencimientoPolizaCarga: b.fechaVencimientoPolizaCarga ? new Date(b.fechaVencimientoPolizaCarga) : null,
   });
   res.status(201).json(creada);
 });

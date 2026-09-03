@@ -96,12 +96,24 @@ export function construirXmlMensaje(
 export interface DatosViajeParaRndc {
   vehiculo: {
     placa: string;
-    placaRemolque: string | null;
+    // El "titular del manifiesto" es el TENEDOR/PROPIETARIO del vehiculo (una
+    // persona o empresa registrada contra ese vehiculo), confirmado en un
+    // ejemplo real del portal RNDC -- NO es el contratante de la carga (ese es
+    // un rol distinto, ver 'contratante' abajo, usado como propietario de la carga).
+    tenedorCodTipoId: string;
+    tenedorNumId: string | null;
+  };
+  remolque: {
+    placa: string | null; // el remolque USADO ESTA NOCHE (puede variar por viaje)
   };
   conductor: {
     codTipoId: string;
     cedula: string;
   };
+  conductor2: {
+    codTipoId: string;
+    cedula: string;
+  } | null;
   plantilla: {
     ruta: {
       codigoOrigenRndc: string | null;
@@ -125,11 +137,23 @@ export interface DatosViajeParaRndc {
     horasPactoDescargue: number;
     minutosPactoDescargue: number;
     valorFleteBase: number | null;
+    retencionIcaManifiesto: number;
+    codResponsablePagoCargue: string;
+    codResponsablePagoDescargue: string;
+    aceptacionElectronica: string;
+    codMunicipioPagoSaldo: string | null;
+    tomadorPolizaCarga: string;
+    numeroPolizaTransporte: string | null;
+    companiaSeguro: string | null;
+    fechaVencimientoPolizaCarga: Date | null;
   };
   pesoReal: number | null;
   cantidadReal: number | null;
   valorFleteReal: number | null;
   fechaHoraCargue: Date;
+  valorAnticipoManifiesto: number;
+  fechaPagoSaldo: Date | null;
+  nitMonitoreoFlota: string | null;
 }
 
 /**
@@ -169,6 +193,13 @@ export function construirDatosRemesa(v: DatosViajeParaRndc, consecutivoRemesa: s
     HORACITAPACTADACARGUE: formatearHora(v.fechaHoraCargue),
     FECHACITAPACTADADESCARGUE: formatearFecha(v.fechaHoraCargue),
     HORACITAPACTADADESCARGUEREMESA: formatearHora(v.fechaHoraCargue),
+    // Seguro de mercancia -- confirmado en el formulario real del RNDC ("Seguro
+    // Mercancia"). DUENOPOLIZA se envia como texto por ahora; verificar contra
+    // el diccionario si espera un codigo en vez de texto libre.
+    DUENOPOLIZA: p.tomadorPolizaCarga,
+    NUMPOLIZATRANSPORTE: p.numeroPolizaTransporte,
+    COMPANIASEGURO: p.companiaSeguro,
+    FECHAVENCIMIENTOPOLIZACARGA: p.fechaVencimientoPolizaCarga ? formatearFecha(p.fechaVencimientoPolizaCarga) : null,
   };
 }
 
@@ -193,26 +224,35 @@ export function construirDatosManifiesto(
     FECHAEXPEDICIONMANIFIESTO: fecha,
     CODMUNICIPIOORIGENMANIFIESTO: p.ruta.codigoOrigenRndc,
     CODMUNICIPIODESTINOMANIFIESTO: p.ruta.codigoDestinoRndc,
-    // Titular del manifiesto: se asume el contratante (ver nota en DatosViajeParaRndc).
-    CODIDTITULARMANIFIESTO: p.contratante.codTipoId,
-    NUMIDTITULARMANIFIESTO: p.contratante.nit,
+    // Titular del manifiesto: CONFIRMADO contra un ejemplo real del portal RNDC
+    // que es el TENEDOR/PROPIETARIO registrado del vehiculo (una persona), no
+    // el contratante de la carga. Antes este codigo (incorrectamente) usaba el
+    // contratante -- corregido tras revisar un caso real.
+    CODIDTITULARMANIFIESTO: v.vehiculo.tenedorCodTipoId,
+    NUMIDTITULARMANIFIESTO: v.vehiculo.tenedorNumId,
     NUMPLACA: v.vehiculo.placa,
-    NUMPLACAREMOLQUE: v.vehiculo.placaRemolque,
+    // El remolque se define en el DESPACHO de esa noche, no en el vehiculo
+    // (los vehiculos intercambian de remolque entre viajes).
+    NUMPLACAREMOLQUE: v.remolque.placa,
     CODIDCONDUCTOR: v.conductor.codTipoId,
     NUMIDCONDUCTOR: v.conductor.cedula,
+    // Segundo conductor: opcional, solo se envia si el despacho lo especifico.
+    CODIDCONDUCTOR2: v.conductor2?.codTipoId ?? null,
+    NUMIDCONDUCTOR2: v.conductor2?.cedula ?? null,
+    // Empresa de monitoreo de flota (GPS) -- confirmada en el diccionario oficial
+    // (NITMONITOREOFLOTA) y visible en el formulario real del RNDC.
+    NITMONITOREOFLOTA: v.nitMonitoreoFlota,
     VALORFLETEPACTADOVIAJE: v.valorFleteReal ?? p.valorFleteBase,
-    // TODO: RETENCIONICAMANIFIESTOCARGA, VALORANTICIPOMANIFIESTO, CODMUNICIPIOPAGOSALDO
-    // y FECHAPAGOSALDOMANIFIESTO dependen de la negociacion comercial de cada viaje
-    // (retencion ICA real, anticipo pactado, ciudad y fecha de pago del saldo).
-    // Se dejan en 0 / vacio por ahora; configurar cuando se defina esa logica de negocio.
-    RETENCIONICAMANIFIESTOCARGA: 0,
-    VALORANTICIPOMANIFIESTO: 0,
-    CODMUNICIPIOPAGOSALDO: p.ruta.codigoDestinoRndc,
-    FECHAPAGOSALDOMANIFIESTO: fecha,
-    // 'E' = Empresa. Ver diccionario de datos del RNDC para otros codigos validos.
-    CODRESPONSABLEPAGOCARGUE: "E",
-    CODRESPONSABLEPAGODESCARGUE: "E",
-    ACEPTACIONELECTRONICA: "NO",
+    // Estos 4 campos vienen de la plantilla (condiciones comerciales pactadas
+    // con el cliente) y del despacho de esa noche (anticipo y fecha de pago,
+    // que varian viaje a viaje) -- ya no son valores fijos.
+    RETENCIONICAMANIFIESTOCARGA: p.retencionIcaManifiesto,
+    VALORANTICIPOMANIFIESTO: v.valorAnticipoManifiesto,
+    CODMUNICIPIOPAGOSALDO: p.codMunicipioPagoSaldo ?? p.ruta.codigoDestinoRndc,
+    FECHAPAGOSALDOMANIFIESTO: v.fechaPagoSaldo ? formatearFecha(v.fechaPagoSaldo) : fecha,
+    CODRESPONSABLEPAGOCARGUE: p.codResponsablePagoCargue,
+    CODRESPONSABLEPAGODESCARGUE: p.codResponsablePagoDescargue,
+    ACEPTACIONELECTRONICA: p.aceptacionElectronica,
     OBSERVACIONES: p.observaciones,
   };
 

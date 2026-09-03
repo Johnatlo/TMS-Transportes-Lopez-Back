@@ -1,7 +1,18 @@
 import { pool } from "./db";
+import { config } from "./config";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 
 // ---------- Tipos ----------
+export interface Remolque {
+  id: number;
+  placa: string;
+  numEjes: number | null;
+  capacidadKg: number | null;
+  fechaVencSoat: Date | null;
+  fechaVencTecnomecanica: Date | null;
+  activo: boolean;
+}
+
 export interface Vehiculo {
   id: number;
   placa: string;
@@ -73,6 +84,18 @@ export interface PlantillaViaje {
   minutosPactoCargue: number;
   horasPactoDescargue: number;
   minutosPactoDescargue: number;
+  retencionIcaManifiesto: number; // RETENCIONICAMANIFIESTOCARGA (%, ej. 3 para 3 por mil)
+  codResponsablePagoCargue: string; // 'E'=Empresa, ver diccionario RNDC para otros codigos
+  codResponsablePagoDescargue: string;
+  aceptacionElectronica: string; // 'SI' | 'NO'
+  codMunicipioPagoSaldo: string | null; // si es null, se usa el municipio destino de la ruta
+  // Seguro de mercancia (seccion "Seguro Mercancia" del formulario real del RNDC).
+  // NOTA: DUENOPOLIZA se envia como texto descriptivo por ahora ("Empresa Transporte");
+  // el diccionario oficial puede esperar un codigo -- verificar antes de produccion.
+  tomadorPolizaCarga: string;
+  numeroPolizaTransporte: string | null;
+  companiaSeguro: string | null;
+  fechaVencimientoPolizaCarga: Date | null;
 }
 
 export interface PlantillaViajeConRelaciones extends PlantillaViaje {
@@ -100,6 +123,10 @@ export interface Viaje {
   fechaCreacion: Date;
   consecutivoRemesa: string | null; // CONSECUTIVOREMESA propio, generado por nosotros
   consecutivoManifiesto: string | null; // NUMMANIFIESTOCARGA propio, generado por nosotros
+  valorAnticipoManifiesto: number; // VALORANTICIPOMANIFIESTO, varia cada noche
+  fechaPagoSaldo: Date | null; // FECHAPAGOSALDOMANIFIESTO, si es null se usa la fecha de cargue
+  conductor2Id: number | null; // segundo conductor opcional (CODIDCONDUCTOR2/NUMIDCONDUCTOR2)
+  remolqueId: number | null; // el remolque/trailer USADO ESTA NOCHE (puede variar por viaje)
 }
 
 // ---------- Helpers ----------
@@ -111,6 +138,33 @@ function fechaMysql(d: Date | null | undefined): string | null {
   if (!d) return null;
   return d.toISOString().slice(0, 19).replace("T", " ");
 }
+
+// ---------- Remolques (trailers) ----------
+export const remolques = {
+  async findMany(): Promise<Remolque[]> {
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM remolques ORDER BY placa");
+    return (rows as unknown as Remolque[]).map(mapBool);
+  },
+  async findById(id: number): Promise<Remolque | null> {
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM remolques WHERE id = ?", [id]);
+    const row = rows[0] as unknown as Remolque | undefined;
+    return row ? mapBool(row) : null;
+  },
+  async create(data: Omit<Remolque, "id" | "activo">): Promise<Remolque> {
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO remolques (placa, numEjes, capacidadKg, fechaVencSoat, fechaVencTecnomecanica)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        data.placa,
+        data.numEjes,
+        data.capacidadKg,
+        fechaMysql(data.fechaVencSoat),
+        fechaMysql(data.fechaVencTecnomecanica),
+      ]
+    );
+    return (await this.findById(result.insertId))!;
+  },
+};
 
 // ---------- Vehiculos ----------
 export const vehiculos = {
@@ -273,6 +327,15 @@ export const plantillas = {
       | "minutosPactoCargue"
       | "horasPactoDescargue"
       | "minutosPactoDescargue"
+      | "retencionIcaManifiesto"
+      | "codResponsablePagoCargue"
+      | "codResponsablePagoDescargue"
+      | "aceptacionElectronica"
+      | "codMunicipioPagoSaldo"
+      | "tomadorPolizaCarga"
+      | "numeroPolizaTransporte"
+      | "companiaSeguro"
+      | "fechaVencimientoPolizaCarga"
     > &
       Partial<
         Pick<
@@ -286,6 +349,15 @@ export const plantillas = {
           | "minutosPactoCargue"
           | "horasPactoDescargue"
           | "minutosPactoDescargue"
+          | "retencionIcaManifiesto"
+          | "codResponsablePagoCargue"
+          | "codResponsablePagoDescargue"
+          | "aceptacionElectronica"
+          | "codMunicipioPagoSaldo"
+          | "tomadorPolizaCarga"
+          | "numeroPolizaTransporte"
+          | "companiaSeguro"
+          | "fechaVencimientoPolizaCarga"
         >
       >
   ): Promise<PlantillaViaje> {
@@ -293,8 +365,10 @@ export const plantillas = {
       `INSERT INTO plantillas_viaje
         (nombre, contratanteId, remitenteId, destinatarioId, rutaId, tipoMercancia, naturalezaCarga, unidadMedida,
          valorFleteBase, observaciones, codOperacionTransporte, codNaturalezaCarga, codUnidadMedida, codTipoEmpaque,
-         codMercancia, horasPactoCargue, minutosPactoCargue, horasPactoDescargue, minutosPactoDescargue)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         codMercancia, horasPactoCargue, minutosPactoCargue, horasPactoDescargue, minutosPactoDescargue,
+         retencionIcaManifiesto, codResponsablePagoCargue, codResponsablePagoDescargue, aceptacionElectronica,
+         codMunicipioPagoSaldo, tomadorPolizaCarga, numeroPolizaTransporte, companiaSeguro, fechaVencimientoPolizaCarga)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.nombre,
         data.contratanteId,
@@ -315,6 +389,15 @@ export const plantillas = {
         data.minutosPactoCargue ?? 0,
         data.horasPactoDescargue ?? 1,
         data.minutosPactoDescargue ?? 0,
+        data.retencionIcaManifiesto ?? 0,
+        data.codResponsablePagoCargue ?? "E",
+        data.codResponsablePagoDescargue ?? "E",
+        data.aceptacionElectronica ?? "NO",
+        data.codMunicipioPagoSaldo ?? null,
+        data.tomadorPolizaCarga ?? "Empresa Transporte",
+        data.numeroPolizaTransporte ?? null,
+        data.companiaSeguro ?? null,
+        fechaMysql(data.fechaVencimientoPolizaCarga ?? null),
       ]
     );
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE id = ?", [
@@ -345,10 +428,16 @@ export const viajes = {
     pesoReal: number | null;
     cantidadReal: number | null;
     valorFleteReal: number | null;
+    valorAnticipoManifiesto?: number;
+    fechaPagoSaldo?: Date | null;
+    conductor2Id?: number | null;
+    remolqueId?: number | null;
   }): Promise<Viaje> {
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO viajes (plantillaId, vehiculoId, conductorId, fechaHoraCargue, pesoReal, cantidadReal, valorFleteReal)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO viajes
+        (plantillaId, vehiculoId, conductorId, fechaHoraCargue, pesoReal, cantidadReal, valorFleteReal,
+         valorAnticipoManifiesto, fechaPagoSaldo, conductor2Id, remolqueId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.plantillaId,
         data.vehiculoId,
@@ -357,13 +446,20 @@ export const viajes = {
         data.pesoReal,
         data.cantidadReal,
         data.valorFleteReal,
+        data.valorAnticipoManifiesto ?? 0,
+        fechaMysql(data.fechaPagoSaldo ?? null),
+        data.conductor2Id ?? null,
+        data.remolqueId ?? null,
       ]
     );
     // El consecutivo propio (CONSECUTIVOREMESA / NUMMANIFIESTOCARGA) se genera a partir
-    // del id interno una vez conocido, para garantizar unicidad sin coordinar con el RNDC.
+    // del id interno una vez conocido, mas un prefijo/inicio configurable (ver config.ts)
+    // para poder continuar una numeracion ya existente en la empresa sin repetir nada.
     const id = result.insertId;
-    const consecutivoRemesa = `REM${id}`;
-    const consecutivoManifiesto = `MAN${id}`;
+    const consecutivoRemesa = `${config.consecutivos.prefijoRemesa}${config.consecutivos.inicioRemesa + id}`;
+    const consecutivoManifiesto = `${config.consecutivos.prefijoManifiesto}${
+      config.consecutivos.inicioManifiesto + id
+    }`;
     await pool.query("UPDATE viajes SET consecutivoRemesa = ?, consecutivoManifiesto = ? WHERE id = ?", [
       consecutivoRemesa,
       consecutivoManifiesto,

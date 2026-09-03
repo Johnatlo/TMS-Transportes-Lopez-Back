@@ -13,6 +13,18 @@ export const pool = mysql.createPool({
 
 export async function initSchema(): Promise<void> {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS remolques (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      placa VARCHAR(15) NOT NULL UNIQUE,
+      numEjes INT,
+      capacidadKg DOUBLE,
+      fechaVencSoat DATE,
+      fechaVencTecnomecanica DATE,
+      activo TINYINT(1) NOT NULL DEFAULT 1
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS vehiculos (
       id INT AUTO_INCREMENT PRIMARY KEY,
       placa VARCHAR(15) NOT NULL UNIQUE,
@@ -92,6 +104,15 @@ export async function initSchema(): Promise<void> {
       minutosPactoCargue INT NOT NULL DEFAULT 0,
       horasPactoDescargue INT NOT NULL DEFAULT 1,
       minutosPactoDescargue INT NOT NULL DEFAULT 0,
+      retencionIcaManifiesto DOUBLE NOT NULL DEFAULT 0,
+      codResponsablePagoCargue VARCHAR(2) NOT NULL DEFAULT 'E',
+      codResponsablePagoDescargue VARCHAR(2) NOT NULL DEFAULT 'E',
+      aceptacionElectronica VARCHAR(2) NOT NULL DEFAULT 'NO',
+      codMunicipioPagoSaldo VARCHAR(10),
+      tomadorPolizaCarga VARCHAR(50) NOT NULL DEFAULT 'Empresa Transporte',
+      numeroPolizaTransporte VARCHAR(30),
+      companiaSeguro VARCHAR(20),
+      fechaVencimientoPolizaCarga DATE,
       CONSTRAINT fk_plantilla_contratante FOREIGN KEY (contratanteId) REFERENCES terceros(id),
       CONSTRAINT fk_plantilla_remitente FOREIGN KEY (remitenteId) REFERENCES terceros(id),
       CONSTRAINT fk_plantilla_destinatario FOREIGN KEY (destinatarioId) REFERENCES terceros(id),
@@ -118,9 +139,15 @@ export async function initSchema(): Promise<void> {
       fechaCreacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       consecutivoRemesa VARCHAR(30),
       consecutivoManifiesto VARCHAR(30),
+      valorAnticipoManifiesto DOUBLE NOT NULL DEFAULT 0,
+      fechaPagoSaldo DATE,
+      conductor2Id INT,
+      remolqueId INT,
       CONSTRAINT fk_viaje_plantilla FOREIGN KEY (plantillaId) REFERENCES plantillas_viaje(id),
       CONSTRAINT fk_viaje_vehiculo FOREIGN KEY (vehiculoId) REFERENCES vehiculos(id),
-      CONSTRAINT fk_viaje_conductor FOREIGN KEY (conductorId) REFERENCES conductores(id)
+      CONSTRAINT fk_viaje_conductor FOREIGN KEY (conductorId) REFERENCES conductores(id),
+      CONSTRAINT fk_viaje_conductor2 FOREIGN KEY (conductor2Id) REFERENCES conductores(id),
+      CONSTRAINT fk_viaje_remolque FOREIGN KEY (remolqueId) REFERENCES remolques(id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -143,8 +170,21 @@ export async function initSchema(): Promise<void> {
     `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS minutosPactoCargue INT NOT NULL DEFAULT 0`,
     `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS horasPactoDescargue INT NOT NULL DEFAULT 1`,
     `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS minutosPactoDescargue INT NOT NULL DEFAULT 0`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS retencionIcaManifiesto DOUBLE NOT NULL DEFAULT 0`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codResponsablePagoCargue VARCHAR(2) NOT NULL DEFAULT 'E'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codResponsablePagoDescargue VARCHAR(2) NOT NULL DEFAULT 'E'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS aceptacionElectronica VARCHAR(2) NOT NULL DEFAULT 'NO'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS codMunicipioPagoSaldo VARCHAR(10)`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS tomadorPolizaCarga VARCHAR(50) NOT NULL DEFAULT 'Empresa Transporte'`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS numeroPolizaTransporte VARCHAR(30)`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS companiaSeguro VARCHAR(20)`,
+    `ALTER TABLE plantillas_viaje ADD COLUMN IF NOT EXISTS fechaVencimientoPolizaCarga DATE`,
     `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS consecutivoRemesa VARCHAR(30)`,
     `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS consecutivoManifiesto VARCHAR(30)`,
+    `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS valorAnticipoManifiesto DOUBLE NOT NULL DEFAULT 0`,
+    `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS fechaPagoSaldo DATE`,
+    `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS conductor2Id INT`,
+    `ALTER TABLE viajes ADD COLUMN IF NOT EXISTS remolqueId INT`,
   ];
   for (const sql of migraciones) {
     await pool.query(sql);

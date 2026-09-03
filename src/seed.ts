@@ -1,5 +1,5 @@
 import { initSchema } from "./db";
-import { vehiculos, conductores, terceros, rutas, plantillas } from "./repo";
+import { vehiculos, conductores, terceros, rutas, plantillas, remolques } from "./repo";
 
 async function main() {
   await initSchema();
@@ -32,6 +32,14 @@ async function main() {
     categoriaLicencia: null,
     fechaVencLicencia: new Date("2027-01-01"),
     codTipoId: "C",
+  });
+
+  const remolque = await remolques.create({
+    placa: "R37108",
+    numEjes: 3,
+    capacidadKg: null,
+    fechaVencSoat: new Date("2027-01-01"),
+    fechaVencTecnomecanica: new Date("2027-01-01"),
   });
 
   const cliente = await terceros.create({
@@ -75,10 +83,20 @@ async function main() {
     minutosPactoCargue: 0,
     horasPactoDescargue: 1,
     minutosPactoDescargue: 0,
+    retencionIcaManifiesto: 0,
+    codResponsablePagoCargue: "E",
+    codResponsablePagoDescargue: "E",
+    aceptacionElectronica: "NO",
+    codMunicipioPagoSaldo: null,
+    tomadorPolizaCarga: "Empresa Transporte",
+    numeroPolizaTransporte: "900001238395",
+    companiaSeguro: "SBS SEGUROS",
+    fechaVencimientoPolizaCarga: new Date("2027-01-01"),
   });
 
   console.log("Seed cargado:", {
     vehiculo: vehiculo.placa,
+    remolque: remolque.placa,
     conductor: conductor.nombre,
     plantilla: plantilla.nombre,
   });
