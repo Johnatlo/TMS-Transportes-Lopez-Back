@@ -72,6 +72,19 @@ creacion. Las claves foraneas entre tablas (`plantillas_viaje` -> `terceros` y
 `rutas`; `viajes` -> `plantillas_viaje`, `vehiculos`, `conductores`) se crean
 como `CONSTRAINT ... FOREIGN KEY` de MySQL.
 
+### `remolques`
+Catalogo independiente porque un mismo vehiculo puede usar remolques distintos entre viajes.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| id | INT PK | |
+| placa | TEXT UNIQUE | |
+| numEjes | INT | nullable |
+| capacidadKg | DOUBLE | nullable |
+| fechaVencSoat | DATE | nullable |
+| fechaVencTecnomecanica | DATE | nullable |
+| activo | TINYINT(1) | default 1 |
+
 ### `vehiculos`
 | Campo | Tipo | Notas |
 |---|---|---|
@@ -172,6 +185,10 @@ El despacho real: hereda de la plantilla + los datos variables de esa noche.
 | numeroManifiestoRndc | TEXT | nullable — el radicado que devuelve el RNDC al crear el manifiesto |
 | consecutivoRemesa | TEXT | generado automaticamente (`REM{id}`) — es el `CONSECUTIVOREMESA` **propio** que el manifiesto usa para referenciar la remesa |
 | consecutivoManifiesto | TEXT | generado automaticamente (`MAN{id}`) — es el `NUMMANIFIESTOCARGA` propio |
+| remolqueId | INTEGER FK -> remolques.id | el remolque usado en ESTE viaje especifico (puede variar cada noche) |
+| conductor2Id | INTEGER FK -> conductores.id | nullable, segundo conductor opcional |
+| valorAnticipoManifiesto | DOUBLE | default 0 — `VALORANTICIPOMANIFIESTO`, varia cada noche |
+| fechaPagoSaldo | DATE | nullable — `FECHAPAGOSALDOMANIFIESTO`, si es null se usa la fecha de cargue |
 | mec | TEXT | nullable |
 | codigoSeguridadQr | TEXT | nullable |
 | mensajeError | TEXT | nullable — detalle si algo fallo |
@@ -255,26 +272,37 @@ solo-manifiesto no esta implementado todavia, ver seccion 9).
 
 ## 7. Integracion con el RNDC
 
-**Estado: verificado contra el manual oficial** ("GUIA Uso de Web Service en el
-RNDC - V5", Ministerio de Transporte, mayo 2026). La primera version de este
-motor tenia varios errores estructurales que se corrigieron tras comparar
-campo por campo contra los ejemplos reales del manual:
+**Estado: verificado contra el manual oficial y contra un caso de uso real**
+grabado en video del portal transaccional del RNDC
+(`rndc2.mintransporte.gov.co/logistica/ctl/...`). Esa segunda verificacion
+encontro correcciones adicionales que el manual por si solo no dejaba ver:
 
-| Error encontrado | Correccion |
+| Hallazgo del video | Correccion |
 |---|---|
-| IDs de proceso invertidos (`4`=remesa, `2`=manifiesto) | Corregido: `3`=Remesa, `4`=Manifiesto (confirmado en manual, pag. 9-10) |
-| El manifiesto referenciaba la remesa con el radicado (`ingresoid`) devuelto por el RNDC | Corregido: se referencia por `CONSECUTIVOREMESA`, un consecutivo **propio** de la empresa, dentro del bloque `<REMESASMAN>` (pag. 15-16) |
-| No se generaba ningun `CONSECUTIVOREMESA` ni `NUMMANIFIESTOCARGA` | Corregido: se generan automaticamente a partir del id interno del viaje (`REM{id}`, `MAN{id}`) |
-| Encoding `UTF-8` en el XML | Corregido a `ISO-8859-1`, tal como usan todos los ejemplos del manual |
-| Fecha y hora combinadas en un solo campo | Corregido: campos separados `FECHACITAPACTADACARGUE` (`DD/MM/AAAA`) y `HORACITAPACTADACARGUE` (`HH:MM`) |
-| Tags `NITCONTRATANTE`/`NITREMITENTE`/`NITDESTINATARIO` | Corregido a pares `CODTIPOIDxxx` + `NUMIDxxx` + `CODSEDExxx`, tal como exige el diccionario real |
-| Ciudad como texto en la remesa | Corregido: el municipio (codigo RNDC de 8 digitos) va en el manifiesto, no en la remesa |
+| El **remolque se elige en cada despacho** (el mismo vehiculo lo cambia entre viajes) | Se creo una tabla `remolques` independiente y el despacho ahora exige seleccionar uno; `NUMPLACAREMOLQUE` sale del remolque elegido esa noche, no de un campo fijo del vehiculo |
+| El **Titular del Manifiesto es el tenedor/propietario registrado del vehiculo** (una persona), visto en un caso real donde el titular era distinto del contratante de la carga | Corregido: `CODIDTITULARMANIFIESTO`/`NUMIDTITULARMANIFIESTO` ahora usan `vehiculo.codTipoIdTenedor`/`vehiculo.numIdTenedor` en vez del contratante. Se verifico con una prueba donde ambos valores eran deliberadamente distintos. |
+| Seccion **"Seguro Mercancia"** visible en el formulario real de la remesa (aseguradora, poliza, vencimiento) | Se agregaron `tomadorPolizaCarga`, `numeroPolizaTransporte`, `companiaSeguro`, `fechaVencimientoPolizaCarga` a `plantillas_viaje`, enviados como `DUENOPOLIZA`/`NUMPOLIZATRANSPORTE`/`COMPANIASEGURO`/`FECHAVENCIMIENTOPOLIZACARGA` |
+| Campo **"Empresa de Monitoreo"** (GPS) visible en el manifiesto | Se agrego `NITMONITOREOFLOTA` (confirmado en el diccionario de datos del manual, pag. 25), configurable via `RNDC_NIT_MONITOREO_FLOTA` |
+| El **consecutivo de remesa se digita manualmente y es obligatorio** en el portal (`Consecutivo Remesa*`) | Ya se generaba automaticamente (`REM{id}`); se agrego configuracion de prefijo/inicio (`RNDC_PREFIJO_REMESA`, `RNDC_INICIO_REMESA`, etc.) por si la empresa necesita continuar una numeracion ya existente |
 
-El script usado para esta verificacion (armar el XML real con datos del seed y
-compararlo linea por linea contra los ejemplos del manual) ya no forma parte
-del repositorio, pero el resultado quedo confirmado: la estructura, nombres de
-tags y orden de campos coinciden con los ejemplos de remesa y manifiesto del
-manual (pag. 12-16).
+### Campos vistos en el video que NO se implementaron (para no adivinar mal)
+
+El formulario real del portal muestra varios campos adicionales que **no
+aparecen en los dos ejemplos completos de XML del manual** (la unica fuente
+100% confiable que tenemos del nombre exacto de cada tag). Implementarlos con
+un nombre de tag adivinado seria peor que no implementarlos, porque el RNDC
+probablemente los ignoraria silenciosamente o los rechazaria. Quedan
+documentados aqui para que se verifiquen contra el diccionario de datos real
+(portal RNDC -> Consultas -> Consultar Maestros -> Diccionario de Datos, ver
+pag. 24 del manual) antes de agregarlos:
+
+- **"Via a Utilizar"**: descripcion de municipios intermedios de la ruta (ej. "El Cerrito, Guacari, Guadalajara de Buga...").
+- **"Municipio Origen Vacio 1 / 2"**: posible registro del trayecto en vacio antes de llegar al cargue.
+- **"Municipios Trasbordo 1 / 2"**: municipios de trasbordo de la carga, si aplica.
+- **Empaque Interno vs Empaque Externo**: el portal separa el empaque en dos campos; nuestro modelo solo tiene uno (`CODTIPOEMPAQUE`, confirmado por el manual). Verificar si el segundo tiene un tag propio o es solo una ayuda visual del portal.
+- **"Valor Trayecto Vacio"** y **"Retencion FOPAT (0.1%)"**: en la seccion financiera del manifiesto, junto a `VALORFLETEPACTADOVIAJE` y `RETENCIONICAMANIFIESTOCARGA`.
+- **Categoria de licencia del conductor** (ej. "C3"): visible en el formulario, no confirmada como campo del diccionario de manifiesto.
+- **"Configuracion Resultante"** del vehiculo+remolque (ej. "3S3", Tractocamion de 3 ejes + semirremolque): el portal la calcula automaticamente combinando la configuracion del vehiculo con la del remolque. Esto sugiere que `CODCONFIGURACIONUNIDADCARGA` podria necesitar actualizarse (via el proceso 12, registro de vehiculo) cada vez que cambia la combinacion vehiculo+remolque -- pero el registro de vehiculos/terceros contra el RNDC (procesos 11 y 12) todavia no esta implementado en este backend (ver seccion de pendientes).
 
 ### Validaciones previas (sin red)
 Antes de gastar una llamada contra el RNDC, `routes/despacho.ts` valida:
