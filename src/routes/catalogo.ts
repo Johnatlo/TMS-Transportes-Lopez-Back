@@ -1,5 +1,17 @@
 import { Router } from "express";
-import { vehiculos, conductores, terceros, rutas, plantillas, remolques } from "../repo";
+import { revisarCoordenadaSede, normalizarCodigoMercancia } from "../rndc/builders";
+import { config } from "../config";
+import { revisarVencimientos } from "../alertas";
+import { RndcClient } from "../rndc/client";
+import {
+  consultarSicetac,
+  filasDeLaOperacion,
+  calcularPisoSicetac,
+  aCabeceraMunicipal,
+  periodoDe,
+  CONDICION_CARGA,
+} from "../rndc/sicetac";
+import { vehiculos, conductores, terceros, rutas, plantillas, remolques, parametros, vias } from "../repo";
 
 export const catalogoRouter = Router();
 
@@ -27,6 +39,10 @@ catalogoRouter.get("/vehiculos", async (_req, res) => {
 
 catalogoRouter.post("/vehiculos", async (req, res) => {
   const b = req.body;
+  // El FOPAT aplica a toda la flota salvo excepcion explicita, asi que el
+  // valor por defecto viene de los parametros de la empresa y no se pide en
+  // el formulario de cada vehiculo.
+  const params = await parametros.obtener();
   const creado = await vehiculos.create({
     placa: String(b.placa).toUpperCase().trim(),
     placaRemolque: b.placaRemolque ? String(b.placaRemolque).toUpperCase().trim() : null,
@@ -69,6 +85,23 @@ catalogoRouter.get("/terceros", async (_req, res) => {
 
 catalogoRouter.post("/terceros", async (req, res) => {
   const b = req.body;
+
+  // Las coordenadas llegan como texto desde el formulario. Se conserva el valor
+  // tal cual lo escribio el usuario para no perder decimales: el RNDC exige 6 y
+  // parseFloat de una cadena corta no los inventa.
+  const coordenada = (valor: unknown): number | null => {
+    if (valor === null || valor === undefined || String(valor).trim() === "") return null;
+    const n = Number(String(valor).trim());
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const latitud = coordenada(b.latitud);
+  const longitud = coordenada(b.longitud);
+
+  // Se avisa, pero no se rechaza: puede que la sede aun no tenga coordenada en
+  // el portal y el usuario quiera dejarla registrada de todas formas.
+  const revision = revisarCoordenadaSede(latitud, longitud, `Sede ${b.codSede ?? "0"}`);
+
   const creado = await terceros.create({
     nit: String(b.nit).trim(),
     nombre: String(b.nombre).trim(),
@@ -78,8 +111,14 @@ catalogoRouter.post("/terceros", async (req, res) => {
     rol: b.rol ?? null,
     codTipoId: b.codTipoId ?? "N",
     codSede: b.codSede ?? "0",
+    latitud,
+    longitud,
+    // Codigo DIVIPOLA del municipio de la sede. Sirve para verificar que el
+    // origen y el destino del manifiesto coincidan con algun sitio de cargue y
+    // de descargue de las remesas.
+    codMunicipioRndc: b.codMunicipioRndc || null,
   });
-  res.status(201).json(creado);
+  res.status(201).json({ ...creado, avisoCoordenada: revision.problema });
 });
 
 // ---------- RUTAS ----------
@@ -99,6 +138,231 @@ catalogoRouter.post("/rutas", async (req, res) => {
   res.status(201).json(creada);
 });
 
+// ---------- VIAS (CODVIA) ----------
+// La via elegida cambia el valor de referencia de SICETAC y por lo tanto el
+// piso del flete, asi que se ofrece en cada despacho.
+
+/**
+ * Vias consultadas en linea a SICETAC para un par de municipios.
+ *
+ * Devuelve tambien el piso tarifario de cada via, que es el dato que decide si
+ * el flete pactado es valido. Las vias se guardan en la tabla local para poder
+ * seguir despachando si el servicio del Ministerio no responde.
+ */
+catalogoRouter.get("/vias/sicetac", async (req, res) => {
+  const origen = aCabeceraMunicipal(String(req.query.origen ?? ""));
+  const destino = aCabeceraMunicipal(String(req.query.destino ?? ""));
+  const configuracion = String(req.query.configuracion ?? "").toUpperCase();
+  // Horas pactadas de cargue y descargue del viaje: entran en el piso.
+  const horas = Number(req.query.horas ?? 0);
+
+  if (!origen || !destino) {
+    return res.status(422).json({ error: "Origen y destino deben ser codigos DIVIPOLA" });
+  }
+  if (!configuracion) {
+    return res.status(422).json({
+      error:
+        "Falta la configuracion del vehiculo (3S3, 2S2, 3...). Revisala en el catalogo o corre npm run verificar.",
+    });
+  }
+
+  const credenciales = {
+    usuario: config.rndc.usuario,
+    password: config.rndc.password,
+    nitEmpresa: config.rndc.empresaNit,
+  };
+  const cliente = new RndcClient({
+    wsdlUrl: config.rndc.wsdlUrl,
+    usuario: config.rndc.usuario,
+    password: config.rndc.password,
+    simular: config.rndc.simular,
+    reintentos: config.rndc.reintentos,
+  });
+
+  try {
+    const resultado = await consultarSicetac(
+      cliente,
+      credenciales,
+      {
+        periodo: periodoDe(new Date()),
+        configuracion,
+        origen,
+        destino,
+        condicionCarga: CONDICION_CARGA.CARGADO,
+      },
+      config.sicetac.mesesHaciaAtras
+    );
+
+    const propias = filasDeLaOperacion(
+      resultado.filas,
+      config.sicetac.unidadTransporte,
+      config.sicetac.tipoCarga
+    );
+
+    const salida = propias.map((f) => ({
+      codVia: f.rutasId,
+      descripcion: f.via || `Ruta ${f.rutasId}`,
+      esEstandar: f.esEstandar,
+      kilometros: f.kilometros,
+      valorMoviliza: f.valorMoviliza,
+      valorHora: f.valorHora,
+      // Piso real: movilizacion mas las horas pactadas [SIC21].
+      valorSicetac: calcularPisoSicetac(f, horas),
+      unidadTransporte: f.nombreUnidadTransporte,
+      tipoCarga: f.nombreTipoCarga,
+    }));
+
+    // Se cachean para poder despachar si el servicio se cae mas tarde.
+    for (const v of salida) {
+      if (!v.codVia) continue;
+      await vias.guardar({
+        codVia: v.codVia,
+        codMunicipioOrigen: origen,
+        codMunicipioDestino: destino,
+        descripcion: v.descripcion,
+        valorSicetac: v.valorSicetac,
+        esEstandar: v.esEstandar,
+      });
+    }
+
+    res.json({
+      vias: salida,
+      periodoUsado: resultado.periodoUsado,
+      periodosSinDatos: resultado.periodosVacios,
+      origen,
+      destino,
+    });
+  } catch (exc) {
+    // Sin conexion se cae a lo ultimo consultado: es preferible una tarifa de
+    // hace unos dias a no poder despachar.
+    const enCache = await vias.findByRuta(origen, destino);
+    res.status(enCache.length > 0 ? 200 : 502).json({
+      vias: enCache.map((v) => ({
+        codVia: v.codVia,
+        descripcion: v.descripcion,
+        esEstandar: v.esEstandar,
+        valorSicetac: v.valorSicetac,
+      })),
+      desdeCache: true,
+      error: (exc as Error).message,
+    });
+  }
+});
+
+catalogoRouter.get("/vias", async (req, res) => {
+  const origen = String(req.query.origen ?? "");
+  const destino = String(req.query.destino ?? "");
+  if (!/^\d{8}$/.test(origen) || !/^\d{8}$/.test(destino)) {
+    return res
+      .status(422)
+      .json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
+  }
+  res.json(await vias.findByRuta(origen, destino));
+});
+
+catalogoRouter.post("/vias", async (req, res) => {
+  const b = req.body;
+  if (!b.codVia || !b.codMunicipioOrigen || !b.codMunicipioDestino || !b.descripcion) {
+    return res.status(422).json({
+      error: "Faltan datos: codVia, codMunicipioOrigen, codMunicipioDestino y descripcion",
+    });
+  }
+  await vias.guardar({
+    codVia: String(b.codVia).trim(),
+    codMunicipioOrigen: String(b.codMunicipioOrigen).padStart(8, "0"),
+    codMunicipioDestino: String(b.codMunicipioDestino).padStart(8, "0"),
+    descripcion: String(b.descripcion).slice(0, 500),
+    valorSicetac: b.valorSicetac ? Number(b.valorSicetac) : null,
+    esEstandar: !!b.esEstandar,
+  });
+  res.status(201).json({ ok: true });
+});
+
+// ---------- TARIFAS POR RUTA ----------
+// Cuando cambia SICETAC hay que mover la tarifa de todas las plantillas de una
+// misma ruta. Hacerlo plantilla por plantilla, con cientos de clientes, es
+// donde se cuelan los errores.
+
+/** Rutas existentes con su rango de tarifas, para ver donde hay dispersion. */
+catalogoRouter.get("/tarifas/rutas", async (_req, res) => {
+  res.json(await plantillas.rutasConTarifas());
+});
+
+/** Plantillas afectadas por una ruta, para revisar ANTES de actualizar. */
+catalogoRouter.get("/tarifas/previsualizar", async (req, res) => {
+  const origen = String(req.query.origen ?? "");
+  const destino = String(req.query.destino ?? "");
+  if (!/^\d{8}$/.test(origen) || !/^\d{8}$/.test(destino)) {
+    return res
+      .status(422)
+      .json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
+  }
+  const afectadas = await plantillas.buscarPorRuta(origen, destino);
+  res.json(
+    afectadas.map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      valorFleteBase: p.valorFleteBase,
+      fleteActualizadoEn: p.fleteActualizadoEn,
+      municipioCargue: (p as any).municipioCargue,
+      municipioDescargue: (p as any).municipioDescargue,
+    }))
+  );
+});
+
+/** Aplica la nueva tarifa a todas las plantillas de la ruta. */
+catalogoRouter.put("/tarifas", async (req, res) => {
+  const { origen, destino, valorFleteBase } = req.body ?? {};
+  if (!/^\d{8}$/.test(String(origen ?? "")) || !/^\d{8}$/.test(String(destino ?? ""))) {
+    return res
+      .status(422)
+      .json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
+  }
+  const valor = Number(valorFleteBase);
+  if (!Number.isFinite(valor) || valor <= 0) {
+    return res.status(422).json({ error: "El valor del flete debe ser mayor a cero" });
+  }
+
+  const actualizadas = await plantillas.actualizarFletePorRuta(
+    String(origen),
+    String(destino),
+    valor
+  );
+  res.json({ actualizadas, valorFleteBase: valor });
+});
+
+// ---------- ALERTAS DE VENCIMIENTO ----------
+// El RNDC valida SOAT, tecnomecanica y licencia contra la fecha de descargue,
+// no contra hoy: conviene ver lo que vence pronto y no solo lo vencido.
+catalogoRouter.get("/alertas", async (req, res) => {
+  const dias = Number(req.query.dias ?? 30);
+  res.json(await revisarVencimientos(Number.isFinite(dias) ? dias : 30));
+});
+
+// ---------- PARAMETROS DE LA EMPRESA ----------
+// Poliza de carga, FOPAT y tarifa de retefuente. Cambian una vez al ano, asi
+// que viven aqui y no en cada plantilla.
+catalogoRouter.get("/parametros", async (_req, res) => {
+  const p = await parametros.obtener();
+  res.json({ ...p, avisoPoliza: await parametros.revisarVigenciaPoliza() });
+});
+
+catalogoRouter.put("/parametros", async (req, res) => {
+  const b = req.body;
+  const guardados = await parametros.guardar({
+    tomadorPolizaCarga: b.tomadorPolizaCarga ?? undefined,
+    numeroPolizaTransporte: b.numeroPolizaTransporte ?? null,
+    companiaSeguro: b.companiaSeguro ?? null,
+    fechaVencimientoPolizaCarga: b.fechaVencimientoPolizaCarga
+      ? new Date(b.fechaVencimientoPolizaCarga)
+      : null,
+    aplicaFopat: b.aplicaFopat !== undefined ? !!b.aplicaFopat : undefined,
+    tarifaRetencionFuente:
+      b.tarifaRetencionFuente !== undefined ? Number(b.tarifaRetencionFuente) : undefined,
+  });
+  res.json({ ...guardados, avisoPoliza: await parametros.revisarVigenciaPoliza() });
+});
+
 // ---------- PLANTILLAS DE VIAJE ----------
 catalogoRouter.get("/plantillas", async (_req, res) => {
   res.json(await plantillas.findMany());
@@ -106,35 +370,74 @@ catalogoRouter.get("/plantillas", async (_req, res) => {
 
 catalogoRouter.post("/plantillas", async (req, res) => {
   const b = req.body;
+  const params = await parametros.obtener();
+
+  // El codigo de mercancia se guarda normalizado a 6 digitos, igual que como se
+  // envia al RNDC, para que lo almacenado y lo enviado nunca difieran.
+  const codMercancia = normalizarCodigoMercancia(b.codMercancia ?? null);
+
   const creada = await plantillas.create({
     nombre: String(b.nombre).trim(),
     contratanteId: Number(b.contratanteId),
     remitenteId: Number(b.remitenteId),
     destinatarioId: Number(b.destinatarioId),
-    rutaId: Number(b.rutaId),
-    tipoMercancia: b.tipoMercancia ?? null,
+    // La ruta dejo de ser un dato de la plantilla: el origen y el destino del
+    // manifiesto se deducen de los municipios de los sitios de cargue y
+    // descargue. La columna se conserva por compatibilidad.
+    rutaId: b.rutaId ? Number(b.rutaId) : null,
+    // tipoMercancia viaja como DESCRIPCIONCORTAPRODUCTO (maximo 60 caracteres).
+    tipoMercancia: b.tipoMercancia ? String(b.tipoMercancia).slice(0, 60) : null,
+    // Tarifa pactada para la ruta. Se actualiza cuando cambia SICETAC, no en
+    // cada despacho; alli solo se precarga y se puede ajustar.
+    valorFleteBase: b.valorFleteBase ? Number(b.valorFleteBase) : null,
     naturalezaCarga: b.naturalezaCarga ?? null,
     unidadMedida: b.unidadMedida ?? null,
-    valorFleteBase: b.valorFleteBase ? Number(b.valorFleteBase) : null,
     observaciones: b.observaciones ?? null,
-    codOperacionTransporte: b.codOperacionTransporte ?? "G",
-    codNaturalezaCarga: b.codNaturalezaCarga ?? "1",
+
+    // Dos tipos distintos con el mismo nombre de etiqueta en el RNDC.
+    tipoOperacionRemesa: b.tipoOperacionRemesa ?? "G",
+    tipoManifiesto: b.tipoManifiesto ?? "G",
+    codMunicipioIntermedio: b.codMunicipioIntermedio ?? null,
+
+    // Esta empresa solo mueve carga general.
+    codNaturalezaCarga: "1",
     codUnidadMedida: b.codUnidadMedida ?? "1",
     codTipoEmpaque: b.codTipoEmpaque ?? "0",
-    codMercancia: b.codMercancia ?? null,
-    horasPactoCargue: b.horasPactoCargue ? Number(b.horasPactoCargue) : 1,
-    minutosPactoCargue: b.minutosPactoCargue ? Number(b.minutosPactoCargue) : 0,
-    horasPactoDescargue: b.horasPactoDescargue ? Number(b.horasPactoDescargue) : 1,
-    minutosPactoDescargue: b.minutosPactoDescargue ? Number(b.minutosPactoDescargue) : 0,
-    retencionIcaManifiesto: b.retencionIcaManifiesto ? Number(b.retencionIcaManifiesto) : 0,
-    codResponsablePagoCargue: b.codResponsablePagoCargue ?? "E",
-    codResponsablePagoDescargue: b.codResponsablePagoDescargue ?? "E",
+    empaquePrimario: b.empaquePrimario ?? null,
+    codMercancia,
+    subpartidaCode: b.subpartidaCode ?? null,
+    codigoArancelCode: b.codigoArancelCode ?? null,
+    unidadMedidaProducto: b.unidadMedidaProducto ?? "KGM",
+
+    horasPactoCargue: b.horasPactoCargue !== undefined ? Number(b.horasPactoCargue) : 1,
+    minutosPactoCargue: b.minutosPactoCargue !== undefined ? Number(b.minutosPactoCargue) : 0,
+    horasPactoDescargue: b.horasPactoDescargue !== undefined ? Number(b.horasPactoDescargue) : 1,
+    minutosPactoDescargue: b.minutosPactoDescargue !== undefined ? Number(b.minutosPactoDescargue) : 0,
+
+    // Factor de ICA (por mil) del municipio donde carga esta remesa. Con varias
+    // remesas de municipios distintos, el manifiesto lleva el promedio ponderado.
+    factorIcaCargue: b.factorIcaCargue !== undefined ? Number(b.factorIcaCargue) : 0,
+    retencionIcaManifiesto: b.factorIcaCargue !== undefined ? Number(b.factorIcaCargue) : 0,
+
+    // Si la plantilla no la especifica, se hereda la tarifa de la empresa.
+    tarifaRetencionFuente:
+      b.tarifaRetencionFuente !== undefined
+        ? Number(b.tarifaRetencionFuente)
+        : params.tarifaRetencionFuente,
+    titularEsRegimenSimple: !!b.titularEsRegimenSimple,
+
+    // Solo admiten R (remitente) o D (destinatario).
+    codResponsablePagoCargue: b.codResponsablePagoCargue ?? "R",
+    codResponsablePagoDescargue: b.codResponsablePagoDescargue ?? "D",
     aceptacionElectronica: b.aceptacionElectronica ?? "NO",
     codMunicipioPagoSaldo: b.codMunicipioPagoSaldo ?? null,
-    tomadorPolizaCarga: b.tomadorPolizaCarga ?? "Empresa Transporte",
-    numeroPolizaTransporte: b.numeroPolizaTransporte ?? null,
-    companiaSeguro: b.companiaSeguro ?? null,
-    fechaVencimientoPolizaCarga: b.fechaVencimientoPolizaCarga ? new Date(b.fechaVencimientoPolizaCarga) : null,
+
+    // La poliza es la misma para toda la empresa: se copia de los parametros y
+    // ya no se pide plantilla por plantilla.
+    tomadorPolizaCarga: params.tomadorPolizaCarga,
+    numeroPolizaTransporte: params.numeroPolizaTransporte,
+    companiaSeguro: params.companiaSeguro,
+    fechaVencimientoPolizaCarga: params.fechaVencimientoPolizaCarga,
   });
   res.status(201).json(creada);
 });

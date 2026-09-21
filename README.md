@@ -413,3 +413,178 @@ tocar `routes/` ni `rndc/`.
   estacion de combustible y liquidacion de rentabilidad ya tienen su modelo de
   datos disenado (ver diagramas ER de la conversacion) pero no estan
   implementados en este codigo — son la Fase 2 en adelante.
+
+## Pruebas contra el ambiente del Ministerio
+
+El RNDC tiene un ambiente de pruebas separado: `http://plc.mintransporte.gov.co:8080/ws`.
+Es una copia de la base de produccion de una fecha pasada, y **usa el mismo
+usuario y la misma contrasena que produccion**. Lo unico que separa una prueba
+de un documento real es la variable `RNDC_AMBIENTE`.
+
+Por eso apuntar a produccion exige, ademas, `RNDC_CONFIRMO_PRODUCCION`. Sin esa
+confirmacion el backend se niega a arrancar.
+
+Como la copia es de una fecha pasada, los vehiculos, terceros y sedes que hayas
+dado de alta recientemente en produccion pueden no existir en pruebas.
+
+### Orden recomendado
+
+1. `cp datos-empresa.example.json datos-empresa.json` y llenarlo con datos
+   reales de la empresa. El archivo esta en `.gitignore`: no se versiona.
+2. `npm run cargar-datos` para volcarlo a la base local. Es idempotente.
+3. `RNDC_SIMULAR=true` y despachar un viaje desde la interfaz, para revisar el
+   XML que se armaria sin contactar al Ministerio.
+4. `RNDC_SIMULAR=false` con `RNDC_AMBIENTE=pruebas`, y `npm run verificar` para
+   comprobar conexion, credenciales y estado de las placas en el RNA.
+5. Despachar un viaje real contra pruebas.
+
+### Lo que hay que revisar en el portal web
+
+`npm run verificar` no puede comprobar esto por webservice:
+
+- Vehiculos vinculados al parque automotor (Herramientas -> Vehiculos Remolques).
+- Terceros creados **con la sede** que se va a usar (Herramientas -> Terceros).
+- Rango de consecutivos de manifiesto asignado al usuario tipo 1, desde el
+  usuario principal tipo 6 (Administrar Usuarios).
+- Habilitacion de la empresa activa.
+
+Tambien existe una herramienta web del Ministerio para armar y probar XML a
+mano, apuntando al mismo servidor de pruebas:
+`https://rndc.mintransporte.gov.co/wstest/defaultp.aspx`
+
+## Carga masiva desde CSV
+
+Para volumenes grandes (cientos de terceros) hay un importador con revision
+previa:
+
+```bash
+npm run importar -- terceros mis-terceros.csv            # revisa, no escribe
+npm run importar -- terceros mis-terceros.csv --aplicar  # escribe
+```
+
+Tipos: `municipios`, `terceros`, `vehiculos`, `conductores`, `remolques`, `rutas`.
+
+Sin `--aplicar` valida todo el archivo y muestra el informe completo: errores
+(esas filas no se cargarian) y avisos (se cargan, pero conviene revisarlos).
+Es idempotente, asi que se puede correr varias veces sin duplicar.
+
+Hay un CSV de ejemplo por cada tipo en `plantillas-csv/`.
+
+### Orden recomendado
+
+1. `municipios` primero. Con el catalogo cargado, en los demas archivos se puede
+   escribir el municipio por NOMBRE y el importador resuelve el codigo DIVIPOLA.
+2. `terceros`, `vehiculos`, `conductores`, `remolques`.
+3. `rutas` (opcional: son solo pares origen-destino propios, el RNDC no las conoce).
+
+### Sobre las rutas
+
+El RNDC no tiene catalogo de rutas. El manifiesto solo lleva los codigos DIVIPOLA
+de origen y destino, y opcionalmente `CODVIA` (la via de SICETAC para ese par).
+Si no se manda `CODVIA`, el RNDC asigna la via estandar, que es lo normal.
+
+Por eso el concepto de ruta salio de la interfaz. El origen y el destino del
+manifiesto se DEDUCEN de los municipios del sitio de cargue de la primera remesa
+y del sitio de descargue de la ultima, que es justo lo que exige el Manual
+(5.2.4). Si el viaje tiene trayectos en vacio, mandan esos.
+
+Consecuencia practica: cada tercero que se use como sitio de cargue o descargue
+DEBE tener su `codMunicipioRndc`. Si falta, el despacho se detiene diciendo cual
+tercero y cual sede hay que completar.
+
+El importador de `rutas` sigue existiendo para bases viejas, pero ya no hace
+falta usarlo.
+
+## Vias (CODVIA)
+
+La via elegida cambia el valor de referencia de SICETAC y con el el piso del
+flete, asi que se selecciona en cada despacho. El manifiesto la envia en
+`CODVIA`; si va vacia, el RNDC asigna la via estandar de SICETAC para ese par
+origen-destino.
+
+Las vias se guardan por par de municipios y se cargan con el importador:
+
+```bash
+npm run importar -- vias mis-vias.csv --aplicar
+```
+
+Columnas: `codVia`, `codMunicipioOrigen`, `codMunicipioDestino`, `descripcion`,
+`valorSicetac` (opcional), `esEstandar` (1 para la que el RNDC usa por defecto).
+
+De donde salen: del desplegable "Via a Utilizar" del portal del RNDC, al expedir
+un manifiesto para ese origen-destino. Copiar el codigo y la descripcion tal
+cual. Si tambien se registra `valorSicetac`, el sistema avisa cuando el flete
+queda por debajo del piso.
+
+### Consulta automatica a SICETAC
+
+Las vias ya NO hay que cargarlas a mano: se consultan en linea. Al elegir el
+vehiculo y las plantillas, el despacho consulta SICETAC (tipo 6, procesoid 26)
+y llena el desplegable con las vias reales de ese par de municipios y su piso
+tarifario.
+
+Detalles que la implementacion tiene en cuenta:
+
+- Los municipios de la consulta deben ser cabecera (DIVIPOLA terminado en 000).
+  Si un tercero esta en una vereda, se normaliza antes de consultar.
+- El periodo es AñoMes. Si no hay datos, se reintenta hacia atras: un mes puede
+  heredar los valores del anterior.
+- SICETAC devuelve una fila por cada combinacion de ruta, tipo de carga y unidad
+  de transporte. Se filtra por la de la empresa (ver SICETAC_* en .env).
+- El piso NO es el valor de movilizacion solo. Es:
+  `valor movilizacion + (valor hora x horas pactadas de cargue y descargue)`.
+- Lo consultado se guarda en la tabla `vias`, y si el servicio no responde se
+  despacha con esos valores avisando que pueden estar desactualizados.
+
+El importador `npm run importar -- vias` sigue existiendo para cargar vias a
+mano, pero ya no es necesario en la operacion normal.
+
+## Alertas de vencimiento
+
+El RNDC valida SOAT, tecnomecanica y licencia contra la fecha mas alta de cita
+de DESCARGUE del manifiesto, no contra la fecha de hoy. Un documento que vence
+pasado manana ya bloquea un viaje que descarga el viernes.
+
+El dashboard muestra lo vencido y lo que vence dentro de los proximos 30 dias
+(configurable con `?dias=` en `GET /api/catalogo/alertas`). Cubre SOAT y
+tecnomecanica de vehiculos, tecnomecanica de remolques, licencias de conductores
+y la poliza de carga de la empresa.
+
+Los registros SIN fecha se reportan aparte. No estan vencidos, pero tampoco se
+puede afirmar que esten vigentes, y esa diferencia importa porque el despacho si
+los deja pasar.
+
+### Como mantener las fechas al dia
+
+El RNDC llena los datos de licencia desde el RUNT cuando se crea el tercero, y
+los expone en el export del Maestro de Terceros del portal. Ese export es la via
+para refrescar:
+
+1. Portal RNDC -> exportar el Maestro de Terceros.
+2. Convertirlo al CSV de `conductores` (columnas `cedula`, `nombre`, `codTipoId`,
+   `licencia`, `categoriaLicencia`, `fechaVencLicencia`).
+3. `npm run importar -- conductores conductores.csv --aplicar --actualizar`
+
+Con `--actualizar`, los conductores que ya existen NO se saltan: se les refresca
+licencia, categoria y vencimiento. Sin esa bandera se saltan, que es el
+comportamiento correcto para una carga inicial.
+
+Lo mismo aplica a `vehiculos`, que refresca SOAT, tecnomecanica, configuracion y
+peso vacio.
+
+### Lo que NO se puede consultar por webservice (todavia)
+
+El proceso 48 (RNA) devuelve solo `estadomatricula`, `fechabloqueo`,
+`fechadesbloqueo`, `codconfiguracion` y `clase`. NO trae fechas de SOAT ni de
+tecnomecanica, asi que no sirve para alimentar estas alertas.
+
+No se encontro documentacion de un proceso que devuelva esas fechas ni la
+licencia del conductor. El portal del RNDC si las muestra al digitar la placa o
+la cedula, o sea que el dato existe del lado del Ministerio; falta saber por cual
+proceso se pide.
+
+Para averiguarlo esta la herramienta web del Ministerio:
+`https://rndc.mintransporte.gov.co/wstest/defaultp.aspx` -> Consultar Maestros ->
+escribir el numero de proceso -> boton "Validar", que muestra el diccionario de
+datos de ese proceso. Con el numero y las variables confirmadas, reemplazar la
+reimportacion manual por una consulta automatica es directo.

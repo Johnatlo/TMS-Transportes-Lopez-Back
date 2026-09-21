@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { config } from "./config";
+import { config, describirAmbiente } from "./config";
 import { initSchema } from "./db";
 import { catalogoRouter } from "./routes/catalogo";
 import { despachoRouter } from "./routes/despacho";
@@ -14,7 +14,11 @@ async function main() {
   app.use(express.json());
 
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, rndcSimulado: config.rndc.simular });
+    res.json({
+      ok: true,
+      rndcSimulado: config.rndc.simular,
+      ambiente: config.rndc.nombreAmbiente,
+    });
   });
 
   app.use("/api/catalogo", catalogoRouter);
@@ -22,7 +26,7 @@ async function main() {
 
   app.listen(config.port, () => {
     console.log(`Backend RNDC escuchando en http://localhost:${config.port}`);
-    console.log(`Modo simulacion RNDC: ${config.rndc.simular}`);
+    console.log(describirAmbiente());
   });
 }
 

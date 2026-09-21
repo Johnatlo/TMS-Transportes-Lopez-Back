@@ -7,7 +7,10 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "seed": "ts-node src/seed.ts"
+    "seed": "ts-node src/seed.ts",
+    "cargar-datos": "ts-node src/scripts/cargar-datos.ts",
+    "verificar": "ts-node src/scripts/verificar-rndc.ts",
+    "importar": "ts-node src/scripts/importar.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

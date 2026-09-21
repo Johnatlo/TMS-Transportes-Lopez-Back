@@ -23,6 +23,8 @@ async function main() {
     numIdTenedor: "900111222",
     codTipoCarroceria: "0",
     pesoVehiculoVacio: 8000,
+    // PBV > 10.5 t, asi que el manifiesto lleva aporte FOPAT.
+    aplicaFopat: true,
   });
 
   const conductor = await conductores.create({
@@ -61,6 +63,8 @@ async function main() {
     codigoOrigenRndc: "11001000",
     codigoDestinoRndc: "76001000",
     distanciaKm: 461,
+    // Sin via explicita: el RNDC asigna la via estandar de SICETAC.
+    codVia: null,
   });
 
   const plantilla = await plantillas.create({
@@ -69,25 +73,38 @@ async function main() {
     remitenteId: cliente.id,
     destinatarioId: cliente.id,
     rutaId: ruta.id,
-    tipoMercancia: "Carga general de prueba",
+    // tipoMercancia es el texto que viaja como DESCRIPCIONCORTAPRODUCTO
+    // (obligatorio en carga general, maximo 60 caracteres).
+    tipoMercancia: "PAPEL Y CARTON PARA RECICLAJE",
     naturalezaCarga: null,
     unidadMedida: null,
-    valorFleteBase: 500000,
     observaciones: null,
-    codOperacionTransporte: "G",
-    codNaturalezaCarga: "1",
+    // Dos tipos distintos, aunque aqui coincidan en "G".
+    tipoOperacionRemesa: "G",
+    tipoManifiesto: "G",
+    codMunicipioIntermedio: null,
+    codNaturalezaCarga: "1", // carga general
     codUnidadMedida: "1",
     codTipoEmpaque: "0",
-    codMercancia: null,
+    // Partida 4707 = papel y carton para reciclar. Se guarda con los dos ceros
+    // a la izquierda que exige el RNDC.
+    codMercancia: "004707",
+    subpartidaCode: null,
+    codigoArancelCode: null,
+    empaquePrimario: null,
+    unidadMedidaProducto: "KGM",
     horasPactoCargue: 1,
     minutosPactoCargue: 0,
     horasPactoDescargue: 1,
     minutosPactoDescargue: 0,
     retencionIcaManifiesto: 0,
-    codResponsablePagoCargue: "E",
-    codResponsablePagoDescargue: "E",
+    tarifaRetencionFuente: 0.01,
+    titularEsRegimenSimple: false,
+    codResponsablePagoCargue: "R", // remitente
+    codResponsablePagoDescargue: "D", // destinatario
     aceptacionElectronica: "NO",
     codMunicipioPagoSaldo: null,
+    // Datos internos de la poliza: no se envian al RNDC.
     tomadorPolizaCarga: "Empresa Transporte",
     numeroPolizaTransporte: "900001238395",
     companiaSeguro: "SBS SEGUROS",

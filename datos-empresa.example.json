@@ -1,0 +1,191 @@
+{
+  "_ayuda": [
+    "Copia este archivo como datos-empresa.json y reemplaza los valores por los",
+    "de tu empresa. Luego corre: npm run cargar-datos",
+    "",
+    "TODO lo que pongas aqui tiene que existir YA en el RNDC del ambiente al que",
+    "vas a apuntar. Este archivo no crea nada en el Ministerio: solo llena tu base",
+    "local con datos que el RNDC ya conoce.",
+    "",
+    "Si vas a probar contra el ambiente de pruebas, recuerda que es una copia de",
+    "produccion de una fecha pasada: lo que registraste hace poco puede no estar."
+  ],
+  "terceros": [
+    {
+      "_ayuda": [
+        "Deben existir en el RNDC: Herramientas -> Terceros.",
+        "codTipoId: N = NIT, C = Cedula de ciudadania, E = Cedula de extranjeria.",
+        "codSede: el codigo de la sede tal como aparece en el portal. Si el tercero",
+        "tiene varias sedes, crea una entrada por cada sede que uses, porque el",
+        "sitio de cargue y el de descargue se identifican por sede.",
+        "",
+        "latitud / longitud: copialas EXACTAMENTE como estan en el portal del RNDC",
+        "(pantalla de Tercero, 'Latitud/Longitud Ubicacion Sede'). El RNDC compara",
+        "el GPS del vehiculo contra ese punto para verificar que estuvo en la sede",
+        "durante el cargue. Aqui no se envian: solo sirven para avisarte si estan",
+        "mal puestas. Latitud entre -5 y 14, longitud entre -79 y -66, y minimo 6",
+        "decimales. Ejemplo: 4.6482837 / -74.0669823"
+      ],
+      "nit": "REEMPLAZAR",
+      "nombre": "REEMPLAZAR - Cliente / generador de carga",
+      "codTipoId": "N",
+      "codSede": "0",
+      "direccion": null,
+      "ciudad": null,
+      "telefono": null,
+      "rol": "contratante",
+      "latitud": null,
+      "longitud": null
+    },
+    {
+      "nit": "REEMPLAZAR",
+      "nombre": "REEMPLAZAR - Bodega de cargue",
+      "codTipoId": "N",
+      "codSede": "0",
+      "direccion": null,
+      "ciudad": null,
+      "telefono": null,
+      "rol": "remitente",
+      "latitud": null,
+      "longitud": null
+    },
+    {
+      "nit": "REEMPLAZAR",
+      "nombre": "REEMPLAZAR - Sitio de descargue",
+      "codTipoId": "N",
+      "codSede": "0",
+      "direccion": null,
+      "ciudad": null,
+      "telefono": null,
+      "rol": "destinatario",
+      "latitud": null,
+      "longitud": null
+    }
+  ],
+  "vehiculos": [
+    {
+      "_ayuda": [
+        "La placa debe estar en el RNA del RUNT con matricula activa, servicio",
+        "publico y modalidad de carga, y vinculada a tu parque automotor en el",
+        "RNDC (Herramientas -> Vehiculos Remolques).",
+        "",
+        "numIdTenedor es el TITULAR DEL MANIFIESTO: el propietario o tenedor del",
+        "vehiculo segun el RUNT, a quien se le paga el flete. No es tu cliente.",
+        "Si el vehiculo esta en leasing, va el locatario, nunca el banco.",
+        "",
+        "aplicaFopat: true si el peso bruto vehicular pasa de 10.5 toneladas.",
+        "",
+        "configuracion la puedes dejar en null: 'npm run verificar' la consulta",
+        "en el RNDC y te dice cual es la correcta."
+      ],
+      "placa": "REEMPLAZAR",
+      "marca": null,
+      "configuracion": null,
+      "capacidadKg": null,
+      "pesoVehiculoVacio": null,
+      "codTipoIdTenedor": "C",
+      "numIdTenedor": "REEMPLAZAR",
+      "codTipoCarroceria": "0",
+      "aplicaFopat": true,
+      "fechaVencSoat": "2027-01-01",
+      "fechaVencTecnomecanica": "2027-01-01"
+    }
+  ],
+  "remolques": [
+    {
+      "_ayuda": "Debe estar en el registro RNR del RUNT. Omite este bloque si usas vehiculo rigido.",
+      "placa": "REEMPLAZAR",
+      "numEjes": null,
+      "capacidadKg": null,
+      "fechaVencSoat": null,
+      "fechaVencTecnomecanica": "2027-01-01"
+    }
+  ],
+  "conductores": [
+    {
+      "_ayuda": [
+        "La licencia debe estar vigente en una fecha POSTERIOR a la cita de",
+        "descargue de los viajes que vayas a despachar, no solo hoy."
+      ],
+      "cedula": "REEMPLAZAR",
+      "nombre": "REEMPLAZAR",
+      "licencia": null,
+      "categoriaLicencia": null,
+      "fechaVencLicencia": "2027-01-01",
+      "codTipoId": "C"
+    }
+  ],
+  "rutas": [
+    {
+      "_ayuda": [
+        "Los codigos de municipio son DIVIPOLA de 8 digitos: 5 del municipio mas",
+        "3 del centro poblado (000 para la cabecera).",
+        "Ejemplos: Bogota D.C. = 11001000, Cali = 76001000, Medellin = 5001000,",
+        "Buenaventura = 76109000, Barranquilla = 8001000.",
+        "",
+        "codVia es opcional: si lo dejas en null, el RNDC asigna la via estandar",
+        "de SICETAC para esa ruta, que es lo normal."
+      ],
+      "ciudadOrigen": "REEMPLAZAR",
+      "codigoOrigenRndc": "REEMPLAZAR",
+      "ciudadDestino": "REEMPLAZAR",
+      "codigoDestinoRndc": "REEMPLAZAR",
+      "distanciaKm": null,
+      "codVia": null
+    }
+  ],
+  "plantillas": [
+    {
+      "_ayuda": [
+        "contratante, remitente y destinatario se referencian por NIT + sede, y",
+        "tienen que estar en la lista de terceros de arriba.",
+        "ruta se referencia por 'origen->destino' usando los codigos DIVIPOLA.",
+        "",
+        "codMercancia: 4 digitos de capitulo+partida (se guardan como 00XXXX).",
+        "Deja subpartida y arancel en null: si el RNDC los exige, el sistema te",
+        "lo dira con el codigo exacto en el primer despacho.",
+        "",
+        "tipoManifiesto: G=General, I=Ida y regreso, M=Multiparada, U=Urbano,",
+        "D=Varios viajes en el dia, W=Viaje en vacio.",
+        "",
+        "responsablePagoCargue/Descargue: solo R (remitente) o D (destinatario).",
+        "",
+        "retencionIca va en POR MIL (si el municipio retiene 9 por mil, escribe 9).",
+        "tarifaRetencionFuente va en fraccion (0.01 = 1%)."
+      ],
+      "nombre": "REEMPLAZAR - Cliente - Origen a Destino",
+      "contratanteNit": "REEMPLAZAR",
+      "contratanteSede": "0",
+      "remitenteNit": "REEMPLAZAR",
+      "remitenteSede": "0",
+      "destinatarioNit": "REEMPLAZAR",
+      "destinatarioSede": "0",
+      "rutaOrigen": "REEMPLAZAR",
+      "rutaDestino": "REEMPLAZAR",
+      "descripcionProducto": "REEMPLAZAR - maximo 60 caracteres",
+      "codMercancia": "REEMPLAZAR",
+      "subpartidaCode": null,
+      "codigoArancelCode": null,
+      "unidadMedidaProducto": "KGM",
+      "codTipoEmpaque": "0",
+      "empaquePrimario": null,
+      "valorFleteBase": null,
+      "tipoManifiesto": "G",
+      "codMunicipioIntermedio": null,
+      "horasPactoCargue": 2,
+      "minutosPactoCargue": 0,
+      "horasPactoDescargue": 2,
+      "minutosPactoDescargue": 0,
+      "retencionIca": 0,
+      "tarifaRetencionFuente": 0.01,
+      "titularEsRegimenSimple": false,
+      "responsablePagoCargue": "R",
+      "responsablePagoDescargue": "D",
+      "aceptacionElectronica": "NO",
+      "codMunicipioPagoSaldo": null,
+      "numeroPolizaTransporte": null,
+      "companiaSeguro": null,
+      "fechaVencimientoPolizaCarga": null
+    }
+  ]
+}
