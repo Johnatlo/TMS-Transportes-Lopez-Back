@@ -11,7 +11,19 @@ import {
   periodoDe,
   CONDICION_CARGA,
 } from "../rndc/sicetac";
-import { vehiculos, conductores, terceros, rutas, plantillas, remolques, parametros, vias } from "../repo";
+import {
+  vehiculos,
+  conductores,
+  terceros,
+  rutas,
+  plantillas,
+  remolques,
+  parametros,
+  vias,
+  empresasMonitoreo,
+  municipios,
+  type NuevaPlantilla,
+} from "../repo";
 
 export const catalogoRouter = Router();
 
@@ -136,6 +148,49 @@ catalogoRouter.post("/rutas", async (req, res) => {
     distanciaKm: b.distanciaKm ? Number(b.distanciaKm) : null,
   });
   res.status(201).json(creada);
+});
+
+// ---------- MUNICIPIOS (DIVIPOLA) ----------
+// Para elegir la ruta de una plantilla por nombre y no por codigo. Puede venir
+// vacio si aun no se importo el CSV de municipios.
+catalogoRouter.get("/municipios", async (_req, res) => {
+  res.json(await municipios.findMany());
+});
+
+// ---------- EMPRESAS DE MONITOREO DE FLOTA ----------
+// El NIT de la EMF es obligatorio en el manifiesto (error MAN067) y depende del
+// proveedor de GPS del vehiculo, asi que se mantiene como catalogo.
+
+catalogoRouter.get("/monitoreo", async (_req, res) => {
+  res.json(await empresasMonitoreo.findMany());
+});
+
+catalogoRouter.post("/monitoreo", async (req, res) => {
+  const nit = String(req.body?.nit ?? "").replace(/\D/g, "");
+  const nombre = String(req.body?.nombre ?? "").trim();
+  if (!nit || !nombre) {
+    return res.status(422).json({ error: "Indica el NIT y el nombre de la empresa de monitoreo" });
+  }
+  if (nit.length > 15) {
+    return res.status(422).json({ error: "El NIT de la empresa de monitoreo admite maximo 15 digitos" });
+  }
+  await empresasMonitoreo.guardar(nit, nombre);
+  res.status(201).json(await empresasMonitoreo.findByNit(nit));
+});
+
+catalogoRouter.delete("/monitoreo/:id", async (req, res) => {
+  const ok = await empresasMonitoreo.desactivar(Number(req.params.id));
+  if (!ok) return res.status(404).json({ error: "Empresa de monitoreo no encontrada" });
+  res.status(204).send();
+});
+
+/** Fija el proveedor de GPS por defecto de un vehiculo. */
+catalogoRouter.put("/vehiculos/:id/monitoreo", async (req, res) => {
+  const nit = req.body?.nitMonitoreoFlota
+    ? String(req.body.nitMonitoreoFlota).replace(/\D/g, "")
+    : null;
+  await vehiculos.fijarMonitoreo(Number(req.params.id), nit);
+  res.json(await vehiculos.findById(Number(req.params.id)));
 });
 
 // ---------- VIAS (CODVIA) ----------
@@ -368,76 +423,148 @@ catalogoRouter.get("/plantillas", async (_req, res) => {
   res.json(await plantillas.findMany());
 });
 
-catalogoRouter.post("/plantillas", async (req, res) => {
-  const b = req.body;
+/**
+ * "Elimina" una plantilla (en realidad la desactiva: ver plantillas.desactivar
+ * en el repo). No se borra de verdad porque el historial de viajes y remesas
+ * la referencia por id.
+ */
+catalogoRouter.delete("/plantillas/:id", async (req, res) => {
+  const ok = await plantillas.desactivar(Number(req.params.id));
+  if (!ok) return res.status(404).json({ error: "Plantilla no encontrada" });
+  res.status(204).send();
+});
+
+/**
+ * Convierte el cuerpo de la peticion en los datos de una plantilla.
+ *
+ * Lo comparten la creacion y la edicion, para que las dos normalicen igual.
+ * Devuelve un mensaje de error si falta algo sin lo cual no se puede
+ * despachar.
+ */
+async function plantillaDesdeCuerpo(
+  b: any
+): Promise<{ datos: NuevaPlantilla } | { error: string }> {
   const params = await parametros.obtener();
+
+  // Ruta explicita. Lo que no llegue se precarga con el municipio del
+  // remitente y del destinatario; si aun asi falta, no se guarda: sin ruta no
+  // se pueden pedir las vias a SICETAC ni validar el manifiesto.
+  const ruta = await plantillas.resolverRuta(
+    Number(b.remitenteId),
+    Number(b.destinatarioId),
+    b.municipioOrigen,
+    b.municipioDestino
+  );
+  for (const [etiqueta, codigo] of [
+    ["origen", ruta.municipioOrigen],
+    ["destino", ruta.municipioDestino],
+  ] as const) {
+    if (!codigo) {
+      return {
+        error:
+          `Falta el municipio de ${etiqueta} de la ruta y el tercero tampoco tiene uno ` +
+          `registrado. Escribelo en la plantilla o completalo en el catalogo de terceros.`,
+      };
+    }
+    if (!/^\d{8}$/.test(codigo)) {
+      return {
+        error: `El municipio de ${etiqueta} de la ruta (${codigo}) debe ser un codigo DIVIPOLA de 8 digitos`,
+      };
+    }
+  }
 
   // El codigo de mercancia se guarda normalizado a 6 digitos, igual que como se
   // envia al RNDC, para que lo almacenado y lo enviado nunca difieran.
   const codMercancia = normalizarCodigoMercancia(b.codMercancia ?? null);
 
-  const creada = await plantillas.create({
-    nombre: String(b.nombre).trim(),
-    contratanteId: Number(b.contratanteId),
-    remitenteId: Number(b.remitenteId),
-    destinatarioId: Number(b.destinatarioId),
-    // La ruta dejo de ser un dato de la plantilla: el origen y el destino del
-    // manifiesto se deducen de los municipios de los sitios de cargue y
-    // descargue. La columna se conserva por compatibilidad.
-    rutaId: b.rutaId ? Number(b.rutaId) : null,
-    // tipoMercancia viaja como DESCRIPCIONCORTAPRODUCTO (maximo 60 caracteres).
-    tipoMercancia: b.tipoMercancia ? String(b.tipoMercancia).slice(0, 60) : null,
-    // Tarifa pactada para la ruta. Se actualiza cuando cambia SICETAC, no en
-    // cada despacho; alli solo se precarga y se puede ajustar.
-    valorFleteBase: b.valorFleteBase ? Number(b.valorFleteBase) : null,
-    naturalezaCarga: b.naturalezaCarga ?? null,
-    unidadMedida: b.unidadMedida ?? null,
-    observaciones: b.observaciones ?? null,
+  return {
+    datos: {
+      nombre: String(b.nombre).trim(),
+      contratanteId: Number(b.contratanteId),
+      remitenteId: Number(b.remitenteId),
+      destinatarioId: Number(b.destinatarioId),
+      // Columna heredada de la vieja tabla de rutas. Se conserva por
+      // compatibilidad; la ruta vive en municipioOrigen/municipioDestino.
+      rutaId: b.rutaId ? Number(b.rutaId) : null,
+      municipioOrigen: ruta.municipioOrigen,
+      municipioDestino: ruta.municipioDestino,
+      // tipoMercancia viaja como DESCRIPCIONCORTAPRODUCTO (maximo 60 caracteres).
+      tipoMercancia: b.tipoMercancia ? String(b.tipoMercancia).slice(0, 60) : null,
+      // Tarifa pactada para la ruta. Se actualiza cuando cambia SICETAC, no en
+      // cada despacho; alli solo se precarga y se puede ajustar.
+      valorFleteBase: b.valorFleteBase ? Number(b.valorFleteBase) : null,
+      naturalezaCarga: b.naturalezaCarga ?? null,
+      unidadMedida: b.unidadMedida ?? null,
+      observaciones: b.observaciones ?? null,
 
-    // Dos tipos distintos con el mismo nombre de etiqueta en el RNDC.
-    tipoOperacionRemesa: b.tipoOperacionRemesa ?? "G",
-    tipoManifiesto: b.tipoManifiesto ?? "G",
-    codMunicipioIntermedio: b.codMunicipioIntermedio ?? null,
+      // Dos tipos distintos con el mismo nombre de etiqueta en el RNDC.
+      tipoOperacionRemesa: b.tipoOperacionRemesa ?? "G",
+      tipoManifiesto: b.tipoManifiesto ?? "G",
+      codMunicipioIntermedio: b.codMunicipioIntermedio ?? null,
 
-    // Esta empresa solo mueve carga general.
-    codNaturalezaCarga: "1",
-    codUnidadMedida: b.codUnidadMedida ?? "1",
-    codTipoEmpaque: b.codTipoEmpaque ?? "0",
-    empaquePrimario: b.empaquePrimario ?? null,
-    codMercancia,
-    subpartidaCode: b.subpartidaCode ?? null,
-    codigoArancelCode: b.codigoArancelCode ?? null,
-    unidadMedidaProducto: b.unidadMedidaProducto ?? "KGM",
+      // Esta empresa solo mueve carga general.
+      codNaturalezaCarga: "1",
+      codUnidadMedida: b.codUnidadMedida ?? "1",
+      codTipoEmpaque: b.codTipoEmpaque ?? "0",
+      empaquePrimario: b.empaquePrimario ?? null,
+      codMercancia,
+      subpartidaCode: b.subpartidaCode ?? null,
+      codigoArancelCode: b.codigoArancelCode ?? null,
+      unidadMedidaProducto: b.unidadMedidaProducto ?? "KGM",
 
-    horasPactoCargue: b.horasPactoCargue !== undefined ? Number(b.horasPactoCargue) : 1,
-    minutosPactoCargue: b.minutosPactoCargue !== undefined ? Number(b.minutosPactoCargue) : 0,
-    horasPactoDescargue: b.horasPactoDescargue !== undefined ? Number(b.horasPactoDescargue) : 1,
-    minutosPactoDescargue: b.minutosPactoDescargue !== undefined ? Number(b.minutosPactoDescargue) : 0,
+      horasPactoCargue: b.horasPactoCargue !== undefined ? Number(b.horasPactoCargue) : 1,
+      minutosPactoCargue: b.minutosPactoCargue !== undefined ? Number(b.minutosPactoCargue) : 0,
+      horasPactoDescargue: b.horasPactoDescargue !== undefined ? Number(b.horasPactoDescargue) : 1,
+      minutosPactoDescargue:
+        b.minutosPactoDescargue !== undefined ? Number(b.minutosPactoDescargue) : 0,
 
-    // Factor de ICA (por mil) del municipio donde carga esta remesa. Con varias
-    // remesas de municipios distintos, el manifiesto lleva el promedio ponderado.
-    factorIcaCargue: b.factorIcaCargue !== undefined ? Number(b.factorIcaCargue) : 0,
-    retencionIcaManifiesto: b.factorIcaCargue !== undefined ? Number(b.factorIcaCargue) : 0,
+      // Factor de ICA (por mil) del municipio donde carga esta remesa. Con varias
+      // remesas de municipios distintos, el manifiesto lleva el promedio ponderado.
+      factorIcaCargue: b.factorIcaCargue !== undefined ? Number(b.factorIcaCargue) : 0,
+      retencionIcaManifiesto: b.factorIcaCargue !== undefined ? Number(b.factorIcaCargue) : 0,
 
-    // Si la plantilla no la especifica, se hereda la tarifa de la empresa.
-    tarifaRetencionFuente:
-      b.tarifaRetencionFuente !== undefined
-        ? Number(b.tarifaRetencionFuente)
-        : params.tarifaRetencionFuente,
-    titularEsRegimenSimple: !!b.titularEsRegimenSimple,
+      // Si la plantilla no la especifica, se hereda la tarifa de la empresa.
+      tarifaRetencionFuente:
+        b.tarifaRetencionFuente !== undefined
+          ? Number(b.tarifaRetencionFuente)
+          : params.tarifaRetencionFuente,
+      titularEsRegimenSimple: !!b.titularEsRegimenSimple,
 
-    // Solo admiten R (remitente) o D (destinatario).
-    codResponsablePagoCargue: b.codResponsablePagoCargue ?? "R",
-    codResponsablePagoDescargue: b.codResponsablePagoDescargue ?? "D",
-    aceptacionElectronica: b.aceptacionElectronica ?? "NO",
-    codMunicipioPagoSaldo: b.codMunicipioPagoSaldo ?? null,
+      // Solo admiten R (remitente) o D (destinatario).
+      codResponsablePagoCargue: b.codResponsablePagoCargue ?? "R",
+      codResponsablePagoDescargue: b.codResponsablePagoDescargue ?? "D",
+      aceptacionElectronica: b.aceptacionElectronica ?? "NO",
+      codMunicipioPagoSaldo: b.codMunicipioPagoSaldo ?? null,
 
-    // La poliza es la misma para toda la empresa: se copia de los parametros y
-    // ya no se pide plantilla por plantilla.
-    tomadorPolizaCarga: params.tomadorPolizaCarga,
-    numeroPolizaTransporte: params.numeroPolizaTransporte,
-    companiaSeguro: params.companiaSeguro,
-    fechaVencimientoPolizaCarga: params.fechaVencimientoPolizaCarga,
-  });
-  res.status(201).json(creada);
+      // La poliza es la misma para toda la empresa: se copia de los parametros y
+      // ya no se pide plantilla por plantilla.
+      tomadorPolizaCarga: params.tomadorPolizaCarga,
+      numeroPolizaTransporte: params.numeroPolizaTransporte,
+      companiaSeguro: params.companiaSeguro,
+      fechaVencimientoPolizaCarga: params.fechaVencimientoPolizaCarga,
+    },
+  };
+}
+
+catalogoRouter.post("/plantillas", async (req, res) => {
+  const r = await plantillaDesdeCuerpo(req.body);
+  if ("error" in r) return res.status(422).json({ error: r.error });
+  res.status(201).json(await plantillas.create(r.datos));
+});
+
+/**
+ * Edita una plantilla.
+ *
+ * Lo que no venga en el cuerpo conserva su valor actual (se mezcla sobre la
+ * plantilla guardada), asi un cliente que mande solo algunos campos no borra
+ * el resto con los valores por defecto.
+ */
+catalogoRouter.put("/plantillas/:id", async (req, res) => {
+  const actual = await plantillas.findById(Number(req.params.id));
+  if (!actual || !actual.activa) {
+    return res.status(404).json({ error: "Plantilla no encontrada" });
+  }
+  const r = await plantillaDesdeCuerpo({ ...actual, ...req.body });
+  if ("error" in r) return res.status(422).json({ error: r.error });
+  res.json(await plantillas.update(actual.id, r.datos));
 });

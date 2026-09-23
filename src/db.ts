@@ -222,6 +222,22 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Empresas de monitoreo de flota (EMF) registradas en el RNDC.
+  //
+  // El manifiesto exige el NIT de la EMF que reporta los tiempos logisticos
+  // del viaje (NITMONITOREOFLOTA), y ese NIT debe estar en la lista de EMF
+  // registradas en el RNDC [MANIFIESTO V7, diccionario de datos y error
+  // MAN067]. No es un valor fijo de la empresa: depende del proveedor de GPS
+  // del vehiculo, y cuando carga un tercero suele ser otro.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS empresas_monitoreo (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nit VARCHAR(15) NOT NULL UNIQUE,
+      nombre VARCHAR(150) NOT NULL,
+      activa TINYINT(1) NOT NULL DEFAULT 1
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Parametros de la empresa. Es una fila unica (id = 1) con los datos que
   // cambian una vez al ano o casi nunca: la poliza de carga, la tarifa de
   // retencion en la fuente y si aplica FOPAT.
@@ -357,6 +373,12 @@ export async function initSchema(): Promise<void> {
     // se guarda con el viaje y no se deduce.
     ["viajes", "codVia", "VARCHAR(10)"],
 
+    // EMF por defecto del vehiculo: su proveedor de GPS. Se precarga en el
+    // despacho y se puede cambiar para un viaje puntual.
+    ["vehiculos", "nitMonitoreoFlota", "VARCHAR(15)"],
+    // EMF efectivamente usada en el viaje (NITMONITOREOFLOTA).
+    ["viajes", "nitMonitoreoFlota", "VARCHAR(15)"],
+
     // Coordenadas georreferenciadas de la SEDE del tercero.
     //
     // No se envian al RNDC: alli las toma de su propio maestro de terceros. Se
@@ -377,6 +399,13 @@ export async function initSchema(): Promise<void> {
     // varias remesas de municipios distintos, el manifiesto lleva el promedio
     // ponderado de todos.
     ["plantillas_viaje", "factorIcaCargue", "DOUBLE NOT NULL DEFAULT 0"],
+
+    // Ruta explicita de la plantilla (DIVIPOLA, 8 digitos): origen y destino del
+    // viaje. Se precargan con el municipio del remitente y del destinatario,
+    // pero son editables (tramo en vacio antes del cargue, ida y regreso...).
+    // De aqui sale el par con el que se consultan las vias a SICETAC.
+    ["plantillas_viaje", "municipioOrigen", "VARCHAR(8)"],
+    ["plantillas_viaje", "municipioDestino", "VARCHAR(8)"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
@@ -394,4 +423,24 @@ export async function initSchema(): Promise<void> {
       await pool.query(`ALTER TABLE \`${tabla}\` ADD COLUMN \`${columna}\` ${definicion}`);
     }
   }
+
+  // Plantillas creadas antes de que existiera la ruta explicita: se llena con
+  // lo que antes se deducia (municipio del remitente y del destinatario) para
+  // que no queden nulas. Solo toca las vacias, asi que correrlo en cada
+  // arranque no pisa una ruta corregida a mano. Los codigos que no tienen 8
+  // digitos se dejan fuera: no caben en la columna y tampoco son validos.
+  await pool.query(
+    `UPDATE plantillas_viaje p
+       JOIN terceros tr ON tr.id = p.remitenteId
+        SET p.municipioOrigen = tr.codMunicipioRndc
+      WHERE p.municipioOrigen IS NULL
+        AND tr.codMunicipioRndc REGEXP '^[0-9]{8}$'`
+  );
+  await pool.query(
+    `UPDATE plantillas_viaje p
+       JOIN terceros td ON td.id = p.destinatarioId
+        SET p.municipioDestino = td.codMunicipioRndc
+      WHERE p.municipioDestino IS NULL
+        AND td.codMunicipioRndc REGEXP '^[0-9]{8}$'`
+  );
 }

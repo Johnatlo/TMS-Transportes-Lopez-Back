@@ -79,8 +79,8 @@ const EXPLICACIONES: Record<string, string> = {
     "mercancia peligrosa. Este sistema solo maneja carga general: no despaches este viaje por aqui y " +
     "consulta el codigo de producto antes de volver a usar esta plantilla.",
   MAN067:
-    "Falta el NIT de la empresa de monitoreo de flota (NITMONITOREOFLOTA). Configuralo en la variable " +
-    "RNDC_NIT_MONITOREO_FLOTA del backend.",
+    "Falta el NIT de la empresa de monitoreo de flota (NITMONITOREOFLOTA). Eligela en el despacho " +
+    "o asignale una por defecto al vehiculo en el catalogo.",
 };
 
 /** Extrae el codigo tipo REM112 / MAN006 del texto que devuelve el RNDC. */

@@ -12,8 +12,10 @@ import {
   ViajeRemesa,
   NuevaViajeRemesa,
   vias,
+  empresasMonitoreo,
 } from "../repo";
 import { config } from "../config";
+import { consecutivoRemesa, siguienteBase, validarBase } from "../consecutivos";
 import {
   construirXmlMensaje,
   construirDatosRemesa,
@@ -37,6 +39,7 @@ import {
   UnidadMedidaProducto,
 } from "../rndc/builders";
 import { RndcClient, RndcError } from "../rndc/client";
+import { aCabeceraMunicipal } from "../rndc/sicetac";
 import { descargarPdfManifiesto, descargarPdfRemesa } from "../rndc/pdf";
 import { construirHtmlRemesa } from "../rndc/remesa-impresion";
 
@@ -246,12 +249,27 @@ despachoRouter.post("/", async (req, res) => {
     valorFleteRemesa: r.valorFleteRemesa ? Number(r.valorFleteRemesa) : null,
   }));
 
+  // ---- Numeracion del viaje ----
+  // Un solo numero base identifica todo: el manifiesto lo usa tal cual y las
+  // remesas adicionales le agregan letra. Se puede editar en el despacho,
+  // porque cuando se anula un documento hay que saltar o retomar numeros.
+  const usados = await viajes.consecutivosUsados();
+  const base = b.consecutivoBase
+    ? String(b.consecutivoBase).trim()
+    : siguienteBase(await viajes.ultimoConsecutivo(), config.consecutivos.longitud, config.consecutivos.prefijo);
+
+  const problemasNumero = validarBase(base, nuevasRemesas.length, usados);
+  if (problemasNumero.length > 0) {
+    return res.status(422).json({ error: problemasNumero.map((p) => p.mensaje).join(" ") });
+  }
+
   const primerCargue = nuevasRemesas.reduce(
     (min, r) => (r.fechaHoraCargue < min ? r.fechaHoraCargue : min),
     nuevasRemesas[0].fechaHoraCargue
   );
 
   const viaje = await viajes.create({
+    consecutivoManifiesto: base,
     plantillaId: plantillaPrincipal.id,
     vehiculoId: vehiculo.id,
     conductorId: conductor.id,
@@ -273,6 +291,13 @@ despachoRouter.post("/", async (req, res) => {
         ? Number(b.retencionFopat)
         : null,
     codVia: b.codVia || null,
+    // EMF del viaje, en cascada: la elegida en pantalla, si no la del
+    // vehiculo, si no la configurada para toda la empresa.
+    nitMonitoreoFlota:
+      (b.nitMonitoreoFlota ? String(b.nitMonitoreoFlota).replace(/\D/g, "") : null) ||
+      vehiculo.nitMonitoreoFlota ||
+      config.rndc.nitMonitoreoFlota ||
+      null,
     fechaPagoSaldo: b.fechaPagoSaldo ? new Date(b.fechaPagoSaldo) : null,
     conductor2Id: conductor2 ? conductor2.id : null,
     remolqueId: remolque.id,
@@ -286,7 +311,11 @@ despachoRouter.post("/", async (req, res) => {
     vacio2Valor: b.vacio2Valor ? Number(b.vacio2Valor) : 0,
   });
 
-  const filasRemesa = await viajeRemesas.crearParaViaje(viaje.id, nuevasRemesas);
+  const filasRemesa = await viajeRemesas.crearParaViaje(
+    viaje.id,
+    // Cada remesa recibe su consecutivo derivado del mismo numero base.
+    nuevasRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) }))
+  );
   const consecutivoManifiesto = viaje.consecutivoManifiesto!;
 
   const datosRemesas: DatosRemesaParaRndc[] = filasRemesa.map((fila) =>
@@ -310,6 +339,14 @@ despachoRouter.post("/", async (req, res) => {
       }
     : null;
 
+  // Ruta del viaje segun las plantillas, antes de ajustar por vacios. Es el
+  // mismo par con el que el despacho consulto las vias a SICETAC.
+  const plantillaUltima = plantillasRemesa.get(filasRemesa[filasRemesa.length - 1].plantillaId)!;
+  const rutaBase = {
+    origen: plantillaPrincipal.municipioOrigen,
+    destino: plantillaUltima.municipioDestino,
+  };
+
   const datosViaje: DatosViajeParaRndc = {
     vehiculo: {
       placa: vehiculo.placa,
@@ -327,12 +364,13 @@ despachoRouter.post("/", async (req, res) => {
       ? { codTipoId: conductor2.codTipoId, cedula: conductor2.cedula }
       : null,
     manifiesto: {
-      // Origen y destino se deducen de los sitios de cargue y descargue de las
-      // remesas. Ya no hay una "ruta" configurada aparte que pueda quedar
-      // desincronizada con los terceros.
+      // La ruta base es la explicita de las plantillas: origen de la primera
+      // carga y destino de la ultima (en multiparada el viaje termina donde
+      // descarga el ultimo cliente). Encima se aplica el ajuste por trayectos
+      // en vacio. validarReglasRndc verifica que calce con las remesas.
       ruta: {
-        codigoOrigenRndc: municipioOrigenDe(datosRemesas, vacio1),
-        codigoDestinoRndc: municipioDestinoDe(datosRemesas, vacio2),
+        codigoOrigenRndc: municipioOrigenDe(rutaBase.origen, vacio1),
+        codigoDestinoRndc: municipioDestinoDe(rutaBase.destino, vacio2),
         // La via elegida en el despacho. Si va vacia, el RNDC asigna la
         // estandar de SICETAC para ese par origen-destino.
         codVia: viaje.codVia,
@@ -351,7 +389,7 @@ despachoRouter.post("/", async (req, res) => {
     valorFleteReal: viaje.valorFleteReal,
     valorAnticipoManifiesto: viaje.valorAnticipoManifiesto,
     fechaPagoSaldo: viaje.fechaPagoSaldo,
-    nitMonitoreoFlota: config.rndc.nitMonitoreoFlota,
+    nitMonitoreoFlota: viaje.nitMonitoreoFlota,
     vacio1,
     vacio2,
     viajesDia: viaje.viajesDia,
@@ -369,10 +407,28 @@ despachoRouter.post("/", async (req, res) => {
     conductor2,
     ultimoDescargueDe(datosRemesas)
   );
+  // El NIT debe estar en la lista de EMF registradas en el RNDC. Nuestro
+  // catalogo es una copia de esa lista: si no esta aqui, lo mas probable es que
+  // tampoco este alla. Se avisa pero no se bloquea, porque el catalogo local
+  // puede estar incompleto y el RNDC es quien tiene la verdad.
+  const avisosMonitoreo: string[] = [];
+  if (viaje.nitMonitoreoFlota) {
+    const emf = await empresasMonitoreo.findByNit(viaje.nitMonitoreoFlota);
+    if (!emf) {
+      avisosMonitoreo.push(
+        `La empresa de monitoreo ${viaje.nitMonitoreoFlota} no esta en el catalogo. Verifica ` +
+          `que sea una EMF registrada en el RNDC o el manifiesto sera rechazado.`
+      );
+    }
+  }
+
+  // El piso se busca con la ruta de la plantilla (sin ajuste por vacios) y en
+  // cabecera municipal: es exactamente como quedaron guardadas las vias al
+  // consultarlas a SICETAC. Con otra clave no se encontraria la via elegida.
   const avisoPiso = await validarPisoSicetac(
     viaje.codVia,
-    datosViaje.manifiesto.ruta.codigoOrigenRndc,
-    datosViaje.manifiesto.ruta.codigoDestinoRndc,
+    aCabeceraMunicipal(rutaBase.origen),
+    aCabeceraMunicipal(rutaBase.destino),
     datosViaje.valorFleteReal ?? 0
   );
 
@@ -381,7 +437,7 @@ despachoRouter.post("/", async (req, res) => {
     ...erroresDocumentos,
     ...(avisoPiso ? [avisoPiso] : []),
   ];
-  const avisos = mensajesDe(reglas, "AVISO");
+  const avisos = [...mensajesDe(reglas, "AVISO"), ...avisosMonitoreo];
 
   if (avisos.length > 0) {
     await viajes.update(viaje.id, { avisos: avisos.join(" | ") });
@@ -645,6 +701,19 @@ despachoRouter.get("/remesas/:remesaId/imprimir", async (req, res) => {
 /** Remesas de un viaje, con su consecutivo y radicado. */
 despachoRouter.get("/:id/remesas", async (req, res) => {
   res.json(await viajeRemesas.findByViaje(Number(req.params.id)));
+});
+
+/**
+ * Siguiente numero disponible, para precargar el campo del despacho.
+ * Se puede cambiar: lo devuelto es una sugerencia, no una reserva.
+ */
+despachoRouter.get("/siguiente-consecutivo", async (_req, res) => {
+  const base = siguienteBase(
+    await viajes.ultimoConsecutivo(),
+    config.consecutivos.longitud,
+    config.consecutivos.prefijo
+  );
+  res.json({ base });
 });
 
 despachoRouter.get("/historial", async (_req, res) => {

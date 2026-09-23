@@ -17,7 +17,9 @@
 import fs from "fs";
 import path from "path";
 import { initSchema, pool } from "../db";
-import { terceros, vehiculos, conductores, remolques, rutas, municipios, vias } from "../repo";
+import {
+  terceros, vehiculos, conductores, remolques, rutas, municipios, vias, empresasMonitoreo,
+} from "../repo";
 import { revisarCoordenadaSede } from "../rndc/builders";
 
 // ---------------------------------------------------------------------------
@@ -488,6 +490,34 @@ const importadores: Record<string, { columnas: string[]; ejecutar: Importador }>
             ),
           });
         }
+      }
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // Empresas de monitoreo de flota: la lista del desplegable "Empresa de
+  // Monitoreo para este manifiesto" del portal.
+  monitoreo: {
+    columnas: ["nit", "nombre"],
+    async ejecutar(filas, aplicar, inf) {
+      for (const [i, f] of filas.entries()) {
+        const nFila = i + 2;
+        const nit = (f.nit ?? "").replace(/\D/g, "");
+        const nombre = limpioTexto(f.nombre);
+        if (!nit) {
+          inf.error(nFila, "Falta el NIT de la empresa de monitoreo");
+          continue;
+        }
+        if (nit.length > 15) {
+          inf.error(nFila, `El NIT "${f.nit}" pasa de 15 digitos, el maximo del RNDC`);
+          continue;
+        }
+        if (!nombre) {
+          inf.error(nFila, "Falta el nombre de la empresa de monitoreo");
+          continue;
+        }
+        inf.nuevos++;
+        if (aplicar) await empresasMonitoreo.guardar(nit, nombre);
       }
     },
   },

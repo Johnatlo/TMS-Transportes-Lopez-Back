@@ -47,6 +47,40 @@ function leerAmbiente(): NombreAmbiente {
 const ambiente = leerAmbiente();
 const simular = (process.env.RNDC_SIMULAR ?? "true").toLowerCase() === "true";
 
+const wsdlUrl = process.env.RNDC_WSDL_URL || AMBIENTES_RNDC[ambiente].wsdlUrl;
+
+/**
+ * Coherencia entre el ambiente elegido y la URL efectiva.
+ *
+ * RNDC_WSDL_URL sobrescribe la URL del ambiente, asi que un .env heredado
+ * puede decir RNDC_AMBIENTE=pruebas y apuntar al servidor de produccion. El
+ * freno de mas abajo no se activaria (el ambiente "es" pruebas) y se
+ * expedirian documentos reales creyendo que se esta probando.
+ *
+ * Los hosts de produccion son rndcws y rndcws2; el de pruebas es plc.
+ */
+const HOSTS_PRODUCCION = ["rndcws.mintransporte.gov.co", "rndcws2.mintransporte.gov.co"];
+const apuntaAProduccion = HOSTS_PRODUCCION.some((h) => wsdlUrl.includes(h));
+
+if (ambiente === "pruebas" && apuntaAProduccion && !simular) {
+  throw new Error(
+    [
+      "",
+      "  RNDC_AMBIENTE dice \"pruebas\", pero RNDC_WSDL_URL apunta al servidor de PRODUCCION:",
+      `    ${wsdlUrl}`,
+      "",
+      "  Asi se expedirian documentos reales creyendo que se esta probando.",
+      "",
+      "  Para probar de verdad, borra o comenta RNDC_WSDL_URL del .env: el ambiente",
+      "  de pruebas usa http://plc.mintransporte.gov.co:8080/ws",
+      "",
+      "  Si de verdad querias produccion, pon RNDC_AMBIENTE=produccion y agrega la",
+      '  confirmacion RNDC_CONFIRMO_PRODUCCION="SI, EXPEDIR DOCUMENTOS REALES"',
+      "",
+    ].join("\n")
+  );
+}
+
 /**
  * Freno de mano: apuntar a produccion exige una confirmacion explicita y
  * separada del propio interruptor de ambiente. Sin ella, un .env copiado de un
@@ -93,7 +127,7 @@ export const config = {
     esProduccion: ambiente === "produccion",
     // La URL sale del ambiente elegido. RNDC_WSDL_URL solo se usa para
     // sobrescribirla a mano (por ejemplo para probar el servidor secundario).
-    wsdlUrl: process.env.RNDC_WSDL_URL || AMBIENTES_RNDC[ambiente].wsdlUrl,
+    wsdlUrl,
     restUrl: process.env.RNDC_REST_URL || AMBIENTES_RNDC[ambiente].restUrl,
     usuario: process.env.RNDC_USUARIO ?? "",
     password: process.env.RNDC_PASSWORD ?? "",
@@ -110,17 +144,23 @@ export const config = {
   // la empresa ya tenia una numeracion propia en uso (ej. viniendo de Excel),
   // estas variables permiten continuarla en vez de reiniciar en 1.
   consecutivos: {
-    prefijoRemesa: process.env.RNDC_PREFIJO_REMESA ?? "REM",
-    inicioRemesa: Number(process.env.RNDC_INICIO_REMESA ?? 0),
-    prefijoManifiesto: process.env.RNDC_PREFIJO_MANIFIESTO ?? "MAN",
-    inicioManifiesto: Number(process.env.RNDC_INICIO_MANIFIESTO ?? 0),
+    /**
+     * Un mismo numero base identifica el viaje: el manifiesto lo usa tal cual y
+     * las remesas adicionales le agregan una letra (00006692, 00006692A...).
+     */
+    longitud: Number(process.env.RNDC_LONGITUD_CONSECUTIVO ?? 8),
+    /** Prefijo opcional delante del numero. Vacio por defecto. */
+    prefijo: process.env.RNDC_PREFIJO_CONSECUTIVO ?? "",
   },
 };
 
 /** Banner de arranque: que ambiente esta activo nunca deberia ser una sorpresa. */
 export function describirAmbiente(): string {
   if (config.rndc.simular) {
-    return "RNDC: SIMULACION (no se envia nada al Ministerio)";
+    const nota = apuntaAProduccion && ambiente === "pruebas"
+      ? "  [OJO: RNDC_WSDL_URL apunta a PRODUCCION; al apagar la simulacion no arrancara]"
+      : "";
+    return `RNDC: SIMULACION (no se envia nada al Ministerio)${nota}`;
   }
   const marca = config.rndc.esProduccion ? "!!! PRODUCCION - DOCUMENTOS REALES !!!" : "PRUEBAS";
   return `RNDC: ${marca} -> ${config.rndc.wsdlUrl}`;

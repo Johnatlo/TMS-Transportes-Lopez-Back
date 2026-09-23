@@ -33,6 +33,8 @@ export interface Vehiculo {
    * debe llevar el aporte FOPAT (0.1% del valor a pagar, Ley 2251 de 2022).
    */
   aplicaFopat: boolean;
+  /** NIT de la empresa de monitoreo (proveedor GPS) por defecto del vehiculo. */
+  nitMonitoreoFlota: string | null;
 }
 
 export interface Conductor {
@@ -84,8 +86,17 @@ export interface PlantillaViaje {
   contratanteId: number;
   remitenteId: number;
   destinatarioId: number;
-  /** @deprecated La ruta se deduce de los municipios de cargue y descargue. */
+  /** @deprecated Reemplazado por municipioOrigen + municipioDestino. */
   rutaId: number | null;
+  /**
+   * Ruta del viaje (DIVIPOLA, 8 digitos). Dato explicito y editable: se
+   * precarga con el municipio del remitente y del destinatario, pero puede
+   * diferir (tramo en vacio, ida y regreso). Con este par se piden las vias a
+   * SICETAC. Antes de despachar se valida contra los municipios reales de
+   * cargue y descargue de las remesas [Manual 5.2.4].
+   */
+  municipioOrigen: string | null;
+  municipioDestino: string | null;
   /**
    * Tarifa pactada para esta ruta. Se actualiza solo cuando cambia el valor de
    * SICETAC, no viaje por viaje: en el despacho se precarga y se puede ajustar.
@@ -189,6 +200,8 @@ export interface Viaje {
   avisos: string | null;
   /** Via elegida para el viaje (CODVIA). Cambia el piso tarifario. */
   codVia: string | null;
+  /** NIT de la empresa de monitoreo que reporta los tiempos del viaje. */
+  nitMonitoreoFlota: string | null;
   /** FOPAT efectivamente reportado en el manifiesto. */
   retencionFopat: number | null;
   /** true cuando ese FOPAT ya se pago a la DIAN. */
@@ -259,6 +272,11 @@ export const remolques = {
 
 // ---------- Vehiculos ----------
 export const vehiculos = {
+  /** Cambia el proveedor de GPS (EMF) por defecto de un vehiculo. */
+  async fijarMonitoreo(id: number, nit: string | null): Promise<void> {
+    await pool.query("UPDATE vehiculos SET nitMonitoreoFlota = ? WHERE id = ?", [nit, id]);
+  },
+
   /** Refresca vencimientos de SOAT y tecnomecanica de una placa existente. */
   async actualizarPorPlaca(
     placa: string,
@@ -315,19 +333,25 @@ export const vehiculos = {
       | "codTipoCarroceria"
       | "pesoVehiculoVacio"
       | "aplicaFopat"
+      | "nitMonitoreoFlota"
     > &
       Partial<
         Pick<
           Vehiculo,
-          "codTipoIdTenedor" | "numIdTenedor" | "codTipoCarroceria" | "pesoVehiculoVacio" | "aplicaFopat"
+          | "codTipoIdTenedor"
+          | "numIdTenedor"
+          | "codTipoCarroceria"
+          | "pesoVehiculoVacio"
+          | "aplicaFopat"
+          | "nitMonitoreoFlota"
         >
       >
   ): Promise<Vehiculo> {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO vehiculos
         (placa, placaRemolque, marca, configuracion, capacidadKg, propietarioNit, fechaVencSoat, fechaVencTecnomecanica,
-         codTipoIdTenedor, numIdTenedor, codTipoCarroceria, pesoVehiculoVacio, aplicaFopat)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         codTipoIdTenedor, numIdTenedor, codTipoCarroceria, pesoVehiculoVacio, aplicaFopat, nitMonitoreoFlota)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.placa,
         data.placaRemolque,
@@ -343,6 +367,7 @@ export const vehiculos = {
         data.pesoVehiculoVacio ?? null,
         // Por defecto SI aplica: casi toda la flota de carga supera 10.5 t.
         (data.aplicaFopat ?? true) ? 1 : 0,
+        data.nitMonitoreoFlota ?? null,
       ]
     );
     return (await this.findById(result.insertId))!;
@@ -603,6 +628,51 @@ export const vias = {
   },
 };
 
+// ---------- Empresas de monitoreo de flota ----------
+
+export interface EmpresaMonitoreo {
+  id: number;
+  /** Lo que viaja en NITMONITOREOFLOTA. */
+  nit: string;
+  nombre: string;
+  activa: boolean;
+}
+
+export const empresasMonitoreo = {
+  async findMany(): Promise<EmpresaMonitoreo[]> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT * FROM empresas_monitoreo WHERE activa = 1 ORDER BY nombre"
+    );
+    return (rows as EmpresaMonitoreo[]).map((e) => ({ ...e, activa: !!e.activa }));
+  },
+
+  async findByNit(nit: string): Promise<EmpresaMonitoreo | null> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT * FROM empresas_monitoreo WHERE nit = ?",
+      [nit]
+    );
+    const row = rows[0] as EmpresaMonitoreo | undefined;
+    return row ? { ...row, activa: !!row.activa } : null;
+  },
+
+  /** Crea o renombra por NIT. El nombre puede cambiar; el NIT es la llave. */
+  async guardar(nit: string, nombre: string): Promise<void> {
+    await pool.query(
+      `INSERT INTO empresas_monitoreo (nit, nombre) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE nombre = VALUES(nombre), activa = 1`,
+      [nit, nombre]
+    );
+  },
+
+  async desactivar(id: number): Promise<boolean> {
+    const [res] = await pool.query<ResultSetHeader>(
+      "UPDATE empresas_monitoreo SET activa = 0 WHERE id = ?",
+      [id]
+    );
+    return res.affectedRows > 0;
+  },
+};
+
 // ---------- Parametros de la empresa ----------
 
 /**
@@ -694,7 +764,97 @@ type CamposObligatoriosPlantilla =
 export type NuevaPlantilla = Pick<PlantillaViaje, CamposObligatoriosPlantilla> &
   Partial<Omit<PlantillaViaje, "id" | "activa" | CamposObligatoriosPlantilla>>;
 
+/**
+ * Nombres legibles del origen y destino de la ruta de una plantilla (alias
+ * mo/md y co/cd).
+ *
+ * Primero el catalogo de municipios; si no se ha importado, la ciudad de algun
+ * tercero en ese municipio, que es lo que se mostraba cuando la ruta salia de
+ * los terceros. El codigo queda como ultimo recurso en el COALESCE.
+ */
+const JOIN_NOMBRES_RUTA = `
+  LEFT JOIN municipios mo ON mo.codigo = p.municipioOrigen
+  LEFT JOIN municipios md ON md.codigo = p.municipioDestino
+  LEFT JOIN (SELECT codMunicipioRndc, MAX(ciudad) AS ciudad FROM terceros GROUP BY codMunicipioRndc) co
+         ON co.codMunicipioRndc = p.municipioOrigen
+  LEFT JOIN (SELECT codMunicipioRndc, MAX(ciudad) AS ciudad FROM terceros GROUP BY codMunicipioRndc) cd
+         ON cd.codMunicipioRndc = p.municipioDestino`;
+
+/**
+ * Columnas que se escriben al crear o editar una plantilla, con su valor.
+ *
+ * El INSERT y el UPDATE se arman desde esta misma lista, asi columnas,
+ * placeholders y valores cuadran por construccion. Un INSERT con mas `?` que
+ * valores ya tumbo el servidor una vez; escribirlos a mano en paralelo es
+ * justo lo que lo permitio.
+ *
+ * fleteActualizadoEn no esta aqui: depende de si la tarifa cambio, y eso solo
+ * lo sabe quien llama.
+ */
+function columnasPlantilla(data: NuevaPlantilla): Array<[columna: string, valor: unknown]> {
+  return [
+    ["nombre", data.nombre],
+    ["contratanteId", data.contratanteId],
+    ["remitenteId", data.remitenteId],
+    ["destinatarioId", data.destinatarioId],
+    ["rutaId", data.rutaId],
+    ["municipioOrigen", data.municipioOrigen ?? null],
+    ["municipioDestino", data.municipioDestino ?? null],
+    ["tipoMercancia", data.tipoMercancia ?? null],
+    ["naturalezaCarga", data.naturalezaCarga ?? null],
+    ["unidadMedida", data.unidadMedida ?? null],
+    ["valorFleteBase", data.valorFleteBase ?? null],
+    ["observaciones", data.observaciones ?? null],
+    // Columna heredada, ya sin uso: se conserva sincronizada con el tipo de
+    // manifiesto para no romper bases de datos existentes.
+    ["codOperacionTransporte", data.tipoManifiesto ?? "G"],
+    ["tipoOperacionRemesa", data.tipoOperacionRemesa ?? "G"],
+    ["tipoManifiesto", data.tipoManifiesto ?? "G"],
+    ["codMunicipioIntermedio", data.codMunicipioIntermedio ?? null],
+    // Esta empresa solo mueve carga general.
+    ["codNaturalezaCarga", data.codNaturalezaCarga ?? "1"],
+    ["codUnidadMedida", data.codUnidadMedida ?? "1"],
+    ["codTipoEmpaque", data.codTipoEmpaque ?? "0"],
+    ["codMercancia", data.codMercancia ?? null],
+    ["subpartidaCode", data.subpartidaCode ?? null],
+    ["codigoArancelCode", data.codigoArancelCode ?? null],
+    ["empaquePrimario", data.empaquePrimario ?? null],
+    ["unidadMedidaProducto", data.unidadMedidaProducto ?? "KGM"],
+    ["horasPactoCargue", data.horasPactoCargue ?? 1],
+    ["minutosPactoCargue", data.minutosPactoCargue ?? 0],
+    ["horasPactoDescargue", data.horasPactoDescargue ?? 1],
+    ["minutosPactoDescargue", data.minutosPactoDescargue ?? 0],
+    ["retencionIcaManifiesto", data.retencionIcaManifiesto ?? 0],
+    // Si no se informa aparte, el factor de cargue es el mismo del manifiesto.
+    ["factorIcaCargue", data.factorIcaCargue ?? data.retencionIcaManifiesto ?? 0],
+    ["tarifaRetencionFuente", data.tarifaRetencionFuente ?? 0.01],
+    ["titularEsRegimenSimple", (data.titularEsRegimenSimple ?? false) ? 1 : 0],
+    ["codResponsablePagoCargue", data.codResponsablePagoCargue ?? "R"],
+    ["codResponsablePagoDescargue", data.codResponsablePagoDescargue ?? "D"],
+    ["aceptacionElectronica", data.aceptacionElectronica ?? "NO"],
+    ["codMunicipioPagoSaldo", data.codMunicipioPagoSaldo ?? null],
+    ["tomadorPolizaCarga", data.tomadorPolizaCarga ?? "Empresa Transporte"],
+    ["numeroPolizaTransporte", data.numeroPolizaTransporte ?? null],
+    ["companiaSeguro", data.companiaSeguro ?? null],
+    ["fechaVencimientoPolizaCarga", fechaMysql(data.fechaVencimientoPolizaCarga ?? null)],
+  ];
+}
+
 export const plantillas = {
+  /**
+   * "Elimina" una plantilla. En realidad la desactiva (activa = 0): el
+   * historial de viajes y remesas la referencia por id, asi que borrarla de
+   * verdad rompería esos registros. findMany ya filtra por activa = 1, asi
+   * que desaparece de la lista y de los selectores sin perder el historial.
+   */
+  async desactivar(id: number): Promise<boolean> {
+    const [res] = await pool.query<ResultSetHeader>(
+      "UPDATE plantillas_viaje SET activa = 0 WHERE id = ?",
+      [id]
+    );
+    return res.affectedRows > 0;
+  },
+
   async findMany(): Promise<PlantillaViajeConRelaciones[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE activa = 1");
     return Promise.all((rows as PlantillaViaje[]).map((p) => this.conRelaciones(p)));
@@ -705,26 +865,47 @@ export const plantillas = {
     return row ? this.conRelaciones(row) : null;
   },
   /**
-   * Plantillas cuya ruta efectiva coincide con un par de municipios.
+   * Ruta con la que se guarda una plantilla.
    *
-   * "Ruta efectiva" es el municipio del sitio de cargue (remitente) y el del
-   * sitio de descargue (destinatario), que es de donde salen el origen y el
-   * destino del manifiesto. Por eso el cruce va contra terceros y no contra
-   * una tabla de rutas: asi lo que se actualiza es exactamente lo que se va a
-   * despachar por esa ruta.
+   * Lo que llegue explicito manda. Lo que falte se precarga con el municipio
+   * del remitente (origen) y del destinatario (destino), que es lo que el
+   * despachador usaria en el caso normal. Puede devolver null si el tercero
+   * tampoco tiene municipio: quien llama decide si eso es un error.
+   */
+  async resolverRuta(
+    remitenteId: number,
+    destinatarioId: number,
+    municipioOrigen?: string | null,
+    municipioDestino?: string | null
+  ): Promise<{ municipioOrigen: string | null; municipioDestino: string | null }> {
+    const limpio = (c?: string | null) => (c ? String(c).replace(/\D/g, "") || null : null);
+    let origen = limpio(municipioOrigen);
+    let destino = limpio(municipioDestino);
+    if (!origen) origen = limpio((await terceros.findById(remitenteId))?.codMunicipioRndc);
+    if (!destino) destino = limpio((await terceros.findById(destinatarioId))?.codMunicipioRndc);
+    return { municipioOrigen: origen, municipioDestino: destino };
+  },
+
+  /**
+   * Plantillas cuya ruta coincide con un par de municipios.
+   *
+   * El cruce va contra la ruta explicita de la plantilla, que es la misma con
+   * la que se consultan las vias y el piso de SICETAC. Asi lo que se actualiza
+   * es exactamente lo que se va a despachar por esa ruta.
    */
   async buscarPorRuta(
     codMunicipioOrigen: string,
     codMunicipioDestino: string
   ): Promise<Array<PlantillaViaje & { municipioCargue: string; municipioDescargue: string }>> {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT p.*, tr.ciudad AS municipioCargue, td.ciudad AS municipioDescargue
+      `SELECT p.*,
+              COALESCE(mo.nombre, co.ciudad, p.municipioOrigen) AS municipioCargue,
+              COALESCE(md.nombre, cd.ciudad, p.municipioDestino) AS municipioDescargue
          FROM plantillas_viaje p
-         JOIN terceros tr ON tr.id = p.remitenteId
-         JOIN terceros td ON td.id = p.destinatarioId
+         ${JOIN_NOMBRES_RUTA}
         WHERE p.activa = 1
-          AND tr.codMunicipioRndc = ?
-          AND td.codMunicipioRndc = ?
+          AND p.municipioOrigen = ?
+          AND p.municipioDestino = ?
         ORDER BY p.nombre`,
       [codMunicipioOrigen, codMunicipioDestino]
     );
@@ -744,12 +925,10 @@ export const plantillas = {
   ): Promise<number> {
     const [res] = await pool.query<ResultSetHeader>(
       `UPDATE plantillas_viaje p
-         JOIN terceros tr ON tr.id = p.remitenteId
-         JOIN terceros td ON td.id = p.destinatarioId
           SET p.valorFleteBase = ?, p.fleteActualizadoEn = ?
         WHERE p.activa = 1
-          AND tr.codMunicipioRndc = ?
-          AND td.codMunicipioRndc = ?`,
+          AND p.municipioOrigen = ?
+          AND p.municipioDestino = ?`,
       [valorFleteBase, fechaMysql(new Date()), codMunicipioOrigen, codMunicipioDestino]
     );
     return res.affectedRows;
@@ -774,22 +953,21 @@ export const plantillas = {
     }>
   > {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT tr.codMunicipioRndc AS codMunicipioOrigen,
-              td.codMunicipioRndc AS codMunicipioDestino,
-              MAX(tr.ciudad) AS municipioOrigen,
-              MAX(td.ciudad) AS municipioDestino,
+      `SELECT p.municipioOrigen AS codMunicipioOrigen,
+              p.municipioDestino AS codMunicipioDestino,
+              COALESCE(MAX(mo.nombre), MAX(co.ciudad), p.municipioOrigen) AS municipioOrigen,
+              COALESCE(MAX(md.nombre), MAX(cd.ciudad), p.municipioDestino) AS municipioDestino,
               COUNT(*) AS plantillas,
               MIN(p.valorFleteBase) AS fleteMinimo,
               MAX(p.valorFleteBase) AS fleteMaximo,
               SUM(CASE WHEN p.valorFleteBase IS NULL THEN 1 ELSE 0 END) AS sinTarifa,
               MAX(p.fleteActualizadoEn) AS ultimaActualizacion
          FROM plantillas_viaje p
-         JOIN terceros tr ON tr.id = p.remitenteId
-         JOIN terceros td ON td.id = p.destinatarioId
+         ${JOIN_NOMBRES_RUTA}
         WHERE p.activa = 1
-          AND tr.codMunicipioRndc IS NOT NULL
-          AND td.codMunicipioRndc IS NOT NULL
-        GROUP BY tr.codMunicipioRndc, td.codMunicipioRndc
+          AND p.municipioOrigen IS NOT NULL
+          AND p.municipioDestino IS NOT NULL
+        GROUP BY p.municipioOrigen, p.municipioDestino
         ORDER BY plantillas DESC`
     );
     return (rows as any[]).map((r) => ({
@@ -820,66 +998,57 @@ export const plantillas = {
     };
   },
   async create(data: NuevaPlantilla): Promise<PlantillaViaje> {
+    // Red de seguridad para quien no mande la ruta (seed, cargas masivas): se
+    // precarga igual que en el formulario, desde el remitente y el destinatario.
+    const ruta = await this.resolverRuta(
+      data.remitenteId,
+      data.destinatarioId,
+      data.municipioOrigen,
+      data.municipioDestino
+    );
+    const columnas = columnasPlantilla({ ...data, ...ruta });
+    columnas.push(["fleteActualizadoEn", data.valorFleteBase ? fechaMysql(new Date()) : null]);
+
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO plantillas_viaje
-        (nombre, contratanteId, remitenteId, destinatarioId, rutaId, tipoMercancia, naturalezaCarga, unidadMedida,
-         valorFleteBase, fleteActualizadoEn, observaciones, codOperacionTransporte, tipoOperacionRemesa, tipoManifiesto,
-         codMunicipioIntermedio, codNaturalezaCarga, codUnidadMedida, codTipoEmpaque, codMercancia,
-         subpartidaCode, codigoArancelCode, empaquePrimario, unidadMedidaProducto,
-         horasPactoCargue, minutosPactoCargue, horasPactoDescargue, minutosPactoDescargue,
-         retencionIcaManifiesto, factorIcaCargue, tarifaRetencionFuente, titularEsRegimenSimple,
-         codResponsablePagoCargue, codResponsablePagoDescargue, aceptacionElectronica, codMunicipioPagoSaldo,
-         tomadorPolizaCarga, numeroPolizaTransporte, companiaSeguro, fechaVencimientoPolizaCarga)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        data.nombre,
-        data.contratanteId,
-        data.remitenteId,
-        data.destinatarioId,
-        data.rutaId,
-        data.tipoMercancia ?? null,
-        data.naturalezaCarga ?? null,
-        data.unidadMedida ?? null,
-        data.valorFleteBase ?? null,
-        data.valorFleteBase ? fechaMysql(new Date()) : null,
-        data.observaciones ?? null,
-        // Columna heredada, ya sin uso: se conserva sincronizada con el tipo de
-        // manifiesto para no romper bases de datos existentes.
-        data.tipoManifiesto ?? "G",
-        data.tipoOperacionRemesa ?? "G",
-        data.tipoManifiesto ?? "G",
-        data.codMunicipioIntermedio ?? null,
-        // Esta empresa solo mueve carga general.
-        data.codNaturalezaCarga ?? "1",
-        data.codUnidadMedida ?? "1",
-        data.codTipoEmpaque ?? "0",
-        data.codMercancia ?? null,
-        data.subpartidaCode ?? null,
-        data.codigoArancelCode ?? null,
-        data.empaquePrimario ?? null,
-        data.unidadMedidaProducto ?? "KGM",
-        data.horasPactoCargue ?? 1,
-        data.minutosPactoCargue ?? 0,
-        data.horasPactoDescargue ?? 1,
-        data.minutosPactoDescargue ?? 0,
-        data.retencionIcaManifiesto ?? 0,
-        // Si no se informa aparte, el factor de cargue es el mismo del manifiesto.
-        data.factorIcaCargue ?? data.retencionIcaManifiesto ?? 0,
-        data.tarifaRetencionFuente ?? 0.01,
-        (data.titularEsRegimenSimple ?? false) ? 1 : 0,
-        data.codResponsablePagoCargue ?? "R",
-        data.codResponsablePagoDescargue ?? "D",
-        data.aceptacionElectronica ?? "NO",
-        data.codMunicipioPagoSaldo ?? null,
-        data.tomadorPolizaCarga ?? "Empresa Transporte",
-        data.numeroPolizaTransporte ?? null,
-        data.companiaSeguro ?? null,
-        fechaMysql(data.fechaVencimientoPolizaCarga ?? null),
-      ]
+      `INSERT INTO plantillas_viaje (${columnas.map(([c]) => c).join(", ")})
+       VALUES (${columnas.map(() => "?").join(", ")})`,
+      columnas.map(([, v]) => v)
     );
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE id = ?", [
       result.insertId,
     ]);
+    return rows[0] as PlantillaViaje;
+  },
+
+  /**
+   * Reemplaza los datos de una plantilla existente.
+   *
+   * Los viajes ya despachados no cambian: el XML que se envio al RNDC quedo
+   * registrado con los valores de ese momento. Esto solo afecta lo que se
+   * despache de aqui en adelante.
+   */
+  async update(id: number, data: NuevaPlantilla): Promise<PlantillaViaje | null> {
+    const [actuales] = await pool.query<RowDataPacket[]>(
+      "SELECT valorFleteBase FROM plantillas_viaje WHERE id = ?",
+      [id]
+    );
+    const actual = actuales[0] as Pick<PlantillaViaje, "valorFleteBase"> | undefined;
+    if (!actual) return null;
+
+    const columnas = columnasPlantilla(data);
+    // La fecha de la tarifa solo se mueve si la tarifa cambio: es la que dice
+    // que plantillas quedaron rezagadas tras un cambio de SICETAC.
+    const fleteNuevo = data.valorFleteBase ?? null;
+    const fleteAnterior = actual.valorFleteBase === null ? null : Number(actual.valorFleteBase);
+    if (fleteNuevo !== fleteAnterior) {
+      columnas.push(["fleteActualizadoEn", fleteNuevo ? fechaMysql(new Date()) : null]);
+    }
+
+    await pool.query(
+      `UPDATE plantillas_viaje SET ${columnas.map(([c]) => `${c} = ?`).join(", ")} WHERE id = ?`,
+      [...columnas.map(([, v]) => v), id]
+    );
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE id = ?", [id]);
     return rows[0] as PlantillaViaje;
   },
 };
@@ -917,6 +1086,8 @@ export interface NuevaViajeRemesa {
   fechaHoraDescargue: Date;
   ordenServicioGenerador?: string | null;
   valorFleteRemesa?: number | null;
+  /** Consecutivo ya calculado a partir del numero base del viaje. */
+  consecutivoRemesa?: string | null;
 }
 
 export const viajeRemesas = {
@@ -962,13 +1133,15 @@ export const viajeRemesas = {
           r.valorFleteRemesa ?? null,
         ]
       );
-      const consecutivo = `${config.consecutivos.prefijoRemesa}${
-        config.consecutivos.inicioRemesa + result.insertId
-      }`;
-      await pool.query("UPDATE viaje_remesas SET consecutivoRemesa = ? WHERE id = ?", [
-        consecutivo,
-        result.insertId,
-      ]);
+      // El consecutivo viene calculado desde el numero base del viaje
+      // (00006692, 00006692A...), no del id interno: la empresa numera por
+      // viaje y el manifiesto comparte el mismo numero.
+      if (r.consecutivoRemesa) {
+        await pool.query("UPDATE viaje_remesas SET consecutivoRemesa = ? WHERE id = ?", [
+          r.consecutivoRemesa,
+          result.insertId,
+        ]);
+      }
     }
     return this.findByViaje(viajeId);
   },
@@ -1037,6 +1210,37 @@ export const viajes = {
   },
 
   /**
+   * Todos los consecutivos ya usados, de manifiestos y de remesas.
+   *
+   * El RNDC no permite repetirlos dentro de la empresa, y el rechazo llega
+   * despues de haber creado las remesas. Sale mas barato comprobarlo aqui.
+   */
+  async consecutivosUsados(): Promise<Set<string>> {
+    const [manifiestos] = await pool.query<RowDataPacket[]>(
+      "SELECT consecutivoManifiesto AS c FROM viajes WHERE consecutivoManifiesto IS NOT NULL"
+    );
+    const [remesas] = await pool.query<RowDataPacket[]>(
+      "SELECT consecutivoRemesa AS c FROM viaje_remesas WHERE consecutivoRemesa IS NOT NULL"
+    );
+    const usados = new Set<string>();
+    for (const fila of [...(manifiestos as any[]), ...(remesas as any[])]) {
+      if (fila.c) usados.add(String(fila.c).toUpperCase());
+    }
+    return usados;
+  },
+
+  /** Ultimo numero base usado, para sugerir el siguiente. */
+  async ultimoConsecutivo(): Promise<string | null> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT consecutivoManifiesto AS c FROM viajes
+        WHERE consecutivoManifiesto IS NOT NULL
+        ORDER BY CAST(REGEXP_REPLACE(consecutivoManifiesto, '[^0-9]', '') AS UNSIGNED) DESC
+        LIMIT 1`
+    );
+    return (rows[0] as any)?.c ?? null;
+  },
+
+  /**
    * Cuenta los manifiestos ya expedidos para un vehiculo en una fecha de
    * expedicion. El RNDC no permite mas de 10 por placa y dia (salvo los
    * municipales), asi que conviene saberlo antes de intentar el numero 11.
@@ -1066,6 +1270,9 @@ export const viajes = {
     valorAnticipoManifiesto?: number;
     retencionFopat?: number | null;
     codVia?: string | null;
+    nitMonitoreoFlota?: string | null;
+    /** Numero base del viaje. Tambien es el consecutivo del manifiesto. */
+    consecutivoManifiesto?: string | null;
     fechaPagoSaldo?: Date | null;
     conductor2Id?: number | null;
     remolqueId?: number | null;
@@ -1082,10 +1289,10 @@ export const viajes = {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO viajes
         (plantillaId, vehiculoId, conductorId, fechaHoraCargue, fechaHoraDescargue, pesoReal, cantidadReal,
-         valorFleteReal, valorAnticipoManifiesto, retencionFopat, codVia, fechaPagoSaldo, conductor2Id, remolqueId,
+         valorFleteReal, valorAnticipoManifiesto, retencionFopat, codVia, nitMonitoreoFlota, fechaPagoSaldo, conductor2Id, remolqueId,
          viajesDia, ordenServicioGenerador,
          vacio1Origen, vacio1Destino, vacio1Valor, vacio2Origen, vacio2Destino, vacio2Valor)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.plantillaId,
         data.vehiculoId,
@@ -1098,6 +1305,7 @@ export const viajes = {
         data.valorAnticipoManifiesto ?? 0,
         data.retencionFopat ?? null,
         data.codVia ?? null,
+        data.nitMonitoreoFlota ?? null,
         fechaMysql(data.fechaPagoSaldo ?? null),
         data.conductor2Id ?? null,
         data.remolqueId ?? null,
@@ -1111,19 +1319,16 @@ export const viajes = {
         data.vacio2Valor ?? 0,
       ]
     );
-    // El consecutivo propio (CONSECUTIVOREMESA / NUMMANIFIESTOCARGA) se genera a partir
-    // del id interno una vez conocido, mas un prefijo/inicio configurable (ver config.ts)
-    // para poder continuar una numeracion ya existente en la empresa sin repetir nada.
+    // El consecutivo del manifiesto (NUMMANIFIESTOCARGA) es el numero base del
+    // viaje, que el despachador puede editar. El de las remesas sale del mismo
+    // base con sufijo de letra y se asigna en viajeRemesas.crearParaViaje.
     const id = result.insertId;
-    // El consecutivo de REMESA ya no se genera aqui: vive en viaje_remesas,
-    // porque un viaje puede llevar varias.
-    const consecutivoManifiesto = `${config.consecutivos.prefijoManifiesto}${
-      config.consecutivos.inicioManifiesto + id
-    }`;
-    await pool.query("UPDATE viajes SET consecutivoManifiesto = ? WHERE id = ?", [
-      consecutivoManifiesto,
-      id,
-    ]);
+    if (data.consecutivoManifiesto) {
+      await pool.query("UPDATE viajes SET consecutivoManifiesto = ? WHERE id = ?", [
+        data.consecutivoManifiesto,
+        id,
+      ]);
+    }
     return (await this.findById(id))!;
   },
   async update(id: number, data: Partial<Omit<Viaje, "id">>): Promise<Viaje> {

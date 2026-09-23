@@ -1050,9 +1050,9 @@ export function validarReglasRndc(
   //     descargue [MAN pag. 16, Decreto 1079/2015 art. 2.2.1.7.6.6]
   if (v.fechaPagoSaldo) {
     const habiles = diasHabilesEntre(ultimoDescargueDe(v.remesas), v.fechaPagoSaldo);
-    if (habiles > 30) {
+    if (habiles > 5) {
       error(
-        `La fecha del pago del saldo supera los 30 dias habiles despues de la fecha de descargue ` +
+        `La fecha de pago del saldo supera los 5 dias habiles despues del ultimo descargue ` +
           `(van ${habiles})`
       );
     }
@@ -1071,6 +1071,16 @@ export function validarReglasRndc(
       `El peso total de las ${v.remesas.length} remesa(s) es ${pesoTotal} kg y supera la ` +
         `capacidad registrada del vehiculo (${capacidad} kg). Si la capacidad esta mal en el ` +
         `catalogo, corrigela alli; el RNDC valida contra el tope de la configuracion combinada.`
+    );
+  }
+
+  // --- Empresa de monitoreo de flota.
+  //     Obligatoria: "Todo manifiesto debe tener definido cual empresa de
+  //     monitoreo hace el monitoreo del viaje" [MANIFIESTO V7, error MAN067].
+  if (!v.nitMonitoreoFlota) {
+    error(
+      "Falta la empresa de monitoreo de flota (proveedor de GPS del vehiculo). Eligela en el " +
+        "despacho, o asignale una por defecto al vehiculo en el catalogo."
     );
   }
 
@@ -1149,20 +1159,18 @@ export function validarReglasRndc(
   }
 
   // --- Municipios
+  // Origen y destino salen de la ruta explicita de la plantilla (o de los
+  // trayectos en vacio). Si faltan, la plantilla quedo sin ruta.
   if (!m.ruta.codigoOrigenRndc) {
-    const t = v.remesas[0]?.remitente;
     error(
-      `No se pudo determinar el municipio de origen. Revisa que el sitio de cargue ` +
-        `(${t?.nombre ?? t?.nit ?? "primera remesa"}, sede ${t?.codSede ?? "?"}) tenga ` +
-        `su codigo de municipio DIVIPOLA registrado.`
+      "No se pudo determinar el municipio de origen del manifiesto. Revisa la ruta " +
+        "(municipio origen) de la plantilla de la primera carga."
     );
   }
   if (!m.ruta.codigoDestinoRndc) {
-    const t = v.remesas[v.remesas.length - 1]?.destinatario;
     error(
-      `No se pudo determinar el municipio de destino. Revisa que el sitio de descargue ` +
-        `(${t?.nombre ?? t?.nit ?? "ultima remesa"}, sede ${t?.codSede ?? "?"}) tenga ` +
-        `su codigo de municipio DIVIPOLA registrado.`
+      "No se pudo determinar el municipio de destino del manifiesto. Revisa la ruta " +
+        "(municipio destino) de la plantilla de la ultima carga."
     );
   }
   if (m.tipoManifiesto === TIPO_MANIFIESTO.IDA_Y_REGRESO && !m.codMunicipioIntermedio) {
@@ -1188,39 +1196,36 @@ export function validarReglasRndc(
 
   // El origen del manifiesto debe coincidir con el municipio de cargue de
   // alguna remesa, y el destino con el de descargue de alguna [Manual 5.2.4].
-  // Solo se puede verificar si los terceros tienen municipio registrado.
-  const municipiosCargue = v.remesas
-    .map((r) => r.remitente.codMunicipioRndc)
-    .filter((c): c is string => !!c);
-  const municipiosDescargue = v.remesas
-    .map((r) => r.destinatario.codMunicipioRndc)
-    .filter((c): c is string => !!c);
-
-  if (
-    m.ruta.codigoOrigenRndc &&
-    municipiosCargue.length === v.remesas.length &&
-    !municipiosCargue.includes(m.ruta.codigoOrigenRndc) &&
-    !v.vacio1
-  ) {
-    error(
-      `El municipio origen del manifiesto (${m.ruta.codigoOrigenRndc}) no coincide con el ` +
-        `municipio de cargue de ninguna remesa (${[...new Set(municipiosCargue)].join(", ")}). ` +
-        `Si el vehiculo arranca en vacio desde otro municipio, registra el trayecto en vacio 1.`
-    );
-  }
-  if (
-    m.ruta.codigoDestinoRndc &&
-    municipiosDescargue.length === v.remesas.length &&
-    !municipiosDescargue.includes(m.ruta.codigoDestinoRndc) &&
-    !v.vacio2
-  ) {
-    error(
-      `El municipio destino del manifiesto (${m.ruta.codigoDestinoRndc}) no coincide con el ` +
-        `municipio de descargue de ninguna remesa ` +
-        `(${[...new Set(municipiosDescargue)].join(", ")}). Si el vehiculo termina en vacio en ` +
-        `otro municipio, registra el trayecto en vacio 2.`
-    );
-  }
+  //
+  // Antes esto se cumplia solo, porque la ruta se deducia de las mismas
+  // remesas. Ahora la ruta es un dato explicito y editable de la plantilla, asi
+  // que hay que verificarlo: mejor detenerlo aqui que dejar que el RNDC
+  // rechace el manifiesto. Con trayecto en vacio el extremo es otro municipio
+  // a proposito, y no aplica.
+  revisarExtremoRuta({
+    extremo: "origen",
+    municipio: m.ruta.codigoOrigenRndc,
+    hayVacio: !!v.vacio1,
+    municipiosRemesas: v.remesas.map((r) => r.remitente.codMunicipioRndc),
+    sitio: "cargue",
+    consejo:
+      "Corrige el municipio origen en la ruta de la plantilla de la primera carga, o si el " +
+      "vehiculo arranca en vacio desde otro municipio, registra el trayecto en vacio 1.",
+    error,
+    aviso,
+  });
+  revisarExtremoRuta({
+    extremo: "destino",
+    municipio: m.ruta.codigoDestinoRndc,
+    hayVacio: !!v.vacio2,
+    municipiosRemesas: v.remesas.map((r) => r.destinatario.codMunicipioRndc),
+    sitio: "descargue",
+    consejo:
+      "Corrige el municipio destino en la ruta de la plantilla de la ultima carga, o si el " +
+      "vehiculo termina en vacio en otro municipio, registra el trayecto en vacio 2.",
+    error,
+    aviso,
+  });
 
   // --- Cantidad de remesas segun el tipo de manifiesto [Manual 5.2.4]
   if (m.tipoManifiesto === TIPO_MANIFIESTO.MULTIPARADA && v.remesas.length < 2) {
@@ -1276,27 +1281,71 @@ export function validarReglasRndc(
 }
 
 /**
+ * Verifica un extremo de la ruta contra los sitios de las remesas [Manual 5.2.4].
+ *
+ * Bloquea si ninguna remesa carga (o descarga) en ese municipio. Si a algun
+ * tercero le falta el municipio no se puede afirmar que no calce: se avisa en
+ * vez de bloquear, porque el RNDC tiene su propio maestro de terceros.
+ */
+function revisarExtremoRuta(p: {
+  extremo: "origen" | "destino";
+  municipio: string | null;
+  hayVacio: boolean;
+  municipiosRemesas: Array<string | null | undefined>;
+  sitio: "cargue" | "descargue";
+  consejo: string;
+  error: (mensaje: string) => void;
+  aviso: (mensaje: string) => void;
+}): void {
+  if (!p.municipio || p.hayVacio) return;
+
+  const conocidos = p.municipiosRemesas.filter((c): c is string => !!c);
+  if (conocidos.includes(p.municipio)) return;
+
+  const lista = [...new Set(conocidos)].join(", ") || "ninguno registrado";
+  if (conocidos.length === p.municipiosRemesas.length) {
+    p.error(
+      `La ruta dice ${p.extremo} ${p.municipio}, pero ninguna remesa tiene su ${p.sitio} en ese ` +
+        `municipio (${lista}). El RNDC rechazaria el manifiesto. ${p.consejo}`
+    );
+  } else {
+    p.aviso(
+      `No se pudo confirmar que el ${p.extremo} de la ruta (${p.municipio}) coincida con el ` +
+        `${p.sitio} de alguna remesa: a uno de los terceros le falta el codigo de municipio. ` +
+        `Conocidos: ${lista}.`
+    );
+  }
+}
+
+/**
  * Municipio de origen del manifiesto: donde empieza el trayecto en vacio si lo
- * hay, y si no, donde carga la primera remesa [MANIFIESTO V7 pag. 9].
+ * hay, y si no, el origen de la ruta [MANIFIESTO V7 pag. 9].
+ *
+ * `origenRuta` es el origen explicito de la plantilla principal. Antes salia
+ * del remitente de la primera remesa; ahora es un dato propio y editable, y
+ * validarReglasRndc verifica que calce con algun sitio de cargue.
  */
 export function municipioOrigenDe(
-  remesas: Array<{ remitente: TerceroRndc }>,
+  origenRuta: string | null,
   vacio1?: TrayectoVacio | null
 ): string | null {
   if (vacio1?.origen) return vacio1.origen;
-  return remesas[0]?.remitente.codMunicipioRndc ?? null;
+  return origenRuta;
 }
 
 /**
  * Municipio de destino: donde termina el trayecto en vacio final si lo hay, y
- * si no, donde descarga la ultima remesa.
+ * si no, el destino de la ruta.
+ *
+ * `destinoRuta` es el destino explicito de la plantilla de la ULTIMA remesa:
+ * en multiparada el viaje termina donde descarga el ultimo cliente.
  */
 export function municipioDestinoDe(
-  remesas: Array<{ destinatario: TerceroRndc }>,
+  destinoRuta: string | null,
   vacio2?: TrayectoVacio | null
 ): string | null {
   if (vacio2?.destino) return vacio2.destino;
-  return remesas[remesas.length - 1]?.destinatario.codMunicipioRndc ?? null;
+  return destinoRuta;
 }
 
 /** Atajo: true si hay al menos un problema que impide enviar. */
