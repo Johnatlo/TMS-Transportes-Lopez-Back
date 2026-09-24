@@ -14,6 +14,7 @@ import { RndcClient } from "../rndc/client";
 import { CredencialesRndc } from "../rndc/builders";
 import { consultarPlaca, probarAcceso } from "../rndc/consultas";
 import { vehiculos } from "../repo";
+import { CONFIGURACIONES_SICETAC } from "../rndc/sicetac";
 
 const LINEA = "-".repeat(72);
 
@@ -118,16 +119,24 @@ async function main() {
   for (const v of flota) {
     try {
       const estado = await consultarPlaca(cliente, credenciales, v.placa);
-      if (estado.encontrada && !estado.fechaBloqueo) {
+      // Tabla de estados del Manual WebServicePlaca (pag. 5): solo "." es "Si".
+      if (estado.puedeManifestar === "si") {
         ok(`${v.placa}: ${estado.diagnostico}`);
         placasOk++;
-        // El RUNT manda sobre la configuracion: si la local difiere, gana la del RNDC.
-        if (estado.codConfiguracion && v.configuracion && estado.codConfiguracion !== v.configuracion) {
+        // OJO: son dos codigos distintos y NO se deben igualar. El RUNT devuelve
+        // la configuracion del cabezote (50-55, ej. 54 = tractocamion 3 ejes)
+        // [Manual WebServicePlaca, pag. 5]; el campo local es la configuracion
+        // COMBINADA que pide SICETAC (3S3, 3S2, 2...) [GUIA CONSULTA SICETAC].
+        // Poner 54 en el campo local romperia la consulta de vias y piso.
+        if (!v.configuracion || !(CONFIGURACIONES_SICETAC as readonly string[]).includes(v.configuracion)) {
           nota(
-            `Tu base dice configuracion "${v.configuracion}" pero el RNDC dice ` +
-              `"${estado.codConfiguracion}". Corrige la local: manda la del RNDC.`
+            `[AVISO] Configuracion local "${v.configuracion ?? "(vacia)"}" no es valida para SICETAC ` +
+              `(${CONFIGURACIONES_SICETAC.join(", ")}). RUNT: cabezote ${estado.codConfiguracion ?? "?"}. ` +
+              `Sin corregirla no salen vias ni piso tarifario en el despacho.`
           );
         }
+      } else if (estado.puedeManifestar === "autorizacion") {
+        nota(`[AVISO] ${v.placa}: ${estado.diagnostico}`);
       } else {
         falla(`${v.placa}: ${estado.diagnostico}`);
       }

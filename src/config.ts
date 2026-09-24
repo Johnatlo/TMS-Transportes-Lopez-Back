@@ -19,7 +19,12 @@ export const AMBIENTES_RNDC = {
     restUrl: "http://plc.mintransporte.gov.co:8081",
     // Copia de produccion de una fecha pasada. Lo que registres aqui no tiene
     // efecto legal, pero los datos maestros tampoco estan al dia.
-    wsdlUrl: "http://plc.mintransporte.gov.co:8080/ws",
+    // OJO: plc.mintransporte.gov.co:8080 NO es pruebas: es el servidor de
+    // CONSULTAS de produccion [Guia Uso del Web Service V5, seccion 1]. El de
+    // pruebas es rndcpruebas [misma guia, seccion 3, pag. 11]; la ruta
+    // /wsdl/IBPMServices es la que publica el propio servidor en su pagina de
+    // inicio (/ws devuelve esa pagina HTML, no el WSDL).
+    wsdlUrl: "http://rndcpruebas.mintransporte.gov.co:8080/wsdl/IBPMServices",
   },
   produccion: {
     nombre: "PRODUCCION",
@@ -57,22 +62,33 @@ const wsdlUrl = process.env.RNDC_WSDL_URL || AMBIENTES_RNDC[ambiente].wsdlUrl;
  * freno de mas abajo no se activaria (el ambiente "es" pruebas) y se
  * expedirian documentos reales creyendo que se esta probando.
  *
- * Los hosts de produccion son rndcws y rndcws2; el de pruebas es plc.
+ * El unico host de pruebas es rndcpruebas [Guia Uso del Web Service V5,
+ * seccion 3]. rndcws, rndcws2 y plc son TODOS produccion (plc es el de
+ * consultas, no el de pruebas, aunque antes se creyo lo contrario). Por eso se
+ * valida con lista blanca: cualquier host que no sea el de pruebas cuenta como
+ * produccion, en vez de enumerar los de produccion y dejar pasar el resto.
  */
-const HOSTS_PRODUCCION = ["rndcws.mintransporte.gov.co", "rndcws2.mintransporte.gov.co"];
-const apuntaAProduccion = HOSTS_PRODUCCION.some((h) => wsdlUrl.includes(h));
+const HOST_PRUEBAS = "rndcpruebas.mintransporte.gov.co";
+function hostDe(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+const apuntaAProduccion = hostDe(wsdlUrl) !== HOST_PRUEBAS;
 
 if (ambiente === "pruebas" && apuntaAProduccion && !simular) {
   throw new Error(
     [
       "",
-      "  RNDC_AMBIENTE dice \"pruebas\", pero RNDC_WSDL_URL apunta al servidor de PRODUCCION:",
+      "  RNDC_AMBIENTE dice \"pruebas\", pero la URL del WSDL no es la del servidor de pruebas:",
       `    ${wsdlUrl}`,
       "",
       "  Asi se expedirian documentos reales creyendo que se esta probando.",
       "",
       "  Para probar de verdad, borra o comenta RNDC_WSDL_URL del .env: el ambiente",
-      "  de pruebas usa http://plc.mintransporte.gov.co:8080/ws",
+      `  de pruebas usa ${AMBIENTES_RNDC.pruebas.wsdlUrl}`,
       "",
       "  Si de verdad querias produccion, pon RNDC_AMBIENTE=produccion y agrega la",
       '  confirmacion RNDC_CONFIRMO_PRODUCCION="SI, EXPEDIR DOCUMENTOS REALES"',
@@ -128,6 +144,22 @@ export const config = {
     // La URL sale del ambiente elegido. RNDC_WSDL_URL solo se usa para
     // sobrescribirla a mano (por ejemplo para probar el servidor secundario).
     wsdlUrl,
+    /**
+     * Servidor para CONSULTAS de solo lectura (hoy: SICETAC), en ambos
+     * ambientes. Es rndcws2, servidor de PRODUCCION, listado para SICETAC en
+     * [Consulta de SiceTac desde webservice y portal web, 2021, pag. 3].
+     * Verificado 2026-09-23:
+     * - rndcpruebas no tiene SICETAC 2025 (proceso 26 tipo 6 -> RNDC13).
+     * - plc, pese a ser "el de consultas", responde RNDC33: proceso 26 no
+     *   permitido en esa URL.
+     * Se usa tambien en pruebas porque una consulta no crea documentos.
+     *
+     * El cliente que usa esta URL va con soloConsultas: true y se niega a
+     * enviar cualquier mensaje que no sea tipo 6, asi que un registro nunca
+     * puede salir por aqui aunque alguien se equivoque de cliente.
+     */
+    consultasWsdlUrl:
+      process.env.RNDC_CONSULTAS_WSDL_URL || "http://rndcws2.mintransporte.gov.co:8080/wsdl/IBPMServices",
     restUrl: process.env.RNDC_REST_URL || AMBIENTES_RNDC[ambiente].restUrl,
     usuario: process.env.RNDC_USUARIO ?? "",
     password: process.env.RNDC_PASSWORD ?? "",
@@ -163,5 +195,9 @@ export function describirAmbiente(): string {
     return `RNDC: SIMULACION (no se envia nada al Ministerio)${nota}`;
   }
   const marca = config.rndc.esProduccion ? "!!! PRODUCCION - DOCUMENTOS REALES !!!" : "PRUEBAS";
-  return `RNDC: ${marca} -> ${config.rndc.wsdlUrl}`;
+  return (
+    `RNDC: ${marca} -> ${config.rndc.wsdlUrl}
+` +
+    `      Consultas (SICETAC, solo lectura) -> ${config.rndc.consultasWsdlUrl}`
+  );
 }

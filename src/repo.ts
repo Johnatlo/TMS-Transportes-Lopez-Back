@@ -35,6 +35,8 @@ export interface Vehiculo {
   aplicaFopat: boolean;
   /** NIT de la empresa de monitoreo (proveedor GPS) por defecto del vehiculo. */
   nitMonitoreoFlota: string | null;
+  /** Nombre del titular (tenedor). Solo informativo: no se envia al RNDC. */
+  nombreTenedor: string | null;
 }
 
 export interface Conductor {
@@ -243,6 +245,76 @@ function fechaMysql(d: Date | null | undefined): string | null {
   return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
+// ---------- Edicion desde el catalogo ----------
+
+/** Otra fila ya usa ese valor unico (placa, cedula, NIT...). */
+export class ErrorDuplicado extends Error {}
+/** Un valor no tiene el formato esperado. */
+export class ErrorValidacion extends Error {}
+
+export type TipoCampo = "texto" | "numero" | "fecha" | "booleano";
+
+/**
+ * Actualiza solo las columnas permitidas que vengan en `datos`.
+ *
+ * La lista blanca `campos` es la que arma el SQL: nunca se interpola una llave
+ * que venga del cliente. Cada columna y su valor se agregan juntos, asi que el
+ * numero de placeholders siempre coincide con el de valores (ver el incidente
+ * del INSERT en CONTEXTO-PROYECTO.md).
+ *
+ * Las llaves ausentes no se tocan; un texto vacio se guarda como NULL.
+ */
+export async function actualizarFila(
+  tabla: string,
+  id: number,
+  datos: Record<string, unknown>,
+  campos: Record<string, TipoCampo>
+): Promise<boolean> {
+  const sets: string[] = [];
+  const valores: unknown[] = [];
+
+  for (const [columna, tipo] of Object.entries(campos)) {
+    if (!(columna in datos)) continue;
+    const crudo = datos[columna];
+    const vacio = crudo === null || crudo === undefined || String(crudo).trim() === "";
+    let valor: unknown;
+    if (tipo === "booleano") {
+      valor = crudo ? 1 : 0;
+    } else if (vacio) {
+      valor = null;
+    } else if (tipo === "numero") {
+      const n = Number(crudo);
+      if (!Number.isFinite(n)) throw new ErrorValidacion(`"${columna}" debe ser un numero`);
+      valor = n;
+    } else if (tipo === "fecha") {
+      const d = new Date(String(crudo));
+      if (Number.isNaN(d.getTime())) throw new ErrorValidacion(`"${columna}" no es una fecha valida`);
+      valor = fechaMysql(d);
+    } else {
+      valor = String(crudo).trim();
+    }
+    sets.push(`\`${columna}\` = ?`);
+    valores.push(valor);
+  }
+
+  if (sets.length === 0) return false;
+  try {
+    const [res] = await pool.query<ResultSetHeader>(
+      `UPDATE \`${tabla}\` SET ${sets.join(", ")} WHERE id = ?`,
+      [...valores, id]
+    );
+    return res.affectedRows > 0;
+  } catch (exc: any) {
+    if (exc?.code === "ER_DUP_ENTRY") {
+      throw new ErrorDuplicado("Ya existe otro registro con ese mismo valor (placa, cedula o NIT).");
+    }
+    if (exc?.code === "ER_BAD_NULL_ERROR") {
+      throw new ErrorValidacion(`Falta un dato obligatorio: ${exc.sqlMessage ?? ""}`);
+    }
+    throw exc;
+  }
+}
+
 // ---------- Remolques (trailers) ----------
 export const remolques = {
   async findMany(): Promise<Remolque[]> {
@@ -267,6 +339,17 @@ export const remolques = {
       ]
     );
     return (await this.findById(result.insertId))!;
+  },
+  async update(id: number, datos: Record<string, unknown>): Promise<Remolque | null> {
+    await actualizarFila("remolques", id, datos, {
+      placa: "texto",
+      numEjes: "numero",
+      capacidadKg: "numero",
+      fechaVencSoat: "fecha",
+      fechaVencTecnomecanica: "fecha",
+      activo: "booleano",
+    });
+    return this.findById(id);
   },
 };
 
@@ -334,6 +417,7 @@ export const vehiculos = {
       | "pesoVehiculoVacio"
       | "aplicaFopat"
       | "nitMonitoreoFlota"
+      | "nombreTenedor"
     > &
       Partial<
         Pick<
@@ -344,14 +428,16 @@ export const vehiculos = {
           | "pesoVehiculoVacio"
           | "aplicaFopat"
           | "nitMonitoreoFlota"
+          | "nombreTenedor"
         >
       >
   ): Promise<Vehiculo> {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO vehiculos
         (placa, placaRemolque, marca, configuracion, capacidadKg, propietarioNit, fechaVencSoat, fechaVencTecnomecanica,
-         codTipoIdTenedor, numIdTenedor, codTipoCarroceria, pesoVehiculoVacio, aplicaFopat, nitMonitoreoFlota)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         codTipoIdTenedor, numIdTenedor, codTipoCarroceria, pesoVehiculoVacio, aplicaFopat, nitMonitoreoFlota,
+         nombreTenedor)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.placa,
         data.placaRemolque,
@@ -368,9 +454,31 @@ export const vehiculos = {
         // Por defecto SI aplica: casi toda la flota de carga supera 10.5 t.
         (data.aplicaFopat ?? true) ? 1 : 0,
         data.nitMonitoreoFlota ?? null,
+        data.nombreTenedor ?? null,
       ]
     );
     return (await this.findById(result.insertId))!;
+  },
+  async update(id: number, datos: Record<string, unknown>): Promise<Vehiculo | null> {
+    await actualizarFila("vehiculos", id, datos, {
+      placa: "texto",
+      placaRemolque: "texto",
+      marca: "texto",
+      configuracion: "texto",
+      capacidadKg: "numero",
+      pesoVehiculoVacio: "numero",
+      codTipoCarroceria: "texto",
+      propietarioNit: "texto",
+      codTipoIdTenedor: "texto",
+      numIdTenedor: "texto",
+      nombreTenedor: "texto",
+      fechaVencSoat: "fecha",
+      fechaVencTecnomecanica: "fecha",
+      aplicaFopat: "booleano",
+      nitMonitoreoFlota: "texto",
+      activo: "booleano",
+    });
+    return this.findById(id);
   },
 };
 
@@ -445,6 +553,18 @@ export const conductores = {
     );
     return (await this.findById(result.insertId))!;
   },
+  async update(id: number, datos: Record<string, unknown>): Promise<Conductor | null> {
+    await actualizarFila("conductores", id, datos, {
+      codTipoId: "texto",
+      cedula: "texto",
+      nombre: "texto",
+      licencia: "texto",
+      categoriaLicencia: "texto",
+      fechaVencLicencia: "fecha",
+      activo: "booleano",
+    });
+    return this.findById(id);
+  },
 };
 
 // ---------- Terceros ----------
@@ -485,6 +605,21 @@ export const terceros = {
       ]
     );
     return (await this.findById(result.insertId))!;
+  },
+  async update(id: number, datos: Record<string, unknown>): Promise<Tercero | null> {
+    await actualizarFila("terceros", id, datos, {
+      codTipoId: "texto",
+      nit: "texto",
+      nombre: "texto",
+      codSede: "texto",
+      direccion: "texto",
+      ciudad: "texto",
+      telefono: "texto",
+      codMunicipioRndc: "texto",
+      latitud: "numero",
+      longitud: "numero",
+    });
+    return this.findById(id);
   },
 };
 
@@ -662,6 +797,13 @@ export const empresasMonitoreo = {
        ON DUPLICATE KEY UPDATE nombre = VALUES(nombre), activa = 1`,
       [nit, nombre]
     );
+  },
+
+  async update(id: number, datos: { nit?: string; nombre?: string }): Promise<EmpresaMonitoreo | null> {
+    await actualizarFila("empresas_monitoreo", id, datos, { nit: "texto", nombre: "texto" });
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM empresas_monitoreo WHERE id = ?", [id]);
+    const row = rows[0] as EmpresaMonitoreo | undefined;
+    return row ? { ...row, activa: !!row.activa } : null;
   },
 
   async desactivar(id: number): Promise<boolean> {

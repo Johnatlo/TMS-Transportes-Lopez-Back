@@ -1,3 +1,16 @@
 
 # Datos reales de la empresa (NITs, cedulas, placas): no se versionan
 datos-empresa.json
+
+# Credenciales del RNDC y de la base de datos: nunca se versionan.
+# Copia .env.example a .env y llenalo en cada maquina.
+.env
+
+# Dependencias y compilado: se regeneran con npm install / npm run build
+node_modules/
+dist/
+
+# Exportes con datos personales reales (cedulas, nombres, licencias)
+conductores.csv
+terceros.csv
+personas_sin_licencia_revisar.csv

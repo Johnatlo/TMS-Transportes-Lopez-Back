@@ -33,6 +33,12 @@ export interface RndcClientConfig {
   simular: boolean;
   /** Reintentos ante fallas de red (no ante rechazos del RNDC). */
   reintentos?: number;
+  /**
+   * true = este cliente solo puede enviar consultas (tipo 6). Es el que apunta
+   * al servidor de consultas de produccion; cualquier otro mensaje se rechaza
+   * aqui antes de salir, para que un registro nunca llegue a produccion por el.
+   */
+  soloConsultas?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +171,11 @@ export function leerEtiquetas(xml: string, nombre: string): string[] {
 // Cliente
 // ---------------------------------------------------------------------------
 
+/** true si el mensaje enviado es una consulta (tipo de solicitud 6). */
+function esConsulta(xmlMensaje: string): boolean {
+  return /<tipo>\s*6\s*<\/tipo>/i.test(xmlMensaje);
+}
+
 function esperar(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -173,6 +184,12 @@ export class RndcClient {
   constructor(private config: RndcClientConfig) {}
 
   async enviar(xmlMensaje: string, procesoId?: string): Promise<ResultadoRndc> {
+    if (this.config.soloConsultas && !esConsulta(xmlMensaje)) {
+      throw new RndcError(
+        "Este cliente es solo para consultas (tipo 6) y apunta al servidor de consultas de " +
+          "PRODUCCION. Se bloqueo el envio de un mensaje que no es consulta."
+      );
+    }
     if (this.config.simular) {
       return {
         ok: true,
@@ -198,9 +215,15 @@ export class RndcClient {
         // Import perezoso: la libreria 'soap' solo se necesita en modo real.
         const soap = await import("soap");
         const client = await soap.createClientAsync(this.config.wsdlUrl);
-        const [result] = await client.AtenderMensajeRNDCAsync({ variables: xmlMensaje });
-        const respuestaXml: string = result?.AtenderMensajeRNDCResult ?? "";
-        return this.parsearRespuesta(respuestaXml, procesoId);
+        // El WSDL define la entrada como la parte "Request" y la salida como
+        // "return" (ambas xs:string) [Guia Uso del Web Service V5, WSDL pag. 5-6;
+        // verificado contra /wsdl/IBPMServices]. Con otro nombre la libreria
+        // manda el mensaje vacio y el RNDC contesta vacio.
+        const [result] = await client.AtenderMensajeRNDCAsync({ Request: xmlMensaje });
+        const salida = result?.return;
+        const respuestaXml: string =
+          typeof salida === "string" ? salida : salida?.$value ?? "";
+        return this.parsearRespuesta(respuestaXml, procesoId, esConsulta(xmlMensaje));
       } catch (exc) {
         ultimoFallo = exc as Error;
         if (intento < intentos) {
@@ -214,7 +237,7 @@ export class RndcClient {
     );
   }
 
-  private parsearRespuesta(xml: string, procesoId?: string): ResultadoRndc {
+  private parsearRespuesta(xml: string, procesoId?: string, consulta = false): ResultadoRndc {
     // Los nombres de etiqueta de error NO estan documentados en las guias
     // oficiales; se prueban las variantes conocidas. Si aparece otra en
     // produccion, agregarla aqui.
@@ -225,6 +248,23 @@ export class RndcClient {
     ];
 
     const radicado = leerEtiqueta(xml, "ingresoid");
+
+    // Una consulta (tipo 6) no genera radicado: la respuesta buena es un
+    // <root><documento>...</documento></root> con los campos pedidos
+    // [Manual WebServicePlaca, pag. 4]. Solo se acepta asi cuando lo enviado
+    // era una consulta, para que un registro sin radicado siga siendo error.
+    if (consulta && errores.length === 0 && /<documento[\s>]/i.test(xml)) {
+      return {
+        ok: true,
+        radicado: null,
+        mec: null,
+        qr: null,
+        error: null,
+        codigoError: null,
+        errorCrudo: null,
+        xmlRespuesta: xml,
+      };
+    }
 
     // Defensa ante una respuesta que no se pudo interpretar: sin radicado y sin
     // error explicito, tratarla como exito seria peor que reportar el problema.

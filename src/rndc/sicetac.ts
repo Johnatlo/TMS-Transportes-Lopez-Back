@@ -15,7 +15,7 @@
  * desplegable de "Via a Utilizar" del manifiesto y el piso del flete.
  */
 
-import { RndcClient, leerEtiqueta } from "./client";
+import { RndcClient, RndcError, leerEtiqueta } from "./client";
 import { CredencialesRndc } from "./builders";
 
 export const TIPO_SOLICITUD_SICETAC = "6";
@@ -240,6 +240,18 @@ export async function consultarSicetac(
   for (let intento = 0; intento <= mesesHaciaAtras; intento++) {
     const xml = construirXmlSicetac(credenciales, { ...filtros, periodo });
     const respuesta = await cliente.enviar(xml, PROCESO_ID_SICETAC);
+
+    // Un rechazo no es "periodo sin datos": seguir retrocediendo de mes lo
+    // escondia y la pantalla decia "no hay vias" cuando en realidad el RNDC
+    // rechazo la consulta (visto en el ambiente de pruebas: RNDC13, proceso 26
+    // tipo 6 no habilitado). Solo "Documento no encontrado" (RNDC11) se trata
+    // como mes vacio; cualquier otro error se propaga.
+    if (!respuesta.ok && !/RNDC11/i.test(respuesta.errorCrudo ?? "")) {
+      throw new RndcError(
+        `SICETAC rechazo la consulta (periodo ${periodo}): ${respuesta.error ?? respuesta.errorCrudo}`
+      );
+    }
+
     const filas = parsearRespuestaSicetac(respuesta.xmlRespuesta);
 
     if (filas.length > 0) {

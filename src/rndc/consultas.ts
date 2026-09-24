@@ -20,7 +20,7 @@ export const TIPO_SOLICITUD_CONSULTA = "6";
  * Proceso 48 = maestro RNA (Registro Nacional Automotor). Permite verificar el
  * estado de una placa antes de intentar despacharla.
  * Fuente: "RNDC - Consulta por WebService de una placa" (Ministerio de
- * Transporte, febrero 2020).
+ * Transporte, febrero 2020) -> docs/Manual WebServicePlaca.pdf.
  */
 export const PROCESO_ID_RNA_PLACA = "48";
 
@@ -34,10 +34,26 @@ function escapeXml(valor: string): string {
 }
 
 /**
- * Arma el XML de una consulta.
+ * Texto de un elemento XML: solo hay que escapar &, < y >. Las comillas se
+ * dejan tal cual porque los filtros de las consultas van entre comillas
+ * sencillas ('TDM735') y el RNDC no esta documentado como decodificador de
+ * &apos;.
+ */
+function escapeTexto(valor: string): string {
+  return valor.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Arma el XML de una consulta (tipo 6).
+ *
+ * Formato segun el ejemplo de la guia de placa [Manual WebServicePlaca, pag. 3]:
+ * - <variables> es una lista de nombres separados por coma, en texto plano; no
+ *   un elemento vacio por campo.
+ * - Los filtros van dentro de <documento> y su valor entre comillas sencillas:
+ *   <PLACA>'TDM735'</PLACA>. Las comillas las pone esta funcion.
  *
  * @param variables Nombres de los campos que se quieren de vuelta.
- * @param filtros   Criterios de busqueda (van dentro de <documento>).
+ * @param filtros   Criterios de busqueda (van dentro de <documento>), sin comillas.
  */
 export function construirXmlConsulta(
   credenciales: CredencialesRndc,
@@ -45,9 +61,9 @@ export function construirXmlConsulta(
   variables: string[],
   filtros: Record<string, string>
 ): string {
-  const variablesXml = variables.map((v) => `<${v}></${v}>`).join("");
+  const variablesXml = variables.join(", ");
   const filtrosXml = Object.entries(filtros)
-    .map(([k, v]) => `<${k}>${escapeXml(v)}</${k}>`)
+    .map(([k, v]) => `<${k}>'${escapeTexto(v.replace(/'/g, ""))}'</${k}>`)
     .join("");
 
   return `<?xml version='1.0' encoding='ISO-8859-1' ?>
@@ -77,6 +93,13 @@ export interface EstadoPlaca {
   clase: string | null;
   fechaBloqueo: string | null;
   fechaDesbloqueo: string | null;
+  /**
+   * Si con este estado de matricula se puede expedir manifiesto, segun la tabla
+   * de la guia [Manual WebServicePlaca, pag. 5]: solo "." (activa en el RUNT)
+   * es "Si"; DESINTEGRADO requiere autorizacion expresa de la empresa; todo lo
+   * demas es "No".
+   */
+  puedeManifestar: "si" | "autorizacion" | "no";
   /** Resumen legible de si la placa sirve para despachar. */
   diagnostico: string;
   xmlRespuesta: string;
@@ -96,18 +119,32 @@ export async function consultarPlaca(
     credenciales,
     PROCESO_ID_RNA_PLACA,
     ["ESTADOMATRICULA", "FECHABLOQUEO", "FECHADESBLOQUEO", "CODCONFIGURACION", "CLASE"],
-    { NUMPLACA: placa }
+    { PLACA: placa }
   );
 
   const resultado = await cliente.enviar(xml, PROCESO_ID_RNA_PLACA);
   const respuesta = resultado.xmlRespuesta;
 
+  // En la respuesta el RNDC usa "." como "sin valor": estadomatricula "." es
+  // placa activa sin problema, fechadesbloqueo "." es que no hay fecha
+  // [Manual WebServicePlaca, pag. 4]. Para las fechas se normaliza a null;
+  // el estado se conserva tal cual porque "." es justamente el valor bueno.
+  const sinPunto = (v: string | null) => (v === "." ? null : v);
   const estadoMatricula = leerEtiqueta(respuesta, "ESTADOMATRICULA");
-  const codConfiguracion = leerEtiqueta(respuesta, "CODCONFIGURACION");
-  const clase = leerEtiqueta(respuesta, "CLASE");
-  const fechaBloqueo = leerEtiqueta(respuesta, "FECHABLOQUEO");
-  const fechaDesbloqueo = leerEtiqueta(respuesta, "FECHADESBLOQUEO");
+  const codConfiguracion = sinPunto(leerEtiqueta(respuesta, "CODCONFIGURACION"));
+  const clase = sinPunto(leerEtiqueta(respuesta, "CLASE"));
+  const fechaBloqueo = sinPunto(leerEtiqueta(respuesta, "FECHABLOQUEO"));
+  const fechaDesbloqueo = sinPunto(leerEtiqueta(respuesta, "FECHADESBLOQUEO"));
   const encontrada = estadoMatricula !== null;
+
+  const estadoNormalizado = (estadoMatricula ?? "").trim().toUpperCase();
+  const puedeManifestar: EstadoPlaca["puedeManifestar"] = !resultado.ok || !encontrada
+    ? "no"
+    : estadoNormalizado === "."
+      ? "si"
+      : estadoNormalizado === "DESINTEGRADO"
+        ? "autorizacion"
+        : "no";
 
   let diagnostico: string;
   if (!resultado.ok) {
@@ -116,10 +153,16 @@ export async function consultarPlaca(
     diagnostico =
       "La placa no aparece en el RNA de este ambiente. Si estas en pruebas, puede " +
       "que el vehiculo se haya matriculado despues de la fecha de corte de la copia.";
-  } else if (fechaBloqueo && !fechaDesbloqueo) {
-    diagnostico = `Placa BLOQUEADA desde ${fechaBloqueo}. No se puede despachar.`;
+  } else if (puedeManifestar === "si") {
+    diagnostico = `Activa en el RUNT. Configuracion: ${codConfiguracion ?? "?"} (${clase ?? "?"}).`;
+  } else if (puedeManifestar === "autorizacion") {
+    diagnostico =
+      "Matricula DESINTEGRADO: solo se puede manifestar con autorizacion expresa de la empresa.";
   } else {
-    diagnostico = `Matricula: ${estadoMatricula}. Configuracion: ${codConfiguracion ?? "?"}.`;
+    const bloqueo = fechaBloqueo
+      ? ` Bloqueada desde ${fechaBloqueo}${fechaDesbloqueo ? `, desbloqueo ${fechaDesbloqueo}` : ""}.`
+      : "";
+    diagnostico = `Matricula ${estadoMatricula}: no se puede expedir manifiesto.${bloqueo}`;
   }
 
   return {
@@ -130,6 +173,7 @@ export async function consultarPlaca(
     clase,
     fechaBloqueo,
     fechaDesbloqueo,
+    puedeManifestar,
     diagnostico,
     xmlRespuesta: respuesta,
   };
@@ -152,7 +196,7 @@ export async function probarAcceso(
     credenciales,
     PROCESO_ID_RNA_PLACA,
     ["ESTADOMATRICULA"],
-    { NUMPLACA: placaCualquiera }
+    { PLACA: placaCualquiera }
   );
   const resultado = await cliente.enviar(xml, PROCESO_ID_RNA_PLACA);
 

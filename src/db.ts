@@ -406,6 +406,12 @@ export async function initSchema(): Promise<void> {
     // De aqui sale el par con el que se consultan las vias a SICETAC.
     ["plantillas_viaje", "municipioOrigen", "VARCHAR(8)"],
     ["plantillas_viaje", "municipioDestino", "VARCHAR(8)"],
+
+    // Nombre del titular del manifiesto (tenedor). NO se envia al RNDC: alli
+    // solo viajan el tipo y el numero de identificacion. Sirve para ver en el
+    // catalogo a quien corresponde la cedula, sobre todo en la flota propia,
+    // donde el titular es el propietario persona natural y no la empresa.
+    ["vehiculos", "nombreTenedor", "VARCHAR(150)"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).

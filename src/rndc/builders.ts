@@ -583,14 +583,16 @@ export interface DatosViajeParaRndc {
     /**
      * Origen y destino del manifiesto en codigo DIVIPOLA.
      *
-     * No salen de una "ruta" configurada aparte: se deducen de los sitios de
-     * cargue y descargue de las remesas, que es justo lo que exige el Manual
-     * (5.2.4): el origen debe coincidir con el municipio de cargue de alguna
-     * remesa y el destino con el de descargue de alguna. Deducirlos garantiza
-     * esa coincidencia en vez de dejarla a que dos tablas no se desincronicen.
+     * Salen de la ruta explicita de las plantillas (municipioOrigen de la
+     * plantilla de la primera carga, municipioDestino de la de la ultima), que
+     * el despachador puede editar. Como ya no se deducen de las remesas, la
+     * regla del Manual (5.2.4) -- el origen debe coincidir con el municipio de
+     * cargue de alguna remesa y el destino con el de descargue de alguna -- no
+     * se cumple por construccion: la verifica validarReglasRndc antes de enviar.
      *
      * Los trayectos en vacio son la excepcion: si el viaje arranca vacio, el
-     * origen es donde empieza ese trayecto, no donde se carga.
+     * origen es donde empieza ese trayecto, no donde se carga (ver
+     * municipioOrigenDe / municipioDestinoDe).
      */
     ruta: {
       codigoOrigenRndc: string | null;

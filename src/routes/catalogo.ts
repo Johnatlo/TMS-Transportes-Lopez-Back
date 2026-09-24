@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { revisarCoordenadaSede, normalizarCodigoMercancia } from "../rndc/builders";
 import { config } from "../config";
 import { revisarVencimientos } from "../alertas";
@@ -10,6 +10,7 @@ import {
   aCabeceraMunicipal,
   periodoDe,
   CONDICION_CARGA,
+  CONFIGURACIONES_SICETAC,
 } from "../rndc/sicetac";
 import {
   vehiculos,
@@ -22,10 +23,45 @@ import {
   vias,
   empresasMonitoreo,
   municipios,
+  ErrorDuplicado,
+  ErrorValidacion,
   type NuevaPlantilla,
 } from "../repo";
 
 export const catalogoRouter = Router();
+
+// ---------- Edicion desde el catalogo ----------
+
+/**
+ * Corre una edicion y traduce los errores conocidos a respuestas claras:
+ * 404 si no existe, 409 si choca con otro registro (placa/cedula/NIT
+ * repetidos) y 422 si un dato no tiene el formato esperado.
+ */
+async function responderEdicion<T>(
+  res: Response,
+  editar: () => Promise<T | null>,
+  extra: Record<string, unknown> = {}
+) {
+  try {
+    const actualizado = await editar();
+    if (!actualizado) return res.status(404).json({ error: "Registro no encontrado" });
+    res.json({ ...actualizado, ...extra });
+  } catch (exc) {
+    if (exc instanceof ErrorDuplicado) return res.status(409).json({ error: exc.message });
+    if (exc instanceof ErrorValidacion) return res.status(422).json({ error: exc.message });
+    throw exc;
+  }
+}
+
+/** Copia del body solo las llaves que llegaron, para no pisar lo que no se edito. */
+function soloPresentes(b: Record<string, unknown>, llaves: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of llaves) if (k in b) out[k] = b[k];
+  return out;
+}
+
+const soloDigitos = (v: unknown) => (v === null || v === undefined ? v : String(v).replace(/\D/g, ""));
+const mayusculas = (v: unknown) => (v === null || v === undefined ? v : String(v).toUpperCase().trim());
 
 // ---------- REMOLQUES (trailers) ----------
 catalogoRouter.get("/remolques", async (_req, res) => {
@@ -42,6 +78,14 @@ catalogoRouter.post("/remolques", async (req, res) => {
     fechaVencTecnomecanica: b.fechaVencTecnomecanica ? new Date(b.fechaVencTecnomecanica) : null,
   });
   res.status(201).json(creado);
+});
+
+catalogoRouter.put("/remolques/:id", async (req, res) => {
+  const datos = soloPresentes(req.body ?? {}, [
+    "placa", "numEjes", "capacidadKg", "fechaVencSoat", "fechaVencTecnomecanica", "activo",
+  ]);
+  if ("placa" in datos) datos.placa = mayusculas(datos.placa);
+  await responderEdicion(res, () => remolques.update(Number(req.params.id), datos));
 });
 
 // ---------- VEHICULOS ----------
@@ -68,8 +112,46 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
     numIdTenedor: b.numIdTenedor ?? null,
     codTipoCarroceria: b.codTipoCarroceria ?? "0",
     pesoVehiculoVacio: b.pesoVehiculoVacio ? Number(b.pesoVehiculoVacio) : null,
+    nombreTenedor: b.nombreTenedor ?? null,
   });
   res.status(201).json(creado);
+});
+
+/**
+ * Edicion completa de un vehiculo desde el catalogo.
+ *
+ * El titular del manifiesto (codTipoIdTenedor + numIdTenedor) es lo que viaja
+ * en CODIDTITULARMANIFIESTO / NUMIDTITULARMANIFIESTO [MANIFIESTO V7 pag. 11].
+ * En la flota propia la empresa usa la cedula del propietario y no su NIT,
+ * porque con la empresa como titular el RNDC exige valor a pagar 0 (MAN006).
+ */
+catalogoRouter.put("/vehiculos/:id", async (req, res) => {
+  const datos = soloPresentes(req.body ?? {}, [
+    "placa", "placaRemolque", "marca", "configuracion", "capacidadKg", "pesoVehiculoVacio",
+    "codTipoCarroceria", "propietarioNit", "codTipoIdTenedor", "numIdTenedor", "nombreTenedor",
+    "fechaVencSoat", "fechaVencTecnomecanica", "aplicaFopat", "nitMonitoreoFlota", "activo",
+  ]);
+  if ("placa" in datos) datos.placa = mayusculas(datos.placa);
+  if ("placaRemolque" in datos) datos.placaRemolque = mayusculas(datos.placaRemolque);
+  if ("numIdTenedor" in datos) datos.numIdTenedor = soloDigitos(datos.numIdTenedor);
+  if ("propietarioNit" in datos) datos.propietarioNit = soloDigitos(datos.propietarioNit);
+  if ("nitMonitoreoFlota" in datos) datos.nitMonitoreoFlota = soloDigitos(datos.nitMonitoreoFlota);
+
+  if ("configuracion" in datos && datos.configuracion) {
+    const c = String(datos.configuracion).toUpperCase().trim();
+    if (!(CONFIGURACIONES_SICETAC as readonly string[]).includes(c)) {
+      return res.status(422).json({
+        error: `Configuracion "${c}" no valida para SICETAC. Usa una de: ${CONFIGURACIONES_SICETAC.join(", ")}.`,
+      });
+    }
+    datos.configuracion = c;
+  }
+  if ("numIdTenedor" in datos && !datos.numIdTenedor) {
+    return res.status(422).json({
+      error: "El titular del manifiesto es obligatorio: sin el no se puede expedir el manifiesto.",
+    });
+  }
+  await responderEdicion(res, () => vehiculos.update(Number(req.params.id), datos));
 });
 
 // ---------- CONDUCTORES ----------
@@ -88,6 +170,18 @@ catalogoRouter.post("/conductores", async (req, res) => {
     codTipoId: b.codTipoId ?? "C",
   });
   res.status(201).json(creado);
+});
+
+catalogoRouter.put("/conductores/:id", async (req, res) => {
+  const datos = soloPresentes(req.body ?? {}, [
+    "codTipoId", "cedula", "nombre", "licencia", "categoriaLicencia", "fechaVencLicencia", "activo",
+  ]);
+  if ("cedula" in datos) datos.cedula = soloDigitos(datos.cedula);
+  if ("categoriaLicencia" in datos) datos.categoriaLicencia = mayusculas(datos.categoriaLicencia);
+  if (("cedula" in datos && !datos.cedula) || ("nombre" in datos && !String(datos.nombre ?? "").trim())) {
+    return res.status(422).json({ error: "La cedula y el nombre del conductor son obligatorios." });
+  }
+  await responderEdicion(res, () => conductores.update(Number(req.params.id), datos));
 });
 
 // ---------- TERCEROS (clientes) ----------
@@ -133,6 +227,30 @@ catalogoRouter.post("/terceros", async (req, res) => {
   res.status(201).json({ ...creado, avisoCoordenada: revision.problema });
 });
 
+catalogoRouter.put("/terceros/:id", async (req, res) => {
+  const datos = soloPresentes(req.body ?? {}, [
+    "codTipoId", "nit", "nombre", "codSede", "direccion", "ciudad", "telefono",
+    "codMunicipioRndc", "latitud", "longitud",
+  ]);
+  if ("nit" in datos) datos.nit = soloDigitos(datos.nit);
+  if (("nit" in datos && !datos.nit) || ("nombre" in datos && !String(datos.nombre ?? "").trim())) {
+    return res.status(422).json({ error: "El NIT y el nombre del cliente son obligatorios." });
+  }
+  if ("codMunicipioRndc" in datos && datos.codMunicipioRndc && !/^\d{8}$/.test(String(datos.codMunicipioRndc))) {
+    return res.status(422).json({
+      error: "El codigo de municipio debe ser DIVIPOLA de 8 digitos (ej. 11001000).",
+    });
+  }
+  // Igual que al crear: la coordenada rara se avisa pero no se rechaza.
+  const actual = await terceros.findById(Number(req.params.id));
+  const lat = "latitud" in datos ? (datos.latitud === "" ? null : Number(datos.latitud)) : actual?.latitud ?? null;
+  const lon = "longitud" in datos ? (datos.longitud === "" ? null : Number(datos.longitud)) : actual?.longitud ?? null;
+  const revision = revisarCoordenadaSede(lat, lon, `Sede ${datos.codSede ?? actual?.codSede ?? "0"}`);
+  await responderEdicion(res, () => terceros.update(Number(req.params.id), datos), {
+    avisoCoordenada: revision.problema,
+  });
+});
+
 // ---------- RUTAS ----------
 catalogoRouter.get("/rutas", async (_req, res) => {
   res.json(await rutas.findMany());
@@ -176,6 +294,19 @@ catalogoRouter.post("/monitoreo", async (req, res) => {
   }
   await empresasMonitoreo.guardar(nit, nombre);
   res.status(201).json(await empresasMonitoreo.findByNit(nit));
+});
+
+catalogoRouter.put("/monitoreo/:id", async (req, res) => {
+  const datos: { nit?: string; nombre?: string } = {};
+  if (req.body?.nit !== undefined) datos.nit = String(req.body.nit).replace(/\D/g, "");
+  if (req.body?.nombre !== undefined) datos.nombre = String(req.body.nombre).trim();
+  if (datos.nit === "" || datos.nombre === "") {
+    return res.status(422).json({ error: "Indica el NIT y el nombre de la empresa de monitoreo" });
+  }
+  if (datos.nit && datos.nit.length > 15) {
+    return res.status(422).json({ error: "El NIT de la empresa de monitoreo admite maximo 15 digitos" });
+  }
+  await responderEdicion(res, () => empresasMonitoreo.update(Number(req.params.id), datos));
 });
 
 catalogoRouter.delete("/monitoreo/:id", async (req, res) => {
@@ -226,12 +357,15 @@ catalogoRouter.get("/vias/sicetac", async (req, res) => {
     password: config.rndc.password,
     nitEmpresa: config.rndc.empresaNit,
   };
+  // SICETAC va al servidor de consultas (rndcws2) tambien en pruebas: ver
+  // config.rndc.consultasWsdlUrl. soloConsultas bloquea cualquier registro.
   const cliente = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
+    wsdlUrl: config.rndc.consultasWsdlUrl,
     usuario: config.rndc.usuario,
     password: config.rndc.password,
     simular: config.rndc.simular,
     reintentos: config.rndc.reintentos,
+    soloConsultas: true,
   });
 
   try {
@@ -397,9 +531,22 @@ catalogoRouter.get("/alertas", async (req, res) => {
 // ---------- PARAMETROS DE LA EMPRESA ----------
 // Poliza de carga, FOPAT y tarifa de retefuente. Cambian una vez al ano, asi
 // que viven aqui y no en cada plantilla.
+/**
+ * nitEmpresa / nombreEmpresa / ambienteRndc vienen del .env y son de solo
+ * lectura: el catalogo los muestra (y usa el NIT para marcar los vehiculos
+ * cuyo titular es la propia empresa), pero no se editan desde la pantalla.
+ */
+function datosFijosEmpresa() {
+  return {
+    nitEmpresa: config.rndc.empresaNit,
+    nombreEmpresa: config.empresa.nombre,
+    ambienteRndc: config.rndc.nombreAmbiente,
+  };
+}
+
 catalogoRouter.get("/parametros", async (_req, res) => {
   const p = await parametros.obtener();
-  res.json({ ...p, avisoPoliza: await parametros.revisarVigenciaPoliza() });
+  res.json({ ...p, ...datosFijosEmpresa(), avisoPoliza: await parametros.revisarVigenciaPoliza() });
 });
 
 catalogoRouter.put("/parametros", async (req, res) => {
@@ -415,7 +562,7 @@ catalogoRouter.put("/parametros", async (req, res) => {
     tarifaRetencionFuente:
       b.tarifaRetencionFuente !== undefined ? Number(b.tarifaRetencionFuente) : undefined,
   });
-  res.json({ ...guardados, avisoPoliza: await parametros.revisarVigenciaPoliza() });
+  res.json({ ...guardados, ...datosFijosEmpresa(), avisoPoliza: await parametros.revisarVigenciaPoliza() });
 });
 
 // ---------- PLANTILLAS DE VIAJE ----------
