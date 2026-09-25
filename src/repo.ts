@@ -853,7 +853,12 @@ export const parametros = {
 
   async guardar(data: Partial<ParametrosEmpresa>): Promise<ParametrosEmpresa> {
     const actual = await this.obtener();
-    const nuevo = { ...actual, ...data };
+    // El spread copia tambien las llaves con valor undefined y pisaria lo
+    // actual: se descartan, para que "no vino" signifique "no cambiar".
+    const definidos = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== undefined)
+    ) as Partial<ParametrosEmpresa>;
+    const nuevo = { ...actual, ...definidos };
     await pool.query(
       `UPDATE parametros_empresa SET
          tomadorPolizaCarga = ?, numeroPolizaTransporte = ?, companiaSeguro = ?,
@@ -1390,16 +1395,34 @@ export const viajes = {
    * Solo cuenta los que llegaron al RNDC: los que fallaron antes de enviarse
    * no ocupan cupo alla.
    */
-  async contarPorVehiculoYFecha(vehiculoId: number, fecha: Date): Promise<number> {
+  /**
+   * Manifiestos de la placa en ese dia. `excluirViajeId` evita que un viaje
+   * que se esta reintentando (en MANIFIESTO_ERROR) se cuente a si mismo.
+   */
+  async contarPorVehiculoYFecha(vehiculoId: number, fecha: Date, excluirViajeId = 0): Promise<number> {
     const dia = fecha.toISOString().slice(0, 10);
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM viajes
         WHERE vehiculoId = ?
           AND DATE(fechaHoraCargue) = ?
-          AND estado IN ('CONFIRMADO', 'MANIFIESTO_ERROR')`,
-      [vehiculoId, dia]
+          AND estado IN ('CONFIRMADO', 'MANIFIESTO_ERROR')
+          AND id <> ?`,
+      [vehiculoId, dia, excluirViajeId]
     );
     return Number((rows[0] as any).total ?? 0);
+  },
+
+  /**
+   * Toma el viaje para reintentarlo solo si sigue en un estado reintentable.
+   * Es un UPDATE condicional (atomico): si llegan dos reintentos a la vez (doble
+   * clic), solo uno lo consigue y el otro no reenvia remesas al RNDC.
+   */
+  async tomarParaReintento(id: number, estadosPermitidos: string[]): Promise<boolean> {
+    const [res] = await pool.query<ResultSetHeader>(
+      `UPDATE viajes SET estado = 'REINTENTANDO' WHERE id = ? AND estado IN (?)`,
+      [id, estadosPermitidos]
+    );
+    return res.affectedRows === 1;
   },
   async create(data: {
     plantillaId: number;

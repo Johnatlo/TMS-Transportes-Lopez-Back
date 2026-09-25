@@ -1052,9 +1052,9 @@ export function validarReglasRndc(
   //     descargue [MAN pag. 16, Decreto 1079/2015 art. 2.2.1.7.6.6]
   if (v.fechaPagoSaldo) {
     const habiles = diasHabilesEntre(ultimoDescargueDe(v.remesas), v.fechaPagoSaldo);
-    if (habiles > 5) {
+    if (habiles > 30) {
       error(
-        `La fecha de pago del saldo supera los 5 dias habiles despues del ultimo descargue ` +
+        `La fecha de pago del saldo supera los 30 dias habiles despues del ultimo descargue ` +
           `(van ${habiles})`
       );
     }

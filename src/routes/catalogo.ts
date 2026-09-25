@@ -551,13 +551,18 @@ catalogoRouter.get("/parametros", async (_req, res) => {
 
 catalogoRouter.put("/parametros", async (req, res) => {
   const b = req.body;
+  // Solo se tocan los campos que llegan: antes un campo ausente se guardaba
+  // como null y un guardado parcial borraba la poliza.
+  const presente = (k: string) => k in (b ?? {});
   const guardados = await parametros.guardar({
     tomadorPolizaCarga: b.tomadorPolizaCarga ?? undefined,
-    numeroPolizaTransporte: b.numeroPolizaTransporte ?? null,
-    companiaSeguro: b.companiaSeguro ?? null,
-    fechaVencimientoPolizaCarga: b.fechaVencimientoPolizaCarga
-      ? new Date(b.fechaVencimientoPolizaCarga)
-      : null,
+    numeroPolizaTransporte: presente("numeroPolizaTransporte") ? b.numeroPolizaTransporte || null : undefined,
+    companiaSeguro: presente("companiaSeguro") ? b.companiaSeguro || null : undefined,
+    fechaVencimientoPolizaCarga: presente("fechaVencimientoPolizaCarga")
+      ? b.fechaVencimientoPolizaCarga
+        ? new Date(b.fechaVencimientoPolizaCarga)
+        : null
+      : undefined,
     aplicaFopat: b.aplicaFopat !== undefined ? !!b.aplicaFopat : undefined,
     tarifaRetencionFuente:
       b.tarifaRetencionFuente !== undefined ? Number(b.tarifaRetencionFuente) : undefined,
