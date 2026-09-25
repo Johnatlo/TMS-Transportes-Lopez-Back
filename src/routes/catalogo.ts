@@ -525,7 +525,10 @@ catalogoRouter.put("/tarifas", async (req, res) => {
 // no contra hoy: conviene ver lo que vence pronto y no solo lo vencido.
 catalogoRouter.get("/alertas", async (req, res) => {
   const dias = Number(req.query.dias ?? 30);
-  res.json(await revisarVencimientos(Number.isFinite(dias) ? dias : 30));
+  // ?inactivos=1 agrega los documentos de vehiculos, remolques y conductores
+  // inactivos, para poder actualizarlos desde el modal de alertas.
+  const inactivos = req.query.inactivos === "1" || req.query.inactivos === "true";
+  res.json(await revisarVencimientos(Number.isFinite(dias) ? dias : 30, inactivos));
 });
 
 // ---------- PARAMETROS DE LA EMPRESA ----------

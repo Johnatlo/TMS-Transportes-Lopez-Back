@@ -25,6 +25,24 @@ export interface AlertaDocumento {
   diasRestantes: number | null;
   severidad: Severidad;
   mensaje: string;
+  /**
+   * Registro y campo del que sale la fecha, para poder corregirla desde la
+   * alerta misma (PUT /catalogo/<entidad>/:id o PUT /catalogo/parametros).
+   */
+  origen: OrigenAlerta;
+  /**
+   * false si el vehiculo, remolque o conductor esta inactivo. Solo aparecen
+   * cuando se piden con incluirInactivos (para poder actualizarlos antes de
+   * reactivarlos); los contadores normales cuentan solo activos.
+   */
+  activo: boolean;
+}
+
+export interface OrigenAlerta {
+  entidad: "vehiculo" | "remolque" | "conductor" | "empresa";
+  /** null para la empresa, que es una sola fila. */
+  id: number | null;
+  campo: "fechaVencSoat" | "fechaVencTecnomecanica" | "fechaVencLicencia" | "fechaVencimientoPolizaCarga";
 }
 
 function diasHasta(fecha: Date | null): number | null {
@@ -56,10 +74,14 @@ function alerta(
   sujeto: string,
   identificacion: string | null,
   fecha: Date | null,
-  diasAviso: number
+  diasAviso: number,
+  origen: OrigenAlerta,
+  activo = true
 ): AlertaDocumento {
   const dias = diasHasta(fecha);
   return {
+    origen,
+    activo,
     tipo,
     sujeto,
     identificacion,
@@ -77,6 +99,8 @@ export interface ResumenAlertas {
   diasAviso: number;
   /** Cuantos elementos se revisaron, para dar contexto al conteo. */
   revisados: { vehiculos: number; remolques: number; conductores: number };
+  /** true si la revision incluyo registros inactivos. */
+  incluyeInactivos: boolean;
 }
 
 /**
@@ -87,7 +111,8 @@ export interface ResumenAlertas {
  * despacho si los deja pasar.
  */
 export async function revisarVencimientos(
-  diasAviso = DIAS_AVISO_POR_DEFECTO
+  diasAviso = DIAS_AVISO_POR_DEFECTO,
+  incluirInactivos = false
 ): Promise<ResumenAlertas> {
   const [flota, trailers, personal, params] = await Promise.all([
     vehiculos.findMany(),
@@ -96,28 +121,50 @@ export async function revisarVencimientos(
     parametros.obtener(),
   ]);
 
-  const activos = flota.filter((v) => v.activo);
-  const trailersActivos = trailers.filter((r) => r.activo);
-  const conductoresActivos = personal.filter((c) => c.activo);
+  // Por defecto solo activos: un vehiculo retirado con el SOAT vencido no es
+  // una alarma. Con incluirInactivos se revisan todos, marcados con `activo`.
+  const activos = flota.filter((v) => incluirInactivos || v.activo);
+  const trailersActivos = trailers.filter((r) => incluirInactivos || r.activo);
+  const conductoresActivos = personal.filter((c) => incluirInactivos || c.activo);
 
   const todas: AlertaDocumento[] = [];
 
   for (const v of activos) {
-    todas.push(alerta("SOAT", v.placa, v.placa, v.fechaVencSoat, diasAviso));
     todas.push(
-      alerta("TECNOMECANICA", v.placa, v.placa, v.fechaVencTecnomecanica, diasAviso)
+      alerta("SOAT", v.placa, v.placa, v.fechaVencSoat, diasAviso, {
+        entidad: "vehiculo",
+        id: v.id,
+        campo: "fechaVencSoat",
+      }, v.activo)
+    );
+    todas.push(
+      alerta("TECNOMECANICA", v.placa, v.placa, v.fechaVencTecnomecanica, diasAviso, {
+        entidad: "vehiculo",
+        id: v.id,
+        campo: "fechaVencTecnomecanica",
+      }, v.activo)
     );
   }
 
   // Los remolques tambien llevan tecnomecanica y el RNDC la valida.
   for (const r of trailersActivos) {
     todas.push(
-      alerta("TECNOMECANICA", `${r.placa} (remolque)`, r.placa, r.fechaVencTecnomecanica, diasAviso)
+      alerta("TECNOMECANICA", `${r.placa} (remolque)`, r.placa, r.fechaVencTecnomecanica, diasAviso, {
+        entidad: "remolque",
+        id: r.id,
+        campo: "fechaVencTecnomecanica",
+      }, r.activo)
     );
   }
 
   for (const c of conductoresActivos) {
-    todas.push(alerta("LICENCIA", c.nombre, c.cedula, c.fechaVencLicencia, diasAviso));
+    todas.push(
+      alerta("LICENCIA", c.nombre, c.cedula, c.fechaVencLicencia, diasAviso, {
+        entidad: "conductor",
+        id: c.id,
+        campo: "fechaVencLicencia",
+      }, c.activo)
+    );
   }
 
   // La poliza de carga de la empresa es una sola, pero su vencimiento para el
@@ -128,7 +175,8 @@ export async function revisarVencimientos(
       "poliza de carga de la empresa",
       params.numeroPolizaTransporte,
       params.fechaVencimientoPolizaCarga,
-      diasAviso
+      diasAviso,
+      { entidad: "empresa", id: null, campo: "fechaVencimientoPolizaCarga" }
     )
   );
 
@@ -145,5 +193,6 @@ export async function revisarVencimientos(
       remolques: trailersActivos.length,
       conductores: conductoresActivos.length,
     },
+    incluyeInactivos: incluirInactivos,
   };
 }
