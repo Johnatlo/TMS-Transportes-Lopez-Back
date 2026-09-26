@@ -213,6 +213,11 @@ export interface Viaje {
   codigoError: string | null;
   /** Texto original del RNDC, sin traducir. */
   errorCrudo: string | null;
+  /** Anulacion: motivo del manifiesto, observaciones, radicado y fecha. */
+  motivoAnulacion: string | null;
+  observacionesAnulacion: string | null;
+  radicadoAnulacion: string | null;
+  fechaAnulacion: Date | null;
 }
 
 // ---------- Helpers ----------
@@ -1220,8 +1225,12 @@ export interface ViajeRemesa {
   ordenServicioGenerador: string | null;
   /** Parte del flete que corresponde a esta remesa, para ponderar el ICA. */
   valorFleteRemesa: number | null;
-  estado: string; // PENDIENTE | CREADA | ERROR
+  estado: string; // PENDIENTE | CREADA | ERROR | ANULADA
   mensajeError: string | null;
+  /** Radicado de la anulacion del cumplido inicial (proceso 54), si se hizo. */
+  radicadoAnulacionCumplido: string | null;
+  /** Radicado de la anulacion de la remesa (proceso 9). */
+  radicadoAnulacion: string | null;
 }
 
 export interface NuevaViajeRemesa {
@@ -1418,11 +1427,36 @@ export const viajes = {
    * clic), solo uno lo consigue y el otro no reenvia remesas al RNDC.
    */
   async tomarParaReintento(id: number, estadosPermitidos: string[]): Promise<boolean> {
+    return this.tomarConEstado(id, estadosPermitidos, "REINTENTANDO");
+  },
+
+  /**
+   * Candado generico: pasa el viaje a `nuevoEstado` solo si esta en uno de
+   * los permitidos. UPDATE condicional = atomico frente al doble clic.
+   */
+  async tomarConEstado(id: number, estadosPermitidos: string[], nuevoEstado: string): Promise<boolean> {
     const [res] = await pool.query<ResultSetHeader>(
-      `UPDATE viajes SET estado = 'REINTENTANDO' WHERE id = ? AND estado IN (?)`,
-      [id, estadosPermitidos]
+      `UPDATE viajes SET estado = ? WHERE id = ? AND estado IN (?)`,
+      [nuevoEstado, id, estadosPermitidos]
     );
     return res.affectedRows === 1;
+  },
+
+  /**
+   * Manifiestos expedidos y anulados en un mes ("AAAA-MM", por fecha de
+   * expedicion), para el tope de anulaciones del Manual 6.1.5.
+   */
+  async conteoManifiestosMes(mes: string): Promise<{ expedidos: number; anulados: number }> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS expedidos,
+              SUM(radicadoAnulacion IS NOT NULL) AS anulados
+         FROM viajes
+        WHERE numeroManifiestoRndc IS NOT NULL
+          AND DATE_FORMAT(fechaCreacion, '%Y-%m') = ?`,
+      [mes]
+    );
+    const r = rows[0] as any;
+    return { expedidos: Number(r.expedidos ?? 0), anulados: Number(r.anulados ?? 0) };
   },
   async create(data: {
     plantillaId: number;

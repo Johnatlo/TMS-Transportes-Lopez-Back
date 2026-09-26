@@ -32,6 +32,14 @@ export const TIPO_SOLICITUD_REGISTRAR = "1";
 export const PROCESO_ID_REMESA = "3"; // Expedir Remesa Terrestre de Carga [REM pag. 47]
 export const PROCESO_ID_MANIFIESTO = "4"; // Expedir Manifiesto de Carga [MAN pag. 20]
 export const PROCESO_ID_TERCERO = "11"; // Crear/actualizar Tercero (maestro)
+
+// Anulacion. Nombres de proceso y etiquetas: diccionarios del wstest
+// capturados por el usuario (2026-09-26). Codigos de motivo: respuestas del
+// RNDC de pruebas a valores invalidos (ACI040, ANM040, ANR050), y "D" de la
+// remesa aceptado al anular la remesa 00010007 en pruebas.
+export const PROCESO_ID_ANULAR_CUMPLIDO_INICIAL = "54"; // ANULAR CUMPLIDO INICIAL REMESA
+export const PROCESO_ID_ANULAR_MANIFIESTO = "32"; // ANULAR MANIFIESTO DE CARGA
+export const PROCESO_ID_ANULAR_REMESA = "9"; // ANULAR REMESA
 export const PROCESO_ID_VEHICULO = "12"; // Crear/actualizar Vehiculo (maestro)
 
 /** Naturaleza de carga: 1 = Carga General. Unico valor que usa esta empresa. */
@@ -1353,4 +1361,105 @@ export function municipioDestinoDe(
 /** Atajo: true si hay al menos un problema que impide enviar. */
 export function tieneErroresBloqueantes(problemas: ProblemaValidacion[]): boolean {
   return problemas.some((p) => p.gravedad === "ERROR");
+}
+
+// ---------------------------------------------------------------------------
+// Anulacion (procesos 54, 32 y 9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Motivos que acepta el RNDC. Los codigos salen de sus propios mensajes de
+ * error en el ambiente de pruebas; las descripciones de R, T, G y C son del
+ * Manual RNDC 2026 (6.1.5). D = error de digitacion lo dice el RNDC para el
+ * cumplido (ACI040). S no trae descripcion oficial: el Manual habla de anular
+ * "por errores en la digitacion o a la cancelacion del servicio", de ahi la
+ * lectura "servicio cancelado", que no esta confirmada.
+ */
+export const MOTIVOS_ANULACION_MANIFIESTO = {
+  D: "Error de digitacion",
+  S: "Servicio cancelado (descripcion no confirmada)",
+  R: "Cambio en la remesa",
+  T: "Cambio de tarifa",
+  G: "Cambio de destino por el generador",
+  C: "Cambio de conductor",
+} as const;
+
+/** ACI040: "solo puede ser (D, O) Error de digitacion, Otro". */
+export const MOTIVOS_ANULACION_CUMPLIDO = {
+  D: "Error de digitacion",
+  O: "Otro",
+} as const;
+
+/**
+ * El RNDC no lista los motivos de anulacion de remesa (ANR040 no los
+ * enumera). Solo "D" esta verificado; no se ofrecen otros sin confirmarlos.
+ */
+export const MOTIVOS_ANULACION_REMESA = {
+  D: "Error de digitacion",
+} as const;
+
+/**
+ * Tipo de reversa de la remesa (MOTIVOREVERSAREMESA). ANR050 lista [A], [L];
+ * "A" fue aceptado para una anulacion, "L" fue rechazado con el mismo error.
+ */
+export const REVERSA_REMESA_ANULAR = "A";
+
+export type MotivoAnulacionManifiesto = keyof typeof MOTIVOS_ANULACION_MANIFIESTO;
+export type MotivoAnulacionCumplido = keyof typeof MOTIVOS_ANULACION_CUMPLIDO;
+export type MotivoAnulacionRemesa = keyof typeof MOTIVOS_ANULACION_REMESA;
+
+/** Proceso 54. Se hace mientras el manifiesto existe (pide su numero). */
+export function construirDatosAnularCumplidoInicial(
+  consecutivoRemesa: string,
+  numManifiesto: string,
+  motivo: MotivoAnulacionCumplido,
+  observaciones: string
+): Record<string, unknown> {
+  return {
+    CONSECUTIVOREMESA: consecutivoRemesa,
+    NUMMANIFIESTOCARGA: numManifiesto,
+    CODMOTIVOANULACIONCUMPLIDO: motivo,
+    OBSERVACIONES: observaciones,
+  };
+}
+
+/** Proceso 32. NUMMANIFIESTOCARGANUEVO solo aplica a reemplazos (R, T, G, C). */
+export function construirDatosAnularManifiesto(
+  numManifiesto: string,
+  motivo: MotivoAnulacionManifiesto,
+  observaciones: string
+): Record<string, unknown> {
+  return {
+    NUMMANIFIESTOCARGA: numManifiesto,
+    MOTIVOANULACIONMANIFIESTO: motivo,
+    OBSERVACIONES: observaciones,
+  };
+}
+
+/**
+ * Proceso 9. La remesa no puede estar ligada a un manifiesto vigente
+ * (ANR030): se anula despues del manifiesto.
+ */
+export function construirDatosAnularRemesa(
+  consecutivoRemesa: string,
+  motivo: MotivoAnulacionRemesa,
+  observaciones: string
+): Record<string, unknown> {
+  return {
+    CONSECUTIVOREMESA: consecutivoRemesa,
+    MOTIVOREVERSAREMESA: REVERSA_REMESA_ANULAR,
+    MOTIVOANULACIONREMESA: motivo,
+    OBSERVACIONES: observaciones,
+  };
+}
+
+/**
+ * Tope de manifiestos anulados por mes, segun cuantos expidio la empresa ese
+ * mes [Manual RNDC 2026, 6.1.5, tabla 2]. Pasarlo exige una manifestacion
+ * expresa en el portal y se reporta a la Superintendencia.
+ */
+export function porcentajeTopeAnulaciones(expedidosMes: number): number {
+  if (expedidosMes > 2000) return 0.1;
+  if (expedidosMes >= 500) return 0.2;
+  return 0.3;
 }

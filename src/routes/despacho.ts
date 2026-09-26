@@ -35,6 +35,19 @@ import {
   calcularIcaPonderado,
   PROCESO_ID_REMESA,
   PROCESO_ID_MANIFIESTO,
+  PROCESO_ID_ANULAR_CUMPLIDO_INICIAL,
+  PROCESO_ID_ANULAR_MANIFIESTO,
+  PROCESO_ID_ANULAR_REMESA,
+  MOTIVOS_ANULACION_MANIFIESTO,
+  MOTIVOS_ANULACION_CUMPLIDO,
+  MOTIVOS_ANULACION_REMESA,
+  MotivoAnulacionManifiesto,
+  MotivoAnulacionCumplido,
+  MotivoAnulacionRemesa,
+  construirDatosAnularCumplidoInicial,
+  construirDatosAnularManifiesto,
+  construirDatosAnularRemesa,
+  porcentajeTopeAnulaciones,
   MAX_REMESAS_POR_MANIFIESTO,
   DatosViajeParaRndc,
   DatosRemesaParaRndc,
@@ -780,6 +793,274 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
     // Si algo inesperado falla, el viaje no puede quedar trabado en
     // REINTENTANDO: vuelve a su estado anterior para poder reintentarlo.
     await viajes.update(viajeId, { estado: viaje.estado });
+    throw exc;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Anulacion
+// ---------------------------------------------------------------------------
+
+/**
+ * Estados desde los que se puede anular. ANULACION_ERROR permite retomar una
+ * anulacion a medias: lo ya anulado queda registrado y no se repite.
+ */
+const ESTADOS_ANULABLES = [
+  "CONFIRMADO",
+  "MANIFIESTO_ERROR",
+  "REMESA_ERROR",
+  "VALIDACION_ERROR",
+  "ANULACION_ERROR",
+];
+
+/** Lo que falta anular de un viaje, en el orden en que se hara. */
+function planDeAnulacion(viaje: Viaje, remesas: ViajeRemesa[]) {
+  const manifiestoVigente = !!viaje.numeroManifiestoRndc && !viaje.radicadoAnulacion;
+  const remesasVigentes = remesas.filter((r) => r.estado === "CREADA");
+  return {
+    manifiestoVigente,
+    remesasVigentes,
+    // El cumplido inicial solo existe si hubo manifiesto (lo genera el
+    // monitoreo del manifiesto), y el proceso 54 pide su numero.
+    cumplidosPorAnular: manifiestoVigente
+      ? remesasVigentes.filter((r) => !r.radicadoAnulacionCumplido)
+      : [],
+    // Nada creado en el RNDC: la "anulacion" es solo local (descartar).
+    soloLocal: !manifiestoVigente && remesasVigentes.length === 0,
+  };
+}
+
+function mesDe(fecha: Date): string {
+  return new Date(fecha).toISOString().slice(0, 7);
+}
+
+/**
+ * Vista previa: que pasos se van a ejecutar, que motivos acepta el RNDC y como
+ * va el tope mensual de anulaciones de manifiestos.
+ */
+despachoRouter.get("/:id/anulacion", async (req, res) => {
+  const viaje = await viajes.findById(Number(req.params.id));
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  const remesas = await viajeRemesas.findByViaje(viaje.id);
+  const plan = planDeAnulacion(viaje, remesas);
+
+  let tope = null;
+  if (plan.manifiestoVigente) {
+    const conteo = await viajes.conteoManifiestosMes(mesDe(viaje.fechaCreacion));
+    const porcentaje = porcentajeTopeAnulaciones(conteo.expedidos);
+    tope = {
+      ...conteo,
+      porcentaje,
+      maximo: Math.floor(conteo.expedidos * porcentaje),
+    };
+  }
+
+  res.json({
+    anulable: ESTADOS_ANULABLES.includes(viaje.estado),
+    estado: viaje.estado,
+    pasos: [
+      ...plan.cumplidosPorAnular.map((r) => `Anular cumplido inicial de la remesa ${r.consecutivoRemesa} (proceso 54)`),
+      ...(plan.manifiestoVigente ? [`Anular manifiesto ${viaje.consecutivoManifiesto} (proceso 32)`] : []),
+      ...plan.remesasVigentes.map((r) => `Anular remesa ${r.consecutivoRemesa} (proceso 9)`),
+      ...(plan.soloLocal ? ["Nada quedo creado en el RNDC: el viaje solo se marca como anulado aqui"] : []),
+    ],
+    soloLocal: plan.soloLocal,
+    tope,
+    motivos: {
+      manifiesto: MOTIVOS_ANULACION_MANIFIESTO,
+      cumplido: MOTIVOS_ANULACION_CUMPLIDO,
+      remesa: MOTIVOS_ANULACION_REMESA,
+    },
+  });
+});
+
+/**
+ * Anula un viaje en el RNDC, en el orden que exige:
+ *   1. cumplido inicial de cada remesa (54): lo genera el satelital y pide el
+ *      numero del manifiesto, asi que va mientras este exista;
+ *   2. el manifiesto (32);
+ *   3. cada remesa (9): el RNDC no deja anular una remesa ligada a un
+ *      manifiesto vigente (ANR030).
+ *
+ * Cada paso exitoso se guarda en el momento. Si uno falla, el viaje queda en
+ * ANULACION_ERROR y al volver a llamar se retoma desde ahi.
+ *
+ * Un error en el paso 1 NO detiene la anulacion: no sabemos que responde el
+ * RNDC cuando la remesa no tiene cumplido inicial (sin satelital, como en
+ * pruebas). Si el cumplido existia y no se anulo, el paso 2 falla con su
+ * propio mensaje y no se pierde nada.
+ */
+despachoRouter.post("/:id/anular", async (req, res) => {
+  const viajeId = Number(req.params.id);
+  const viaje = await viajes.findById(viajeId);
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  if (!ESTADOS_ANULABLES.includes(viaje.estado)) {
+    return res.status(409).json({
+      error:
+        viaje.estado === "ANULADO"
+          ? "Este viaje ya esta anulado."
+          : `Un viaje en estado ${viaje.estado} no se puede anular.`,
+    });
+  }
+
+  const b = req.body ?? {};
+  const observaciones = String(b.observaciones ?? "").trim();
+  const motivoManifiesto = String(b.motivoManifiesto ?? "").toUpperCase();
+  const motivoCumplido = String(b.motivoCumplido ?? "D").toUpperCase();
+  const motivoRemesa = String(b.motivoRemesa ?? "D").toUpperCase();
+
+  // Las observaciones son obligatorias en los tres procesos [Manual 6.1].
+  if (observaciones.length < 5) {
+    return res.status(422).json({ error: "Explica en las observaciones por que se anula (obligatorio)." });
+  }
+  const remesas = await viajeRemesas.findByViaje(viajeId);
+  const plan = planDeAnulacion(viaje, remesas);
+  if (plan.manifiestoVigente && !(motivoManifiesto in MOTIVOS_ANULACION_MANIFIESTO)) {
+    return res.status(422).json({ error: "Elige el motivo de anulacion del manifiesto." });
+  }
+  if (!(motivoCumplido in MOTIVOS_ANULACION_CUMPLIDO) || !(motivoRemesa in MOTIVOS_ANULACION_REMESA)) {
+    return res.status(422).json({ error: "Motivo de anulacion no valido." });
+  }
+
+  if (!(await viajes.tomarConEstado(viajeId, ESTADOS_ANULABLES, "ANULANDO"))) {
+    return res.status(409).json({ error: "El viaje ya se esta procesando. Espera el resultado." });
+  }
+
+  const obs = observaciones.slice(0, 200);
+  const fallar = async (mensaje: string, resultado?: { codigoError: string | null; errorCrudo: string | null }) => {
+    const actualizado = await viajes.update(viajeId, {
+      estado: "ANULACION_ERROR",
+      mensajeError: mensaje,
+      codigoError: resultado?.codigoError ?? null,
+      errorCrudo: resultado?.errorCrudo ?? null,
+    });
+    return res.status(422).json({ ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId) });
+  };
+
+  try {
+    // Nada en el RNDC: se descarta localmente.
+    if (plan.soloLocal) {
+      const final = await viajes.update(viajeId, {
+        estado: "ANULADO",
+        motivoAnulacion: plan.manifiestoVigente ? motivoManifiesto : null,
+        observacionesAnulacion: obs,
+        fechaAnulacion: new Date(),
+        mensajeError: null,
+        codigoError: null,
+        errorCrudo: null,
+      });
+      return res.json({ ...final, remesas });
+    }
+
+    const credenciales = {
+      usuario: config.rndc.usuario,
+      password: config.rndc.password,
+      nitEmpresa: config.rndc.empresaNit,
+    };
+    const cliente = new RndcClient({
+      wsdlUrl: config.rndc.wsdlUrl,
+      usuario: config.rndc.usuario,
+      password: config.rndc.password,
+      simular: config.rndc.simular,
+      reintentos: config.rndc.reintentos,
+    });
+    const avisos: string[] = [];
+
+    // 1. Cumplido inicial (54). No bloqueante: ver comentario de la ruta.
+    for (const r of plan.cumplidosPorAnular) {
+      const xml = construirXmlMensaje(
+        credenciales,
+        PROCESO_ID_ANULAR_CUMPLIDO_INICIAL,
+        construirDatosAnularCumplidoInicial(
+          r.consecutivoRemesa!,
+          viaje.consecutivoManifiesto!,
+          motivoCumplido as MotivoAnulacionCumplido,
+          obs
+        )
+      );
+      const resultado = await cliente.enviar(xml, PROCESO_ID_ANULAR_CUMPLIDO_INICIAL);
+      if (resultado.ok) {
+        await viajeRemesas.update(r.id, { radicadoAnulacionCumplido: resultado.radicado });
+      } else {
+        avisos.push(
+          `Cumplido inicial de la remesa ${r.consecutivoRemesa}: ${resultado.errorCrudo ?? resultado.error}`
+        );
+      }
+    }
+
+    // 2. Manifiesto (32).
+    if (plan.manifiestoVigente) {
+      const xml = construirXmlMensaje(
+        credenciales,
+        PROCESO_ID_ANULAR_MANIFIESTO,
+        construirDatosAnularManifiesto(
+          viaje.consecutivoManifiesto!,
+          motivoManifiesto as MotivoAnulacionManifiesto,
+          obs
+        )
+      );
+      const resultado = await cliente.enviar(xml, PROCESO_ID_ANULAR_MANIFIESTO);
+      if (!resultado.ok) {
+        const previos = avisos.length > 0 ? ` Antes, al anular el cumplido inicial: ${avisos.join(" | ")}` : "";
+        return await fallar(
+          `No se pudo anular el manifiesto ${viaje.consecutivoManifiesto}: ${resultado.error}.${previos} ` +
+            `Nada de las remesas se anulo todavia.`,
+          resultado
+        );
+      }
+      await viajes.update(viajeId, {
+        radicadoAnulacion: resultado.radicado,
+        motivoAnulacion: motivoManifiesto,
+        observacionesAnulacion: obs,
+      });
+    }
+
+    // 3. Remesas (9).
+    const anuladas: string[] = [];
+    for (const r of plan.remesasVigentes) {
+      const xml = construirXmlMensaje(
+        credenciales,
+        PROCESO_ID_ANULAR_REMESA,
+        construirDatosAnularRemesa(r.consecutivoRemesa!, motivoRemesa as MotivoAnulacionRemesa, obs)
+      );
+      const resultado = await cliente.enviar(xml, PROCESO_ID_ANULAR_REMESA);
+      if (!resultado.ok) {
+        const hecho = [
+          ...(plan.manifiestoVigente ? [`el manifiesto ${viaje.consecutivoManifiesto}`] : []),
+          ...anuladas.map((c) => `la remesa ${c}`),
+        ];
+        return await fallar(
+          `${hecho.length > 0 ? `Ya se anularon ${hecho.join(", ")}. ` : ""}` +
+            `No se pudo anular la remesa ${r.consecutivoRemesa}: ${resultado.error}. ` +
+            `Corrige y vuelve a anular: se retoma desde esta remesa.`,
+          resultado
+        );
+      }
+      await viajeRemesas.update(r.id, {
+        estado: "ANULADA",
+        radicadoAnulacion: resultado.radicado,
+        mensajeError: null,
+      });
+      anuladas.push(r.consecutivoRemesa!);
+    }
+
+    const final = await viajes.update(viajeId, {
+      estado: "ANULADO",
+      observacionesAnulacion: obs,
+      fechaAnulacion: new Date(),
+      mensajeError: null,
+      codigoError: null,
+      errorCrudo: null,
+      // Lo del cumplido inicial queda como aviso: puede ser solo que no existia.
+      avisos: avisos.length > 0 ? avisos.join(" | ") : null,
+    });
+    res.json({ ...final, remesas: await viajeRemesas.findByViaje(viajeId) });
+  } catch (exc) {
+    // Falla inesperada (red, base de datos): no dejar el viaje en ANULANDO.
+    await viajes.update(viajeId, {
+      estado: "ANULACION_ERROR",
+      mensajeError: `Error inesperado al anular: ${(exc as Error).message}. Revisa en el portal que quedo anulado antes de reintentar.`,
+    });
     throw exc;
   }
 });

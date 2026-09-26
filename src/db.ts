@@ -412,6 +412,18 @@ export async function initSchema(): Promise<void> {
     // catalogo a quien corresponde la cedula, sobre todo en la flota propia,
     // donde el titular es el propietario persona natural y no la empresa.
     ["vehiculos", "nombreTenedor", "VARCHAR(150)"],
+
+    // Anulacion de documentos (procesos 54, 32 y 9). El viaje anulado NO se
+    // borra: su numero sigue contando como usado, porque el RNDC no deja
+    // reutilizar un consecutivo anulado [Manual RNDC 2026, 6.1].
+    ["viajes", "motivoAnulacion", "VARCHAR(2)"],
+    ["viajes", "observacionesAnulacion", "VARCHAR(255)"],
+    ["viajes", "radicadoAnulacion", "VARCHAR(30)"],
+    ["viajes", "fechaAnulacion", "DATETIME"],
+    // Por remesa: anulacion del cumplido inicial (54) y de la remesa (9).
+    // Guardarlos por separado permite retomar una anulacion a medias.
+    ["viaje_remesas", "radicadoAnulacionCumplido", "VARCHAR(30)"],
+    ["viaje_remesas", "radicadoAnulacion", "VARCHAR(30)"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
