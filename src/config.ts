@@ -125,6 +125,10 @@ export const config = {
   empresa: {
     // Solo para encabezar los documentos que imprime la empresa.
     nombre: process.env.EMPRESA_NOMBRE ?? "Empresa de Transporte",
+    // Encabezado de la remesa impresa, como en la remesa oficial del RNDC.
+    direccion: process.env.EMPRESA_DIRECCION ?? "",
+    telefono: process.env.EMPRESA_TELEFONO ?? "",
+    municipio: process.env.EMPRESA_MUNICIPIO ?? "",
   },
   sicetac: {
     // SICETAC cotiza por combinacion de unidad de transporte y tipo de carga,

@@ -966,7 +966,8 @@ function columnasPlantilla(data: NuevaPlantilla): Array<[columna: string, valor:
     // Esta empresa solo mueve carga general.
     ["codNaturalezaCarga", data.codNaturalezaCarga ?? "1"],
     ["codUnidadMedida", data.codUnidadMedida ?? "1"],
-    ["codTipoEmpaque", data.codTipoEmpaque ?? "0"],
+    // 15 = Granel solido, la carga habitual (ver TIPOS_EMPAQUE en builders.ts).
+    ["codTipoEmpaque", data.codTipoEmpaque ?? "15"],
     ["codMercancia", data.codMercancia ?? null],
     ["subpartidaCode", data.subpartidaCode ?? null],
     ["codigoArancelCode", data.codigoArancelCode ?? null],

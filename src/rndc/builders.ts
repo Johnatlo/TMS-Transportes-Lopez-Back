@@ -73,6 +73,23 @@ export type TipoOperacionRemesa =
   (typeof TIPO_OPERACION_REMESA)[keyof typeof TIPO_OPERACION_REMESA];
 
 /**
+ * Tipos de empaque (CODTIPOEMPAQUE). Los nombres son los de la guia de remesa
+ * [REM V5, pag. 8-9]; la equivalencia codigo -> nombre la verifico el usuario
+ * en el portal del RNDC sobre remesas reales de la empresa (2026-09-28).
+ * 0 y 17 son empaques de "Mercancia consolidada", no de operacion General.
+ */
+export const TIPOS_EMPAQUE: Record<string, string> = {
+  "15": "Granel Solido",
+  "4": "General Fraccionada",
+  "18": "Unidad sin empaque",
+  "0": "Paquetes general fraccionada (max. 2 kg por unidad)",
+  "17": "Varios",
+};
+
+/** El de la carga habitual de la empresa (reciclaje a granel). */
+export const TIPO_EMPAQUE_POR_DEFECTO = "15";
+
+/**
  * Unidad de medida COMERCIAL del producto -- UNIDADMEDIDAPRODUCTO [REM pag. 47-48].
  * Distinta de UNIDADMEDIDACAPACIDAD, que es la unidad de TRANSPORTE y siempre
  * va en kilos.

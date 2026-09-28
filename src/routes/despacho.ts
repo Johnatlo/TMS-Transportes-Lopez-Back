@@ -14,6 +14,7 @@ import {
   NuevaViajeRemesa,
   vias,
   empresasMonitoreo,
+  parametros,
 } from "../repo";
 import { config } from "../config";
 import {
@@ -1157,8 +1158,15 @@ despachoRouter.get("/remesas/:remesaId/imprimir", async (req, res) => {
     viaje,
     vehiculo,
     conductor,
-    nombreEmpresa: config.empresa.nombre,
-    nitEmpresa: config.rndc.empresaNit,
+    empresa: {
+      nombre: config.empresa.nombre,
+      nit: config.rndc.empresaNit,
+      direccion: config.empresa.direccion,
+      telefono: config.empresa.telefono,
+      municipio: config.empresa.municipio,
+    },
+    // La poliza de carga es una sola, de la empresa (pestana Empresa).
+    poliza: await parametros.obtener(),
     logoDataUri: logoComoDataUri(),
   });
 

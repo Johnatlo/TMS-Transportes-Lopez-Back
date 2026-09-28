@@ -250,7 +250,7 @@ async function main() {
       codMunicipioIntermedio: p.codMunicipioIntermedio ?? null,
       codNaturalezaCarga: "1",
       codUnidadMedida: "1",
-      codTipoEmpaque: p.codTipoEmpaque ?? "0",
+      codTipoEmpaque: p.codTipoEmpaque ?? "15",
       empaquePrimario: p.empaquePrimario ?? null,
       codMercancia: codigo.length === 4 ? `00${codigo}` : codigo,
       subpartidaCode: p.subpartidaCode ?? null,

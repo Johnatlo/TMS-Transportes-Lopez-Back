@@ -660,7 +660,8 @@ async function plantillaDesdeCuerpo(
       // Esta empresa solo mueve carga general.
       codNaturalezaCarga: "1",
       codUnidadMedida: b.codUnidadMedida ?? "1",
-      codTipoEmpaque: b.codTipoEmpaque ?? "0",
+      // 15 = Granel solido (ver TIPOS_EMPAQUE en builders.ts).
+      codTipoEmpaque: b.codTipoEmpaque ?? "15",
       empaquePrimario: b.empaquePrimario ?? null,
       codMercancia,
       subpartidaCode: b.subpartidaCode ?? null,
