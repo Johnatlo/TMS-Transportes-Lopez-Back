@@ -48,7 +48,11 @@ export const PROCESO_PDF_MANIFIESTO = "4";
 /**
  * procesoid que se intenta para el PDF de la remesa.
  *
- * OJO: NO esta documentado. La guia solo describe el 4 (manifiesto), pero
+ * VERIFICADO QUE NO FUNCIONA (2026-09-26): el RNDC responde "RNDC12: El
+ * procesoid 3 no es correcto para generar el PDF". Ya no se usa desde las
+ * rutas; se conserva por si el Ministerio lo habilita a futuro.
+ *
+ * Nota original: NO esta documentado. La guia solo describe el 4 (manifiesto), pero
  * define el tipo 21 como "consultar el pdf de un proceso" en general y avisa
  * que "en el futuro pueden aparecer otros tipos de pdf". El 3 es el proceso de
  * remesa en el resto del webservice, asi que es la hipotesis razonable.

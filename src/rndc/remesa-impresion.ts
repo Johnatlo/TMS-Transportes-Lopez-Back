@@ -57,6 +57,8 @@ export interface DatosImpresionRemesa {
   conductor: Conductor | null;
   nombreEmpresa: string;
   nitEmpresa: string;
+  /** Logo de la empresa como data URI (ver estampado.ts). */
+  logoDataUri?: string | null;
   /** Texto que advierte que el RNDC no entrego el documento oficial. */
   motivoRepresentacionPropia?: string | null;
 }
@@ -87,6 +89,8 @@ export function construirHtmlRemesa(d: DatosImpresionRemesa): string {
   .encabezado { display: flex; justify-content: space-between; align-items: flex-start;
                 border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 12px; }
   .encabezado h1 { font-size: 16px; margin: 0 0 2px; }
+  .encabezado .marca { display: flex; align-items: center; gap: 14px; }
+  .encabezado .marca img { height: 58px; }
   .encabezado .empresa { font-size: 12px; font-weight: bold; }
   .radicado { text-align: right; font-size: 12px; }
   .radicado strong { display: block; font-size: 15px; }
@@ -118,10 +122,13 @@ export function construirHtmlRemesa(d: DatosImpresionRemesa): string {
 </div>
 
 <div class="encabezado">
-  <div>
-    <h1>REMESA TERRESTRE DE CARGA</h1>
-    <div class="empresa">${escapar(d.nombreEmpresa)}</div>
-    <div>NIT ${escapar(d.nitEmpresa)}</div>
+  <div class="marca">
+    ${d.logoDataUri ? `<img src="${d.logoDataUri}" alt="Logo de la empresa">` : ""}
+    <div>
+      <h1>REMESA TERRESTRE DE CARGA</h1>
+      <div class="empresa">${escapar(d.nombreEmpresa)}</div>
+      <div>NIT ${escapar(d.nitEmpresa)}</div>
+    </div>
   </div>
   <div class="radicado">
     <span>Consecutivo</span>

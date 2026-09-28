@@ -59,7 +59,8 @@ import {
 } from "../rndc/builders";
 import { RndcClient, RndcError } from "../rndc/client";
 import { aCabeceraMunicipal } from "../rndc/sicetac";
-import { descargarPdfManifiesto, descargarPdfRemesa } from "../rndc/pdf";
+import { descargarPdfManifiesto } from "../rndc/pdf";
+import { estamparLogo, logoComoDataUri } from "../rndc/estampado";
 import { construirHtmlRemesa } from "../rndc/remesa-impresion";
 
 export const despachoRouter = Router();
@@ -1094,9 +1095,21 @@ despachoRouter.get("/:id/manifiesto.pdf", async (req, res) => {
       viaje.numeroManifiestoRndc,
       viaje.consecutivoManifiesto ?? undefined
     );
+
+    // Logo de la empresa sobre el PDF oficial, sin tocar el QR (ver
+    // estampado.ts). ?original=1 entrega el PDF tal cual lo dio el RNDC. Si el
+    // estampado falla, se entrega el original: imprimir nunca se bloquea.
+    let salida = pdf;
+    if (req.query.original !== "1") {
+      try {
+        salida = await estamparLogo(pdf, "manifiesto");
+      } catch (exc) {
+        console.warn(`No se pudo estampar el logo en el manifiesto ${viaje.id}: ${(exc as Error).message}`);
+      }
+    }
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${nombreArchivo}"`);
-    res.send(pdf);
+    res.send(salida);
   } catch (exc) {
     res.status(502).json({ error: (exc as Error).message });
   }
@@ -1124,34 +1137,10 @@ despachoRouter.get("/remesas/:remesaId/imprimir", async (req, res) => {
     });
   }
 
-  const forzarPropia = req.query.propia === "1";
-  let motivo: string | null = null;
-
-  if (!forzarPropia) {
-    try {
-      const { pdf, nombreArchivo } = await descargarPdfRemesa(
-        {
-          urlBase: config.rndc.restUrl,
-          usuario: config.rndc.usuario,
-          password: config.rndc.password,
-          simular: config.rndc.simular,
-        },
-        remesa.numeroRemesaRndc,
-        remesa.consecutivoRemesa ?? undefined
-      );
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `inline; filename="${nombreArchivo}"`);
-      return res.send(pdf);
-    } catch (exc) {
-      // No es un fallo: lo mas probable es que el RNDC simplemente no exponga
-      // el PDF de remesa. Se deja constancia en el documento propio.
-      motivo =
-        "El RNDC no entrego un PDF oficial para esta remesa, por lo que se imprime la " +
-        "representacion generada por la empresa.";
-      console.warn(`PDF oficial de remesa ${remesaId} no disponible: ${(exc as Error).message}`);
-    }
-  }
-
+  // El RNDC no entrega el PDF de la remesa por webservice: con tipo 21 y
+  // procesoid 3 responde "RNDC12: El procesoid 3 no es correcto para generar
+  // el PDF" (verificado 2026-09-26). Por eso se genera aqui, con los datos
+  // radicados, como lo autoriza el Manual de Operacion del RNDC.
   const viaje = await viajes.findById(remesa.viajeId);
   const plantilla = await plantillas.findById(remesa.plantillaId);
   if (!viaje || !plantilla) {
@@ -1170,7 +1159,7 @@ despachoRouter.get("/remesas/:remesaId/imprimir", async (req, res) => {
     conductor,
     nombreEmpresa: config.empresa.nombre,
     nitEmpresa: config.rndc.empresaNit,
-    motivoRepresentacionPropia: motivo,
+    logoDataUri: logoComoDataUri(),
   });
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
