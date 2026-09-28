@@ -64,6 +64,25 @@ export function siguienteBase(
   return `${prefijo}${String(numero).padStart(longitud, "0")}`;
 }
 
+/**
+ * El mayor de varios consecutivos, comparando solo sus digitos. Sirve para que
+ * el siguiente sugerido no quede por debajo de la numeracion del portal.
+ */
+export function mayorConsecutivo(...candidatos: Array<string | null | undefined>): string | null {
+  let mejor: string | null = null;
+  let valor = -1;
+  for (const c of candidatos) {
+    const digitos = (c ?? "").replace(/\D/g, "");
+    if (!digitos) continue;
+    const n = Number(digitos);
+    if (n > valor) {
+      valor = n;
+      mejor = c!;
+    }
+  }
+  return mejor;
+}
+
 export interface ProblemaConsecutivo {
   mensaje: string;
 }

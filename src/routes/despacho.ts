@@ -21,6 +21,7 @@ import {
   consecutivoRemesa,
   siguienteBase,
   validarBase,
+  mayorConsecutivo,
   MAX_CARACTERES_CONSECUTIVO,
 } from "../consecutivos";
 import {
@@ -277,7 +278,11 @@ despachoRouter.post("/", async (req, res) => {
   const usados = await viajes.consecutivosUsados();
   const base = b.consecutivoBase
     ? String(b.consecutivoBase).trim()
-    : siguienteBase(await viajes.ultimoConsecutivo(), config.consecutivos.longitud, config.consecutivos.prefijo);
+    : siguienteBase(
+        mayorConsecutivo(await viajes.ultimoConsecutivo(), config.consecutivos.ultimoExterno),
+        config.consecutivos.longitud,
+        config.consecutivos.prefijo
+      );
 
   const problemasNumero = validarBase(base, nuevasRemesas.length, usados);
   if (problemasNumero.length > 0) {
@@ -1184,8 +1189,9 @@ despachoRouter.get("/:id/remesas", async (req, res) => {
  * Se puede cambiar: lo devuelto es una sugerencia, no una reserva.
  */
 despachoRouter.get("/siguiente-consecutivo", async (_req, res) => {
+  // Nunca por debajo del ultimo numero usado en el portal (RNDC_ULTIMO_CONSECUTIVO).
   const base = siguienteBase(
-    await viajes.ultimoConsecutivo(),
+    mayorConsecutivo(await viajes.ultimoConsecutivo(), config.consecutivos.ultimoExterno),
     config.consecutivos.longitud,
     config.consecutivos.prefijo
   );

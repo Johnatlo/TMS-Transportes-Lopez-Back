@@ -31,9 +31,15 @@ export const AMBIENTES_RNDC = {
     // La guia V7 documenta esta misma URL para consultar el PDF. Si en
     // produccion resulta ser otra, se sobrescribe con RNDC_REST_URL.
     restUrl: "http://plc.mintransporte.gov.co:8081",
-    // Servidor principal. El secundario es rndcws2.mintransporte.gov.co:8080/ws
-    // y el Ministerio lo ofrece para mejorar tiempos de respuesta.
-    wsdlUrl: "http://rndcws.mintransporte.gov.co:8080/ws",
+    // rndcws es el UNICO servidor de produccion que atiende todos los procesos
+    // del sistema. Sondeo del 2026-09-28 con mensajes invalidos (sin efecto):
+    // - rndcws : expedir (3, 4), anular (54, 32, 9) y consultar (48) -> SI.
+    // - rndcws2: expide, pero rechaza anulaciones y consultas ("RNDC12 WS2 No
+    //   se puede atender la solicitud").
+    // - plc    : rechaza todo lo anterior (RNDC32 / RNDC33, "no permitida en
+    //   esta URL").
+    // /ws devuelve una pagina HTML; el WSDL real esta en /wsdl/IBPMServices.
+    wsdlUrl: "http://rndcws.mintransporte.gov.co:8080/wsdl/IBPMServices",
   },
 } as const;
 
@@ -162,8 +168,11 @@ export const config = {
      * enviar cualquier mensaje que no sea tipo 6, asi que un registro nunca
      * puede salir por aqui aunque alguien se equivoque de cliente.
      */
+    // Actualizado 2026-09-28: rndcws2 rechaza TODAS las consultas ("WS2 No se
+    // puede atender"); rndcws si las atiende. SICETAC sigue respondiendo
+    // RNDC13 tambien en rndcws: es un permiso del usuario, no del servidor.
     consultasWsdlUrl:
-      process.env.RNDC_CONSULTAS_WSDL_URL || "http://rndcws2.mintransporte.gov.co:8080/wsdl/IBPMServices",
+      process.env.RNDC_CONSULTAS_WSDL_URL || "http://rndcws.mintransporte.gov.co:8080/wsdl/IBPMServices",
     restUrl: process.env.RNDC_REST_URL || AMBIENTES_RNDC[ambiente].restUrl,
     usuario: process.env.RNDC_USUARIO ?? "",
     password: process.env.RNDC_PASSWORD ?? "",
@@ -187,6 +196,13 @@ export const config = {
     longitud: Number(process.env.RNDC_LONGITUD_CONSECUTIVO ?? 8),
     /** Prefijo opcional delante del numero. Vacio por defecto. */
     prefijo: process.env.RNDC_PREFIJO_CONSECUTIVO ?? "",
+    /**
+     * Ultimo consecutivo usado FUERA de este sistema (en el portal del RNDC).
+     * El siguiente sugerido nunca queda por debajo de el: los numeros del
+     * portal no estan en la base local y el RNDC rechaza un consecutivo
+     * repetido. Ej: "00006726" -> se sugiere "00006727".
+     */
+    ultimoExterno: process.env.RNDC_ULTIMO_CONSECUTIVO ?? "",
   },
 };
 
