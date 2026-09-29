@@ -171,9 +171,13 @@ export function leerEtiquetas(xml: string, nombre: string): string[] {
 // Cliente
 // ---------------------------------------------------------------------------
 
-/** true si el mensaje enviado es una consulta (tipo de solicitud 6). */
+/**
+ * true si el mensaje es de solo lectura: tipo 3 (consultar registros propios)
+ * o tipo 6 (consultar maestros especiales) [Guia Uso del Web Service V5,
+ * seccion 5]. Ninguno de los dos crea nada en el RNDC.
+ */
 function esConsulta(xmlMensaje: string): boolean {
-  return /<tipo>\s*6\s*<\/tipo>/i.test(xmlMensaje);
+  return /<tipo>\s*[36]\s*<\/tipo>/i.test(xmlMensaje);
 }
 
 function esperar(ms: number): Promise<void> {

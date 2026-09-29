@@ -99,8 +99,21 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
   // valor por defecto viene de los parametros de la empresa y no se pide en
   // el formulario de cada vehiculo.
   const params = await parametros.obtener();
+  const placa = String(b.placa).toUpperCase().trim();
+
+  // Si la placa existia y fue eliminada, se recupera con los datos nuevos en
+  // vez de fallar por placa repetida (la columna placa es UNIQUE).
+  const previo = await vehiculos.findByPlacaConEliminados(placa);
+  if (previo?.eliminado) {
+    await vehiculos.restaurar(previo.id);
+    const datos = { ...b };
+    delete datos.placa;
+    const recuperado = await vehiculos.update(previo.id, datos);
+    return res.status(201).json({ ...recuperado, recuperado: true });
+  }
+
   const creado = await vehiculos.create({
-    placa: String(b.placa).toUpperCase().trim(),
+    placa,
     placaRemolque: b.placaRemolque ? String(b.placaRemolque).toUpperCase().trim() : null,
     marca: b.marca ?? null,
     configuracion: b.configuracion ?? null,
@@ -118,6 +131,16 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
 });
 
 /**
+ * "Elimina" un vehiculo: borrado logico. Sale del catalogo, del despacho y de
+ * las alertas, pero se conserva para los viajes que ya lo usaron.
+ */
+catalogoRouter.delete("/vehiculos/:id", async (req, res) => {
+  const ok = await vehiculos.eliminar(Number(req.params.id));
+  if (!ok) return res.status(404).json({ error: "Vehiculo no encontrado o ya eliminado" });
+  res.status(204).send();
+});
+
+/**
  * Edicion completa de un vehiculo desde el catalogo.
  *
  * El titular del manifiesto (codTipoIdTenedor + numIdTenedor) es lo que viaja
@@ -130,12 +153,14 @@ catalogoRouter.put("/vehiculos/:id", async (req, res) => {
     "placa", "placaRemolque", "marca", "configuracion", "capacidadKg", "pesoVehiculoVacio",
     "codTipoCarroceria", "propietarioNit", "codTipoIdTenedor", "numIdTenedor", "nombreTenedor",
     "fechaVencSoat", "fechaVencTecnomecanica", "aplicaFopat", "nitMonitoreoFlota", "activo",
+    "cedulaConductorHabitual",
   ]);
   if ("placa" in datos) datos.placa = mayusculas(datos.placa);
   if ("placaRemolque" in datos) datos.placaRemolque = mayusculas(datos.placaRemolque);
   if ("numIdTenedor" in datos) datos.numIdTenedor = soloDigitos(datos.numIdTenedor);
   if ("propietarioNit" in datos) datos.propietarioNit = soloDigitos(datos.propietarioNit);
   if ("nitMonitoreoFlota" in datos) datos.nitMonitoreoFlota = soloDigitos(datos.nitMonitoreoFlota);
+  if ("cedulaConductorHabitual" in datos) datos.cedulaConductorHabitual = soloDigitos(datos.cedulaConductorHabitual);
 
   if ("configuracion" in datos && datos.configuracion) {
     const c = String(datos.configuracion).toUpperCase().trim();

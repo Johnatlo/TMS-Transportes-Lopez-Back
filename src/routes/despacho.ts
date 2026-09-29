@@ -1185,6 +1185,43 @@ despachoRouter.get("/:id/remesas", async (req, res) => {
 });
 
 /**
+ * Remolque y conductor sugeridos para un vehiculo: el que mas ha usado en sus
+ * ultimos viajes; si no tiene historial, el habitual del catalogo
+ * (placaRemolque y cedulaConductorHabitual). Solo sugiere: el despachador
+ * puede cambiarlos.
+ */
+despachoRouter.get("/sugerencias/:vehiculoId", async (req, res) => {
+  const vehiculo = await vehiculos.findById(Number(req.params.vehiculoId));
+  if (!vehiculo) return res.status(404).json({ error: "Vehiculo no encontrado" });
+
+  const hist = await viajes.habitualesDeVehiculo(vehiculo.id);
+  const [listaRemolques, listaConductores] = await Promise.all([
+    remolques.findMany(),
+    conductores.findMany(),
+  ]);
+
+  let remolque: { id: number; origen: string } | null = null;
+  const rHist = hist.remolque && listaRemolques.find((r) => r.id === hist.remolque!.id && r.activo);
+  if (rHist) {
+    remolque = { id: rHist.id, origen: `usado en ${hist.remolque!.veces} de sus ultimos ${hist.viajes} viajes` };
+  } else if (vehiculo.placaRemolque) {
+    const r = listaRemolques.find((x) => x.placa === vehiculo.placaRemolque && x.activo);
+    if (r) remolque = { id: r.id, origen: "remolque habitual del catalogo" };
+  }
+
+  let conductor: { id: number; origen: string } | null = null;
+  const cHist = hist.conductor && listaConductores.find((c) => c.id === hist.conductor!.id && c.activo);
+  if (cHist) {
+    conductor = { id: cHist.id, origen: `manejo ${hist.conductor!.veces} de sus ultimos ${hist.viajes} viajes` };
+  } else if (vehiculo.cedulaConductorHabitual) {
+    const c = listaConductores.find((x) => x.cedula === vehiculo.cedulaConductorHabitual && x.activo);
+    if (c) conductor = { id: c.id, origen: "conductor habitual del catalogo" };
+  }
+
+  res.json({ remolque, conductor });
+});
+
+/**
  * Siguiente numero disponible, para precargar el campo del despacho.
  * Se puede cambiar: lo devuelto es una sugerencia, no una reserva.
  */

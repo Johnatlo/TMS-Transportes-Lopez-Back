@@ -37,6 +37,8 @@ export interface Vehiculo {
   nitMonitoreoFlota: string | null;
   /** Nombre del titular (tenedor). Solo informativo: no se envia al RNDC. */
   nombreTenedor: string | null;
+  /** Cedula del conductor habitual, para sugerirlo en el despacho. */
+  cedulaConductorHabitual: string | null;
 }
 
 export interface Conductor {
@@ -402,9 +404,38 @@ export const vehiculos = {
     return res.affectedRows > 0;
   },
 
+  /** Todos menos los eliminados (activos e inactivos). */
   async findMany(): Promise<Vehiculo[]> {
-    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM vehiculos ORDER BY placa");
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT * FROM vehiculos WHERE eliminado = 0 ORDER BY placa"
+    );
     return (rows as Vehiculo[]).map(mapVehiculo);
+  },
+
+  /** Busca por placa INCLUYENDO eliminados (para recuperarlo al recrearlo). */
+  async findByPlacaConEliminados(placa: string): Promise<(Vehiculo & { eliminado: boolean }) | null> {
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM vehiculos WHERE placa = ?", [
+      placa.toUpperCase(),
+    ]);
+    const row = rows[0] as (Vehiculo & { eliminado: any }) | undefined;
+    return row ? { ...mapVehiculo(row), eliminado: !!row.eliminado } : null;
+  },
+
+  /**
+   * Borrado logico: sale de todas las listas y queda inactivo. Los viajes que
+   * lo usaron lo siguen encontrando por id (historial, PDF, anulaciones).
+   */
+  async eliminar(id: number): Promise<boolean> {
+    const [res] = await pool.query<ResultSetHeader>(
+      "UPDATE vehiculos SET eliminado = 1, activo = 0 WHERE id = ? AND eliminado = 0",
+      [id]
+    );
+    return res.affectedRows > 0;
+  },
+
+  /** Deshace el borrado logico (al volver a crear la misma placa). */
+  async restaurar(id: number): Promise<void> {
+    await pool.query("UPDATE vehiculos SET eliminado = 0, activo = 1 WHERE id = ?", [id]);
   },
   async findById(id: number): Promise<Vehiculo | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM vehiculos WHERE id = ?", [id]);
@@ -423,6 +454,7 @@ export const vehiculos = {
       | "aplicaFopat"
       | "nitMonitoreoFlota"
       | "nombreTenedor"
+      | "cedulaConductorHabitual"
     > &
       Partial<
         Pick<
@@ -434,6 +466,7 @@ export const vehiculos = {
           | "aplicaFopat"
           | "nitMonitoreoFlota"
           | "nombreTenedor"
+          | "cedulaConductorHabitual"
         >
       >
   ): Promise<Vehiculo> {
@@ -477,6 +510,7 @@ export const vehiculos = {
       codTipoIdTenedor: "texto",
       numIdTenedor: "texto",
       nombreTenedor: "texto",
+      cedulaConductorHabitual: "texto",
       fechaVencSoat: "fecha",
       fechaVencTecnomecanica: "fecha",
       aplicaFopat: "booleano",
@@ -1420,6 +1454,45 @@ export const viajes = {
       [vehiculoId, dia, excluirViajeId]
     );
     return Number((rows[0] as any).total ?? 0);
+  },
+
+  /**
+   * Remolque y conductor mas usados por un vehiculo en sus viajes con
+   * manifiesto (confirmados o anulados despues). A igual cantidad, gana el
+   * mas reciente. Mira los ultimos `limite` viajes.
+   */
+  async habitualesDeVehiculo(
+    vehiculoId: number,
+    limite = 20
+  ): Promise<{
+    remolque: { id: number; veces: number } | null;
+    conductor: { id: number; veces: number } | null;
+    viajes: number;
+  }> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT remolqueId, conductorId FROM viajes
+        WHERE vehiculoId = ? AND numeroManifiestoRndc IS NOT NULL
+        ORDER BY fechaCreacion DESC LIMIT ?`,
+      [vehiculoId, limite]
+    );
+    const masUsado = (ids: Array<number | null>) => {
+      const cuenta = new Map<number, number>();
+      for (const id of ids) if (id) cuenta.set(id, (cuenta.get(id) ?? 0) + 1);
+      let mejor: { id: number; veces: number } | null = null;
+      // Se recorre del mas reciente al mas viejo: con empate se queda el primero.
+      for (const id of ids) {
+        if (!id) continue;
+        const veces = cuenta.get(id)!;
+        if (!mejor || veces > mejor.veces) mejor = { id, veces };
+      }
+      return mejor;
+    };
+    const filas = rows as Array<{ remolqueId: number | null; conductorId: number | null }>;
+    return {
+      remolque: masUsado(filas.map((f) => f.remolqueId)),
+      conductor: masUsado(filas.map((f) => f.conductorId)),
+      viajes: filas.length,
+    };
   },
 
   /**

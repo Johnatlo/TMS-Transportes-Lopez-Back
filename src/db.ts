@@ -424,6 +424,17 @@ export async function initSchema(): Promise<void> {
     // Guardarlos por separado permite retomar una anulacion a medias.
     ["viaje_remesas", "radicadoAnulacionCumplido", "VARCHAR(30)"],
     ["viaje_remesas", "radicadoAnulacion", "VARCHAR(30)"],
+
+    // Conductor que suele manejar el vehiculo (cedula). Junto con
+    // placaRemolque (remolque habitual) alimenta la sugerencia del despacho
+    // cuando el vehiculo aun no tiene historial en este sistema.
+    ["vehiculos", "cedulaConductorHabitual", "VARCHAR(20)"],
+
+    // Borrado logico. Un vehiculo con viajes no se puede borrar de verdad
+    // (fk_viaje_vehiculo) y el historial lo necesita; "eliminado" lo saca de
+    // todas las listas. Distinto de "activo": un inactivo se sigue viendo con
+    // "Mostrar inactivos" y se puede reactivar desde la pantalla.
+    ["vehiculos", "eliminado", "TINYINT(1) NOT NULL DEFAULT 0"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
