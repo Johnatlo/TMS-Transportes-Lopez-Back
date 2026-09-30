@@ -223,9 +223,14 @@ export interface Viaje {
   /** Auditoria: usuario que expidio el viaje y usuario que lo anulo. */
   creadoPorId: number | null;
   anuladoPorId: number | null;
+  /** Cumplido del manifiesto (proceso 6). */
+  radicadoCumplido: string | null;
+  fechaCumplido: Date | null;
+  cumplidoPorId: number | null;
   /** Nombres de esos usuarios (vienen del JOIN; no son columnas de viajes). */
   creadoPorNombre?: string | null;
   anuladoPorNombre?: string | null;
+  cumplidoPorNombre?: string | null;
 }
 
 /**
@@ -233,10 +238,12 @@ export interface Viaje {
  * el usuario ya no existe, el nombre llega nulo y el id se conserva.
  */
 const SELECT_VIAJES = `
-  SELECT v.*, uc.nombre AS creadoPorNombre, ua.nombre AS anuladoPorNombre
+  SELECT v.*, uc.nombre AS creadoPorNombre, ua.nombre AS anuladoPorNombre,
+         ucu.nombre AS cumplidoPorNombre
     FROM viajes v
     LEFT JOIN usuarios uc ON uc.id = v.creadoPorId
-    LEFT JOIN usuarios ua ON ua.id = v.anuladoPorId`;
+    LEFT JOIN usuarios ua ON ua.id = v.anuladoPorId
+    LEFT JOIN usuarios ucu ON ucu.id = v.cumplidoPorId`;
 
 // ---------- Helpers ----------
 function mapBool<T extends { activo: any }>(row: T): T {
@@ -1276,8 +1283,15 @@ export interface ViajeRemesa {
   ordenServicioGenerador: string | null;
   /** Parte del flete que corresponde a esta remesa, para ponderar el ICA. */
   valorFleteRemesa: number | null;
-  estado: string; // PENDIENTE | CREADA | ERROR | ANULADA
+  estado: string; // PENDIENTE | CREADA | CUMPLIENDO | CUMPLIDA | ERROR | ANULADA
   mensajeError: string | null;
+  /** Cumplido (proceso 5): kilos entregados, entradas reales y radicado. */
+  cantidadEntregada: number | null;
+  entradaCargue: Date | null;
+  entradaDescargue: Date | null;
+  radicadoCumplido: string | null;
+  fechaCumplido: Date | null;
+  cumplidoPorId: number | null;
   /** Radicado de la anulacion del cumplido inicial (proceso 54), si se hizo. */
   radicadoAnulacionCumplido: string | null;
   /** Radicado de la anulacion de la remesa (proceso 9). */
@@ -1353,6 +1367,18 @@ export const viajeRemesas = {
     return this.findByViaje(viajeId);
   },
 
+  /**
+   * Pasa la remesa a `nuevoEstado` solo si esta en uno de los permitidos, en
+   * una sola sentencia: es el candado contra el doble clic al cumplir.
+   */
+  async tomarConEstado(id: number, permitidos: string[], nuevoEstado: string): Promise<boolean> {
+    const [r] = await pool.query<ResultSetHeader>(
+      `UPDATE viaje_remesas SET estado = ? WHERE id = ? AND estado IN (?)`,
+      [nuevoEstado, id, permitidos]
+    );
+    return r.affectedRows === 1;
+  },
+
   async update(id: number, data: Partial<Omit<ViajeRemesa, "id">>): Promise<void> {
     const campos = Object.keys(data);
     if (campos.length === 0) return;
@@ -1404,7 +1430,7 @@ export const viajes = {
               COALESCE(SUM(retencionFopat), 0) AS causado,
               COALESCE(SUM(CASE WHEN fopatPagado = 0 THEN retencionFopat ELSE 0 END), 0) AS pendiente
          FROM viajes
-        WHERE estado = 'CONFIRMADO' AND retencionFopat IS NOT NULL
+        WHERE estado IN ('CONFIRMADO', 'CUMPLIDO') AND retencionFopat IS NOT NULL
         GROUP BY mes
         ORDER BY mes DESC`
     );
@@ -1465,7 +1491,7 @@ export const viajes = {
       `SELECT COUNT(*) AS total FROM viajes
         WHERE vehiculoId = ?
           AND DATE(fechaHoraCargue) = ?
-          AND estado IN ('CONFIRMADO', 'MANIFIESTO_ERROR')
+          AND estado IN ('CONFIRMADO', 'CUMPLIDO', 'MANIFIESTO_ERROR')
           AND id <> ?`,
       [vehiculoId, dia, excluirViajeId]
     );

@@ -42,6 +42,12 @@ export const PROCESO_ID_ANULAR_MANIFIESTO = "32"; // ANULAR MANIFIESTO DE CARGA
 export const PROCESO_ID_ANULAR_REMESA = "9"; // ANULAR REMESA
 export const PROCESO_ID_VEHICULO = "12"; // Crear/actualizar Vehiculo (maestro)
 
+// Cumplidos. Etiquetas: ejemplos XML de la "Guia Cumplido de Remesa y
+// Manifiesto V1" (Mintransporte, 02/06/2026), pag. 18-19. Tipos C/S:
+// respuesta CRE350 del RNDC de pruebas (2026-09-30).
+export const PROCESO_ID_CUMPLIR_REMESA = "5"; // Cumplir Remesa Terrestre de Carga
+export const PROCESO_ID_CUMPLIR_MANIFIESTO = "6"; // Cumplir Manifiesto de Carga
+
 /** Naturaleza de carga: 1 = Carga General. Unico valor que usa esta empresa. */
 export const NATURALEZA_CARGA_GENERAL = "1";
 
@@ -225,7 +231,7 @@ function diferenciaEnDias(a: Date, b: Date): number {
  * festivos colombianos, asi que sirve como alerta temprana y no como verdad
  * final: el RNDC tiene la ultima palabra.
  */
-function diasHabilesEntre(desde: Date, hasta: Date): number {
+export function diasHabilesEntre(desde: Date, hasta: Date): number {
   let habiles = 0;
   const cursor = diaBogota(desde);
   const fin = diaBogota(hasta);
@@ -1479,4 +1485,125 @@ export function porcentajeTopeAnulaciones(expedidosMes: number): number {
   if (expedidosMes > 2000) return 0.1;
   if (expedidosMes >= 500) return 0.2;
   return 0.3;
+}
+
+// ---------------------------------------------------------------------------
+// Cumplidos de remesa (proceso 5) y de manifiesto (proceso 6)
+// ---------------------------------------------------------------------------
+//
+// Solo se implementa el cumplido NORMAL (tipo C). El de suspension (S) exige
+// motivo y consecuencia, y el del manifiesto admite valores adicionales y
+// descuentos, pero la guia no publica las etiquetas XML de esos campos (solo
+// los describe en el portal). Hasta tenerlas, esos casos se hacen en el portal.
+
+/** Cumplido normal: el viaje se hizo como se pacto [Guia Cumplido 2.2.1]. */
+export const TIPO_CUMPLIDO_NORMAL = "C";
+
+/** Plazo para cumplir: 5 dias habiles desde la entrega [Guia de Manifiesto V7, pag. 6]. */
+export const DIAS_HABILES_PLAZO_CUMPLIDO = 5;
+
+export interface DatosCumplidoRemesa {
+  consecutivoRemesa: string;
+  /** Kilos cargados, los mismos que se reportaron al expedir la remesa. */
+  cantidadCargada: number;
+  /** Kilos entregados en el descargue. */
+  cantidadEntregada: number;
+  entradaCargue: Date;
+  entradaDescargue: Date;
+}
+
+/** Proceso 5 [Guia Cumplido de Remesa y Manifiesto V1, pag. 18]. */
+export function construirDatosCumplidoRemesa(d: DatosCumplidoRemesa): Record<string, unknown> {
+  return {
+    CONSECUTIVOREMESA: d.consecutivoRemesa,
+    TIPOCUMPLIDOREMESA: TIPO_CUMPLIDO_NORMAL,
+    CANTIDADCARGADA: d.cantidadCargada,
+    CANTIDADENTREGADA: d.cantidadEntregada,
+    UNIDADMEDIDACAPACIDAD: UNIDAD_MEDIDA_TRANSPORTE_KILOS,
+    FECHAENTRADACARGUE: formatearFecha(d.entradaCargue),
+    HORAENTRADACARGUEREMESA: formatearHora(d.entradaCargue),
+    FECHAENTRADADESCARGUE: formatearFecha(d.entradaDescargue),
+    HORAENTRADADESCARGUECUMPLIDO: formatearHora(d.entradaDescargue),
+  };
+}
+
+/**
+ * Proceso 6 [Guia Cumplido, pag. 19]. Sin ajustes de valor, el valor a pagar
+ * es el del manifiesto y el FOPAT es el mismo que se reporto al expedirlo
+ * (el RNDC verifica que sea el 0.1% del valor a pagar). Si el vehiculo no
+ * causa FOPAT, la etiqueta se omite igual que en la expedicion.
+ */
+export function construirDatosCumplidoManifiesto(
+  numManifiesto: string,
+  retencionFopat: number | null
+): Record<string, unknown> {
+  return {
+    NUMMANIFIESTOCARGA: numManifiesto,
+    TIPOCUMPLIDOMANIFIESTO: TIPO_CUMPLIDO_NORMAL,
+    RETENCIONFOPAT: retencionFopat,
+  };
+}
+
+/**
+ * Revisiones locales antes de enviar el cumplido de una remesa, para que el
+ * error llegue en claro y no como codigo del RNDC. El RNDC valida ademas
+ * contra los tiempos del GPS (llegada y salida) y la velocidad maxima de
+ * 90 km/h, que aqui no se conocen [Guia Cumplido 2.5; Manual RNDC 5.3.4].
+ */
+export function validarCumplidoRemesa(d: DatosCumplidoRemesa, ahora = new Date()): string[] {
+  const problemas: string[] = [];
+  if (!(d.cantidadEntregada > 0)) {
+    problemas.push("Escribe los kilos entregados (mayor a cero).");
+  } else if (d.cantidadCargada > 0) {
+    // "no puede ser menor al 10% de la cantidad cargada ni mayor a un 100%
+    // adicional a la cantidad cargada" [Manual RNDC 2026, 5.3.4 f].
+    if (d.cantidadEntregada < d.cantidadCargada * 0.1) {
+      problemas.push(
+        `Los kilos entregados (${d.cantidadEntregada}) no pueden ser menos del 10% de los cargados ` +
+          `(${d.cantidadCargada}). Si de verdad fue asi, hay que autorizar el caso especial en el portal.`
+      );
+    }
+    if (d.cantidadEntregada > d.cantidadCargada * 2) {
+      problemas.push(
+        `Los kilos entregados (${d.cantidadEntregada}) no pueden pasar del doble de los cargados ` +
+          `(${d.cantidadCargada}).`
+      );
+    }
+  }
+  if (isNaN(d.entradaCargue.getTime()) || isNaN(d.entradaDescargue.getTime())) {
+    problemas.push("Faltan la fecha y hora de entrada al cargue o al descargue.");
+    return problemas;
+  }
+  if (d.entradaCargue > ahora || d.entradaDescargue > ahora) {
+    problemas.push("Las fechas de entrada no pueden ser futuras.");
+  }
+  if (d.entradaDescargue <= d.entradaCargue) {
+    problemas.push("La entrada al descargue debe ser posterior a la entrada al cargue.");
+  }
+  return problemas;
+}
+
+/**
+ * Plazo del cumplido contado desde la entrega (la cita de descargue, mientras
+ * no haya cumplido de remesa). No contempla festivos: sirve como alerta
+ * temprana, y por eso avisa un poco antes, nunca despues.
+ */
+export function plazoCumplido(entrega: Date, ahora = new Date()) {
+  const transcurridos = entrega > ahora ? 0 : diasHabilesEntre(entrega, ahora);
+  return {
+    diasHabilesTranscurridos: transcurridos,
+    diasHabilesRestantes: DIAS_HABILES_PLAZO_CUMPLIDO - transcurridos,
+    vencido: transcurridos > DIAS_HABILES_PLAZO_CUMPLIDO,
+  };
+}
+
+/**
+ * Cuando el cumplido ya existe en el RNDC (hecho en el portal, o un envio
+ * anterior que respondio tarde), el RNDC contesta "DUPLICADO:<radicado> ...",
+ * igual que con la remesa repetida (REM030, verificado en produccion el
+ * 29/09). Ese radicado es el del cumplido que ya estaba.
+ */
+export function radicadoDeDuplicado(errorCrudo: string | null | undefined): string | null {
+  const m = /DUPLICADO:\s*(\d+)/i.exec(errorCrudo ?? "");
+  return m ? m[1] : null;
 }

@@ -95,7 +95,12 @@ base se aplican solos al arrancar.
 - [ ] **Acordar que desde ese día no se expiden manifiestos ni remesas desde el
       portal del RNDC** con la misma numeración: el sistema no los ve y el
       número choca (así falló la remesa 00006728 el 29/09).
-- [ ] Mientras no esté el cumplido en el sistema, los cumplidos de remesa y
-      manifiesto se siguen haciendo en el portal, **dentro de los 5 días hábiles**:
-      si los pendientes pasan del 20 % de los manifiestos del último mes, el RNDC
-      bloquea la expedición [Guía de Manifiesto V7, pág. 6].
+- [ ] Cumplir remesas y manifiestos **dentro de los 5 días hábiles** desde la
+      entrega (botón *Cumplir* en Viajes; el tablero avisa los pendientes): si
+      los vencidos pasan del 20 % de los manifiestos del último mes, el RNDC
+      bloquea la expedición [Guía de Manifiesto V7, pág. 6]. El sistema hace el
+      cumplido normal; suspensiones, adicionales o descuentos van por el portal.
+- [ ] Los viajes que ya se cumplieron en el portal: al darles *Cumplir*, si el
+      RNDC responde "DUPLICADO:<radicado>" (como hace con remesas repetidas) el
+      sistema los marca cumplidos con ese radicado. **Sin verificar para
+      cumplidos**: revisar qué responde el RNDC la primera vez que pase.

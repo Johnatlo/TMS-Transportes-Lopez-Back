@@ -514,6 +514,18 @@ export async function initSchema(): Promise<void> {
     // alguno se borrara igual, el viaje no debe quedar huerfano ni bloquearlo.
     ["viajes", "creadoPorId", "INT"],
     ["viajes", "anuladoPorId", "INT"],
+
+    // Cumplidos (procesos 5 y 6). Por remesa: lo que se reporto y el radicado.
+    // Por viaje: el radicado del cumplido del manifiesto.
+    ["viaje_remesas", "cantidadEntregada", "DOUBLE"],
+    ["viaje_remesas", "entradaCargue", "DATETIME"],
+    ["viaje_remesas", "entradaDescargue", "DATETIME"],
+    ["viaje_remesas", "radicadoCumplido", "VARCHAR(30)"],
+    ["viaje_remesas", "fechaCumplido", "DATETIME"],
+    ["viaje_remesas", "cumplidoPorId", "INT"],
+    ["viajes", "radicadoCumplido", "VARCHAR(30)"],
+    ["viajes", "fechaCumplido", "DATETIME"],
+    ["viajes", "cumplidoPorId", "INT"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
