@@ -1,0 +1,36 @@
+# Caddy delante del TMS: frontend compilado + proxy de /api al backend.
+#
+# Solo HTTP en el puerto 80: el acceso es por Tailscale (trafico ya cifrado),
+# asi que se apaga el HTTPS automatico de Caddy.
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	encode gzip
+
+	# API: todo /api/* va al backend tal cual (sin quitar el prefijo).
+	handle /api/* {
+		reverse_proxy backend:3000
+	}
+
+	# Frontend (React). Las rutas como /despacho o /historial las resuelve
+	# React en el navegador: si no existe el archivo, se entrega index.html.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Los archivos de /assets llevan un hash en el nombre (Vite): se pueden
+	# guardar en cache un ano. Todo lo demas (index.html, tambien cuando se
+	# entrega por una ruta como /despacho) se revalida siempre, para que al
+	# actualizar se vea la version nueva sin borrar la cache del navegador.
+	@hasheados path /assets/*
+	header @hasheados Cache-Control "public, max-age=31536000, immutable"
+	@resto {
+		not path /assets/* /api/*
+	}
+	header @resto Cache-Control "no-cache"
+}

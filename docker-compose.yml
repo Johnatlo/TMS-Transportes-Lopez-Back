@@ -1,0 +1,81 @@
+# TMS Transportes Lopez: produccion con Docker.
+#
+#   caddy   -> puerto 80: sirve el frontend compilado y pasa /api al backend
+#   backend -> Node (solo visible dentro de la red de Docker)
+#   mysql   -> MySQL 8.4 con volumen persistente (solo visible dentro de Docker)
+#
+# HTTP simple, sin HTTPS: el acceso es solo por Tailscale, que ya cifra el
+# trafico de punta a punta. No publicar este puerto a internet.
+#
+# Se levanta SIEMPRE con el archivo de variables:
+#   docker compose --env-file .env.production up -d --build
+# Ver DEPLOY.md.
+
+name: tms-transportes-lopez
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      # Salen de .env.production. Sin --env-file, compose se detiene con el
+      # mensaje de abajo en vez de crear una base sin contrasena.
+      MYSQL_DATABASE: ${DB_NAME:?falta DB_NAME - usa --env-file .env.production}
+      MYSQL_USER: ${DB_USER:?falta DB_USER - usa --env-file .env.production}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD - usa --env-file .env.production}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?falta MYSQL_ROOT_PASSWORD - usa --env-file .env.production}
+    # Misma codificacion y cotejamiento que la base actual (MariaDB de XAMPP):
+    # asi las tablas importadas y las que cree el sistema coinciden.
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_general_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  backend:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      # Fijos para Docker: no dependen de lo que diga .env.production.
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      PORT: "3000"
+      # Caddy es el unico intermediario: se confia en su X-Forwarded-For para
+      # que el bloqueo por intentos fallidos de login cuente por equipo y no
+      # bloquee a todos (todas las peticiones llegan desde Caddy).
+      TRUST_PROXY: "1"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      # Por defecto escucha en todas las interfaces. Para que SOLO se entre por
+      # Tailscale, pon en .env.production HTTP_BIND=<IP de Tailscale del equipo>.
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Frontend ya compilado (npm run build en frontend-react).
+      - ${FRONTEND_DIST_HOST:-../frontend-react/dist}:/srv:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - backend
+
+volumes:
+  mysql-data:
+  caddy-data:
+  caddy-config:

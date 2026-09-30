@@ -1,0 +1,17 @@
+# Lo que NO entra a la imagen. Sobre todo: credenciales y datos personales.
+.env
+.env.*
+!.env.production.example
+datos-empresa.json
+*.csv
+plantillas-csv/
+
+# Se regeneran dentro de la imagen.
+node_modules/
+dist/
+
+# No hacen falta para correr el servidor.
+.git/
+*.md
+docker-compose.yml
+Caddyfile
