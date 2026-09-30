@@ -17,6 +17,36 @@ export const pool = mysql.createPool({
   timezone: "Z",
 });
 
+/**
+ * Ejecuta `fn` con un candado de MySQL (GET_LOCK) tomado: si otra peticion
+ * tiene el mismo candado, esta espera a que lo suelte.
+ *
+ * Se usa para la numeracion del despacho: elegir el siguiente consecutivo y
+ * guardar el viaje tiene que ser un solo paso. Sin el candado, dos personas
+ * que despachan al mismo tiempo leen el mismo "ultimo numero" y ambas toman
+ * el siguiente. El candado vive en MySQL (no en memoria), asi que sirve
+ * aunque algun dia corran varias copias del backend.
+ *
+ * GET_LOCK pertenece a la conexion, por eso se aparta una del pool durante
+ * todo el bloque. `fn` puede usar el pool normal para sus consultas.
+ */
+export async function conCandado<T>(nombre: string, fn: () => Promise<T>, segundos = 15): Promise<T> {
+  const conexion = await pool.getConnection();
+  try {
+    const [filas] = await conexion.query("SELECT GET_LOCK(?, ?) AS ok", [nombre, segundos]);
+    if ((filas as Array<{ ok: number | null }>)[0]?.ok !== 1) {
+      throw new Error("El sistema esta ocupado asignando otro numero. Intenta de nuevo en unos segundos.");
+    }
+    try {
+      return await fn();
+    } finally {
+      await conexion.query("SELECT RELEASE_LOCK(?)", [nombre]);
+    }
+  } finally {
+    conexion.release();
+  }
+}
+
 export async function initSchema(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS remolques (
@@ -258,6 +288,49 @@ export async function initSchema(): Promise<void> {
   `);
   await pool.query(`INSERT IGNORE INTO parametros_empresa (id) VALUES (1)`);
 
+  // Usuarios del sistema (login con email + contrasena). La clave se guarda
+  // con scrypt y sal propia (ver auth.ts), nunca en claro.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      email VARCHAR(150) NOT NULL UNIQUE,
+      nombre VARCHAR(150) NOT NULL,
+      claveHash VARCHAR(255) NOT NULL,
+      activo TINYINT(1) NOT NULL DEFAULT 1,
+      debeCambiarClave TINYINT(1) NOT NULL DEFAULT 1,
+      ultimoAcceso DATETIME,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // Sesiones abiertas. Se guarda el HASH del token (no el token): quien lea
+  // esta tabla no puede suplantar a nadie.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sesiones (
+      tokenHash CHAR(64) PRIMARY KEY,
+      usuarioId INT NOT NULL,
+      expiraEn DATETIME NOT NULL,
+      creadaEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_sesion_usuario (usuarioId),
+      CONSTRAINT fk_sesion_usuario FOREIGN KEY (usuarioId) REFERENCES usuarios(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // Codigos para recuperar la contrasena por correo. Se guarda el hash del
+  // codigo, cuando vence y cuantos intentos fallidos lleva.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS recuperaciones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      usuarioId INT NOT NULL,
+      codigoHash CHAR(64) NOT NULL,
+      expiraEn DATETIME NOT NULL,
+      intentos INT NOT NULL DEFAULT 0,
+      creadaEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_recuperacion_usuario (usuarioId),
+      CONSTRAINT fk_recuperacion_usuario FOREIGN KEY (usuarioId) REFERENCES usuarios(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Migraciones aditivas para bases de datos creadas con una version anterior
   // del esquema.
   //
@@ -435,6 +508,12 @@ export async function initSchema(): Promise<void> {
     // todas las listas. Distinto de "activo": un inactivo se sigue viendo con
     // "Mostrar inactivos" y se puede reactivar desde la pantalla.
     ["vehiculos", "eliminado", "TINYINT(1) NOT NULL DEFAULT 0"],
+
+    // Auditoria: que usuario expidio y cual anulo cada viaje. Van sin llave
+    // foranea a proposito: los usuarios no se borran (se desactivan), y si
+    // alguno se borrara igual, el viaje no debe quedar huerfano ni bloquearlo.
+    ["viajes", "creadoPorId", "INT"],
+    ["viajes", "anuladoPorId", "INT"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
@@ -451,6 +530,25 @@ export async function initSchema(): Promise<void> {
     if ((filas as unknown[]).length === 0) {
       await pool.query(`ALTER TABLE \`${tabla}\` ADD COLUMN \`${columna}\` ${definicion}`);
     }
+  }
+
+  // Un numero de manifiesto no se puede repetir: es la ultima barrera contra
+  // dos viajes con el mismo consecutivo (el candado de la numeracion es la
+  // primera). Si ya hubiera duplicados en la base, no se puede crear el
+  // indice: se avisa en consola y el sistema sigue funcionando sin el.
+  const [indice] = await pool.query(
+    `SELECT 1 FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'viajes' AND INDEX_NAME = 'uk_viaje_consecutivo'`
+  );
+  if ((indice as unknown[]).length === 0) {
+    await pool
+      .query("ALTER TABLE viajes ADD UNIQUE KEY uk_viaje_consecutivo (consecutivoManifiesto)")
+      .catch((err) =>
+        console.warn(
+          "AVISO: no se pudo crear el indice unico de consecutivos de manifiesto " +
+            `(hay numeros repetidos en la tabla viajes): ${err?.sqlMessage ?? err}`
+        )
+      );
   }
 
   // Plantillas creadas antes de que existiera la ruta explicita: se llena con

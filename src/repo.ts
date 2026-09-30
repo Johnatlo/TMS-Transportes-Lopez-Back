@@ -220,7 +220,23 @@ export interface Viaje {
   observacionesAnulacion: string | null;
   radicadoAnulacion: string | null;
   fechaAnulacion: Date | null;
+  /** Auditoria: usuario que expidio el viaje y usuario que lo anulo. */
+  creadoPorId: number | null;
+  anuladoPorId: number | null;
+  /** Nombres de esos usuarios (vienen del JOIN; no son columnas de viajes). */
+  creadoPorNombre?: string | null;
+  anuladoPorNombre?: string | null;
 }
+
+/**
+ * SELECT de viajes con el nombre de quien lo expidio y de quien lo anulo. Si
+ * el usuario ya no existe, el nombre llega nulo y el id se conserva.
+ */
+const SELECT_VIAJES = `
+  SELECT v.*, uc.nombre AS creadoPorNombre, ua.nombre AS anuladoPorNombre
+    FROM viajes v
+    LEFT JOIN usuarios uc ON uc.id = v.creadoPorId
+    LEFT JOIN usuarios ua ON ua.id = v.anuladoPorId`;
 
 // ---------- Helpers ----------
 function mapBool<T extends { activo: any }>(row: T): T {
@@ -1349,13 +1365,13 @@ export const viajeRemesas = {
 // ---------- Viajes ----------
 export const viajes = {
   async findById(id: number): Promise<Viaje | null> {
-    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM viajes WHERE id = ?", [id]);
+    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_VIAJES} WHERE v.id = ?`, [id]);
     const row = rows[0] as Viaje | undefined;
     return row ? mapViaje(row) : null;
   },
   async findMany(limit = 100): Promise<Viaje[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT * FROM viajes ORDER BY fechaCreacion DESC LIMIT ?",
+      `${SELECT_VIAJES} ORDER BY v.fechaCreacion DESC LIMIT ?`,
       [limit]
     );
     return (rows as Viaje[]).map(mapViaje);
@@ -1558,14 +1574,17 @@ export const viajes = {
     vacio2Origen?: string | null;
     vacio2Destino?: string | null;
     vacio2Valor?: number;
+    /** Usuario que expide el viaje (auditoria). */
+    creadoPorId?: number | null;
   }): Promise<Viaje> {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO viajes
         (plantillaId, vehiculoId, conductorId, fechaHoraCargue, fechaHoraDescargue, pesoReal, cantidadReal,
          valorFleteReal, valorAnticipoManifiesto, retencionFopat, codVia, nitMonitoreoFlota, fechaPagoSaldo, conductor2Id, remolqueId,
          viajesDia, ordenServicioGenerador,
-         vacio1Origen, vacio1Destino, vacio1Valor, vacio2Origen, vacio2Destino, vacio2Valor)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         vacio1Origen, vacio1Destino, vacio1Valor, vacio2Origen, vacio2Destino, vacio2Valor,
+         consecutivoManifiesto, creadoPorId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.plantillaId,
         data.vehiculoId,
@@ -1590,19 +1609,16 @@ export const viajes = {
         data.vacio2Origen ?? null,
         data.vacio2Destino ?? null,
         data.vacio2Valor ?? 0,
+        // El consecutivo del manifiesto (NUMMANIFIESTOCARGA) es el numero base
+        // del viaje, que el despachador puede editar. Va en el mismo INSERT:
+        // si el indice unico lo rechaza por repetido, no queda un viaje a
+        // medias sin numero. El de las remesas sale del mismo base con sufijo
+        // de letra y se asigna en viajeRemesas.crearParaViaje.
+        data.consecutivoManifiesto ?? null,
+        data.creadoPorId ?? null,
       ]
     );
-    // El consecutivo del manifiesto (NUMMANIFIESTOCARGA) es el numero base del
-    // viaje, que el despachador puede editar. El de las remesas sale del mismo
-    // base con sufijo de letra y se asigna en viajeRemesas.crearParaViaje.
-    const id = result.insertId;
-    if (data.consecutivoManifiesto) {
-      await pool.query("UPDATE viajes SET consecutivoManifiesto = ? WHERE id = ?", [
-        data.consecutivoManifiesto,
-        id,
-      ]);
-    }
-    return (await this.findById(id))!;
+    return (await this.findById(result.insertId))!;
   },
   async update(id: number, data: Partial<Omit<Viaje, "id">>): Promise<Viaje> {
     const campos = Object.keys(data);

@@ -8,13 +8,17 @@ import { config, describirAmbiente } from "./config";
 import { initSchema } from "./db";
 import { catalogoRouter } from "./routes/catalogo";
 import { despachoRouter } from "./routes/despacho";
+import { authRouter } from "./routes/auth";
+import { usuariosRouter } from "./routes/usuarios";
+import { exigirSesion } from "./auth";
 
 async function main() {
   await initSchema();
 
   const app = express();
 
-  app.use(cors({ origin: config.corsOrigin }));
+  // credentials: la sesion viaja en una cookie.
+  app.use(cors({ origin: config.corsOrigin, credentials: true }));
   app.use(express.json());
 
   app.get("/api/health", (_req, res) => {
@@ -25,8 +29,12 @@ async function main() {
     });
   });
 
-  app.use("/api/catalogo", catalogoRouter);
-  app.use("/api/despacho", despachoRouter);
+  // Login, logout y "quien soy": abiertos (cada ruta decide si pide sesion).
+  app.use("/api/auth", authRouter);
+  // Todo lo demas exige una sesion valida.
+  app.use("/api/catalogo", exigirSesion, catalogoRouter);
+  app.use("/api/despacho", exigirSesion, despachoRouter);
+  app.use("/api/usuarios", exigirSesion, usuariosRouter);
 
   /**
    * Captura de errores.
@@ -40,6 +48,15 @@ async function main() {
    * servidor sigue arriba.
    */
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    // Numero repetido: lo rechazo un indice unico (uk_viaje_consecutivo o
+    // uk_consecutivo). Es un caso esperable, no una falla del servidor.
+    if (err?.code === "ER_DUP_ENTRY" && /consecutivo/i.test(err?.sqlMessage ?? "")) {
+      return res.status(409).json({
+        error:
+          "Ese numero de manifiesto o remesa ya esta usado por otro viaje. Recarga la pantalla " +
+          "para tomar el siguiente numero libre, o escribe otro.",
+      });
+    }
     console.error("Error no controlado:", err);
     res.status(500).json({
       error: "Error interno del servidor",

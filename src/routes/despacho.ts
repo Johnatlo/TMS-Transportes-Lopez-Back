@@ -59,6 +59,7 @@ import {
   TipoOperacionRemesa,
   UnidadMedidaProducto,
 } from "../rndc/builders";
+import { conCandado } from "../db";
 import { RndcClient, RndcError } from "../rndc/client";
 import { aCabeceraMunicipal } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
@@ -275,73 +276,87 @@ despachoRouter.post("/", async (req, res) => {
   // Un solo numero base identifica todo: el manifiesto lo usa tal cual y las
   // remesas adicionales le agregan letra. Se puede editar en el despacho,
   // porque cuando se anula un documento hay que saltar o retomar numeros.
-  const usados = await viajes.consecutivosUsados();
-  const base = b.consecutivoBase
-    ? String(b.consecutivoBase).trim()
-    : siguienteBase(
-        mayorConsecutivo(await viajes.ultimoConsecutivo(), config.consecutivos.ultimoExterno),
-        config.consecutivos.longitud,
-        config.consecutivos.prefijo
-      );
+  //
+  // Elegir el numero y guardar el viaje va bajo candado: si dos personas
+  // despachan al mismo tiempo, la segunda espera y ya ve el numero de la
+  // primera como usado. El envio al RNDC queda FUERA del candado para no
+  // hacer esperar a nadie mientras el ministerio responde.
+  const numerado = await conCandado("tms_numeracion_despacho", async () => {
+    const usados = await viajes.consecutivosUsados();
+    const base = b.consecutivoBase
+      ? String(b.consecutivoBase).trim()
+      : siguienteBase(
+          mayorConsecutivo(await viajes.ultimoConsecutivo(), config.consecutivos.ultimoExterno),
+          config.consecutivos.longitud,
+          config.consecutivos.prefijo
+        );
 
-  const problemasNumero = validarBase(base, nuevasRemesas.length, usados);
-  if (problemasNumero.length > 0) {
-    return res.status(422).json({ error: problemasNumero.map((p) => p.mensaje).join(" ") });
-  }
+    const problemasNumero = validarBase(base, nuevasRemesas.length, usados);
+    if (problemasNumero.length > 0) {
+      return { error: problemasNumero.map((p) => p.mensaje).join(" ") };
+    }
 
-  const primerCargue = nuevasRemesas.reduce(
-    (min, r) => (r.fechaHoraCargue < min ? r.fechaHoraCargue : min),
-    nuevasRemesas[0].fechaHoraCargue
-  );
+    const primerCargue = nuevasRemesas.reduce(
+      (min, r) => (r.fechaHoraCargue < min ? r.fechaHoraCargue : min),
+      nuevasRemesas[0].fechaHoraCargue
+    );
 
-  const viaje = await viajes.create({
-    consecutivoManifiesto: base,
-    plantillaId: plantillaPrincipal.id,
-    vehiculoId: vehiculo.id,
-    conductorId: conductor.id,
-    // En viajes se guarda la fecha de expedicion del manifiesto: el cargue mas
-    // temprano de todas las remesas.
-    fechaHoraCargue: primerCargue,
-    fechaHoraDescargue: nuevasRemesas.reduce(
-      (max, r) => (r.fechaHoraDescargue > max ? r.fechaHoraDescargue : max),
-      nuevasRemesas[0].fechaHoraDescargue
-    ),
-    pesoReal: null,
-    cantidadReal: null,
-    valorFleteReal: b.valorFleteReal ? Number(b.valorFleteReal) : null,
-    valorAnticipoManifiesto: b.valorAnticipoManifiesto ? Number(b.valorAnticipoManifiesto) : 0,
-    // El despachador ve el FOPAT en pantalla y lo puede ajustar. Si no llega,
-    // se calcula al armar el manifiesto.
-    retencionFopat:
-      b.retencionFopat !== undefined && b.retencionFopat !== null && b.retencionFopat !== ""
-        ? Number(b.retencionFopat)
-        : null,
-    codVia: b.codVia || null,
-    // EMF del viaje, en cascada: la elegida en pantalla, si no la del
-    // vehiculo, si no la configurada para toda la empresa.
-    nitMonitoreoFlota:
-      (b.nitMonitoreoFlota ? String(b.nitMonitoreoFlota).replace(/\D/g, "") : null) ||
-      vehiculo.nitMonitoreoFlota ||
-      config.rndc.nitMonitoreoFlota ||
-      null,
-    fechaPagoSaldo: b.fechaPagoSaldo ? new Date(b.fechaPagoSaldo) : null,
-    conductor2Id: conductor2 ? conductor2.id : null,
-    remolqueId: remolque.id,
-    viajesDia: b.viajesDia ? Number(b.viajesDia) : null,
-    ordenServicioGenerador: null,
-    vacio1Origen: b.vacio1Origen ?? null,
-    vacio1Destino: b.vacio1Destino ?? null,
-    vacio1Valor: b.vacio1Valor ? Number(b.vacio1Valor) : 0,
-    vacio2Origen: b.vacio2Origen ?? null,
-    vacio2Destino: b.vacio2Destino ?? null,
-    vacio2Valor: b.vacio2Valor ? Number(b.vacio2Valor) : 0,
+    const viaje = await viajes.create({
+      consecutivoManifiesto: base,
+      plantillaId: plantillaPrincipal.id,
+      vehiculoId: vehiculo.id,
+      conductorId: conductor.id,
+      // En viajes se guarda la fecha de expedicion del manifiesto: el cargue mas
+      // temprano de todas las remesas.
+      fechaHoraCargue: primerCargue,
+      fechaHoraDescargue: nuevasRemesas.reduce(
+        (max, r) => (r.fechaHoraDescargue > max ? r.fechaHoraDescargue : max),
+        nuevasRemesas[0].fechaHoraDescargue
+      ),
+      pesoReal: null,
+      cantidadReal: null,
+      valorFleteReal: b.valorFleteReal ? Number(b.valorFleteReal) : null,
+      valorAnticipoManifiesto: b.valorAnticipoManifiesto ? Number(b.valorAnticipoManifiesto) : 0,
+      // El despachador ve el FOPAT en pantalla y lo puede ajustar. Si no llega,
+      // se calcula al armar el manifiesto.
+      retencionFopat:
+        b.retencionFopat !== undefined && b.retencionFopat !== null && b.retencionFopat !== ""
+          ? Number(b.retencionFopat)
+          : null,
+      codVia: b.codVia || null,
+      // EMF del viaje, en cascada: la elegida en pantalla, si no la del
+      // vehiculo, si no la configurada para toda la empresa.
+      nitMonitoreoFlota:
+        (b.nitMonitoreoFlota ? String(b.nitMonitoreoFlota).replace(/\D/g, "") : null) ||
+        vehiculo.nitMonitoreoFlota ||
+        config.rndc.nitMonitoreoFlota ||
+        null,
+      fechaPagoSaldo: b.fechaPagoSaldo ? new Date(b.fechaPagoSaldo) : null,
+      conductor2Id: conductor2 ? conductor2.id : null,
+      remolqueId: remolque.id,
+      viajesDia: b.viajesDia ? Number(b.viajesDia) : null,
+      ordenServicioGenerador: null,
+      vacio1Origen: b.vacio1Origen ?? null,
+      vacio1Destino: b.vacio1Destino ?? null,
+      vacio1Valor: b.vacio1Valor ? Number(b.vacio1Valor) : 0,
+      vacio2Origen: b.vacio2Origen ?? null,
+      vacio2Destino: b.vacio2Destino ?? null,
+      vacio2Valor: b.vacio2Valor ? Number(b.vacio2Valor) : 0,
+      creadoPorId: req.usuario?.id ?? null,
+    });
+
+    await viajeRemesas.crearParaViaje(
+      viaje.id,
+      // Cada remesa recibe su consecutivo derivado del mismo numero base.
+      nuevasRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) }))
+    );
+    return { viaje };
   });
+  if ("error" in numerado) {
+    return res.status(422).json({ error: numerado.error });
+  }
+  const { viaje } = numerado;
 
-  await viajeRemesas.crearParaViaje(
-    viaje.id,
-    // Cada remesa recibe su consecutivo derivado del mismo numero base.
-    nuevasRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) }))
-  );
   const resultado = await procesarViaje(viaje.id);
   res.status(resultado.status).json(resultado.cuerpo);
 });
@@ -952,6 +967,7 @@ despachoRouter.post("/:id/anular", async (req, res) => {
         motivoAnulacion: plan.manifiestoVigente ? motivoManifiesto : null,
         observacionesAnulacion: obs,
         fechaAnulacion: new Date(),
+        anuladoPorId: req.usuario?.id ?? null,
         mensajeError: null,
         codigoError: null,
         errorCrudo: null,
@@ -1055,6 +1071,7 @@ despachoRouter.post("/:id/anular", async (req, res) => {
       estado: "ANULADO",
       observacionesAnulacion: obs,
       fechaAnulacion: new Date(),
+      anuladoPorId: req.usuario?.id ?? null,
       mensajeError: null,
       codigoError: null,
       errorCrudo: null,

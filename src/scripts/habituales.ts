@@ -1,6 +1,7 @@
 /**
- * Carga el remolque y el conductor habituales de cada vehiculo a partir del
- * historial real de manifiestos de la empresa en el RNDC.
+ * Carga el remolque, el conductor y el proveedor de GPS (empresa de
+ * monitoreo) habituales de cada vehiculo a partir del historial real de
+ * manifiestos de la empresa en el RNDC.
  *
  * Se corre con:  npm run habituales             (solo muestra, no guarda)
  *                npm run habituales -- --aplicar (guarda)
@@ -10,14 +11,15 @@
  * [Guia Uso del Web Service V5, seccion 5]. El cliente va con soloConsultas,
  * asi que no puede enviar nada que cree documentos.
  *
- * Solo llena campos VACIOS del catalogo (placaRemolque y
- * cedulaConductorHabitual): no pisa lo que alguien ya configuro a mano. Y solo
- * si el remolque o el conductor existen en el catalogo local.
+ * Solo llena campos VACIOS del catalogo (placaRemolque,
+ * cedulaConductorHabitual y nitMonitoreoFlota): no pisa lo que alguien ya
+ * configuro a mano. Y solo si el remolque, el conductor o la empresa de
+ * monitoreo existen en el catalogo local.
  */
 
 import { config, describirAmbiente } from "../config";
 import { RndcClient } from "../rndc/client";
-import { vehiculos, remolques, conductores } from "../repo";
+import { vehiculos, remolques, conductores, empresasMonitoreo } from "../repo";
 import { pool } from "../db";
 
 const aplicar = process.argv.includes("--aplicar");
@@ -37,7 +39,7 @@ function xmlConsultaMes(ini: string, fin: string): string {
   <password>${escapar(config.rndc.password)}</password>
  </acceso>
  <solicitud><tipo>3</tipo><procesoid>4</procesoid></solicitud>
- <variables>INGRESOID,FECHAING,NUMMANIFIESTOCARGA,NUMPLACA,NUMPLACAREMOLQUE,NUMIDCONDUCTOR</variables>
+ <variables>INGRESOID,FECHAING,NUMMANIFIESTOCARGA,NUMPLACA,NUMPLACAREMOLQUE,NUMIDCONDUCTOR,NITMONITOREOFLOTA</variables>
  <documento><NUMNITEMPRESATRANSPORTE>${escapar(config.rndc.empresaNit)}</NUMNITEMPRESATRANSPORTE></documento>
  <documentorango><iniFECHAING>'${ini}'</iniFECHAING><finFECHAING>'${fin}'</finFECHAING></documentorango>
 </root>`;
@@ -50,6 +52,8 @@ interface Manifiesto {
   placa: string;
   remolque: string;
   conductor: string;
+  /** NITMONITOREOFLOTA del manifiesto [MANIFIESTO V7, diccionario]. */
+  gps: string;
 }
 
 function leer(bloque: string, etiqueta: string): string {
@@ -94,22 +98,26 @@ async function main() {
         placa: leer(b, "numplaca"),
         remolque: leer(b, "numplacaremolque"),
         conductor: leer(b, "numidconductor").replace(/\D/g, ""),
+        gps: leer(b, "nitmonitoreoflota").replace(/\D/g, ""),
       });
     }
     console.log(`  ${fechaRndc(ini)} a ${fechaRndc(fin)}: ${bloques.length} manifiestos`);
   }
   console.log(`\nTotal: ${manifiestos.length} manifiestos.\n`);
 
-  const [flota, trailers, personal] = await Promise.all([
+  const [flota, trailers, personal, emfs] = await Promise.all([
     vehiculos.findMany(),
     remolques.findMany(),
     conductores.findMany(),
+    empresasMonitoreo.findMany(),
   ]);
+  const nombresEmf = new Map(emfs.map((e) => [e.nit, e.nombre]));
   const placasRemolque = new Set(trailers.map((r) => r.placa.toUpperCase()));
   const cedulas = new Map(personal.map((c) => [c.cedula, c.nombre]));
 
   let llenarRemolque = 0;
   let llenarConductor = 0;
+  let llenarGps = 0;
   let sinHistorial = 0;
   const filas: string[] = [];
 
@@ -136,10 +144,19 @@ async function main() {
       if (nombre && !v.cedulaConductorHabitual) cambios.cedulaConductorHabitual = con.valor;
     }
 
+    const gps = masFrecuente(propios.map((m) => m.gps));
+    let textoGps = "-";
+    if (gps) {
+      const nombre = nombresEmf.get(gps.valor);
+      textoGps = `${nombre ?? gps.valor} (${gps.veces}/${propios.length})${nombre ? "" : " [no esta en el catalogo]"}`;
+      if (nombre && !v.nitMonitoreoFlota) cambios.nitMonitoreoFlota = gps.valor;
+    }
+
     if (cambios.placaRemolque) llenarRemolque++;
+    if (cambios.nitMonitoreoFlota) llenarGps++;
     if (cambios.cedulaConductorHabitual) llenarConductor++;
     filas.push(
-      `${v.placa.padEnd(8)} ${String(propios.length).padStart(4)} viajes | remolque ${textoRem.padEnd(34)} | conductor ${textoCon}` +
+      `${v.placa.padEnd(8)} ${String(propios.length).padStart(4)} viajes | remolque ${textoRem.padEnd(34)} | conductor ${textoCon.padEnd(44)} | GPS ${textoGps}` +
         (Object.keys(cambios).length === 0 ? "   (sin cambios)" : "")
     );
     if (aplicar && Object.keys(cambios).length > 0) await vehiculos.update(v.id, cambios);
@@ -148,7 +165,7 @@ async function main() {
   filas.sort().forEach((f) => console.log(f));
   console.log(
     `\nVehiculos activos sin manifiestos en la ventana: ${sinHistorial}.` +
-      `\n${aplicar ? "Se llenaron" : "Se llenarian"}: ${llenarRemolque} remolques habituales y ${llenarConductor} conductores habituales` +
+      `\n${aplicar ? "Se llenaron" : "Se llenarian"}: ${llenarRemolque} remolques, ${llenarConductor} conductores y ${llenarGps} proveedores de GPS habituales` +
       ` (solo campos vacios).`
   );
   if (!aplicar) console.log("Para guardar:  npm run habituales -- --aplicar");
