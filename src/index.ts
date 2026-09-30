@@ -4,6 +4,8 @@ import express from "express";
 // proceso. Debe importarse antes de definir las rutas.
 import "express-async-errors";
 import cors from "cors";
+import fs from "fs";
+import path from "path";
 import { config, describirAmbiente } from "./config";
 import { initSchema } from "./db";
 import { catalogoRouter } from "./routes/catalogo";
@@ -16,6 +18,11 @@ async function main() {
   await initSchema();
 
   const app = express();
+
+  // Detras de un proxy con HTTPS (IIS, nginx, Caddy, un tunel), Express ve la
+  // conexion interna como http y la cookie de sesion no se marcaria "Secure".
+  // TRUST_PROXY=1 le dice que confie en el encabezado X-Forwarded-Proto.
+  if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
 
   // credentials: la sesion viaja en una cookie.
   app.use(cors({ origin: config.corsOrigin, credentials: true }));
@@ -35,6 +42,26 @@ async function main() {
   app.use("/api/catalogo", exigirSesion, catalogoRouter);
   app.use("/api/despacho", exigirSesion, despachoRouter);
   app.use("/api/usuarios", exigirSesion, usuariosRouter);
+
+  /**
+   * Frontend compilado (despliegue).
+   *
+   * En produccion el mismo backend sirve la pagina: una sola direccion y un
+   * solo proceso, sin el servidor de desarrollo de Vite y sin CORS de por
+   * medio (la cookie de sesion va al mismo origen). Basta con correr
+   * `npm run build` en frontend-react; si la carpeta no existe (desarrollo),
+   * esto no hace nada y se sigue usando Vite.
+   *
+   * Las rutas del frontend (/despacho, /historial...) las resuelve React en
+   * el navegador, asi que a cualquier GET que no sea /api se le entrega el
+   * index.html.
+   */
+  const dirFrontend = path.resolve(process.env.FRONTEND_DIST || path.join(__dirname, "../../frontend-react/dist"));
+  if (fs.existsSync(path.join(dirFrontend, "index.html"))) {
+    app.use(express.static(dirFrontend, { index: false, maxAge: "1h" }));
+    app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(dirFrontend, "index.html")));
+    console.log(`Sirviendo el frontend compilado desde ${dirFrontend}`);
+  }
 
   /**
    * Captura de errores.

@@ -13,7 +13,8 @@
     "importar": "ts-node src/scripts/importar.ts",
     "habituales": "ts-node src/scripts/habituales.ts",
     "crear-usuario": "ts-node src/scripts/crear-usuario.ts",
-    "probar-correo": "ts-node src/scripts/probar-correo.ts"
+    "probar-correo": "ts-node src/scripts/probar-correo.ts",
+    "respaldo": "ts-node src/scripts/respaldo.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
