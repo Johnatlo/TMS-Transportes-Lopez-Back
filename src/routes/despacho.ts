@@ -67,6 +67,7 @@ import {
   UnidadMedidaProducto,
 } from "../rndc/builders";
 import { conCandado } from "../db";
+import { buscarManifiestoRadicado, buscarRemesaRadicada } from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
 import { aCabeceraMunicipal } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
@@ -863,6 +864,98 @@ despachoRouter.post("/:id/usar-manifiesto-existente", async (req, res) => {
 });
 
 /**
+ * Antes de reintentar: el manifiesto con este numero ya existe en el RNDC?
+ *
+ * Pasa cuando el viaje se expide por fuera del sistema (por ejemplo en el
+ * portal, porque el carro tenia que salir) o cuando se perdio la respuesta de
+ * un envio. Si existe y es de la misma placa, el viaje queda CONFIRMADO con el
+ * radicado y los valores que tiene el RNDC (flete, FOPAT, anticipo, via), y se
+ * buscan los radicados de las remesas pendientes. Si es de otra placa, el
+ * numero lo uso otro despacho: no se toma nada.
+ *
+ * Devuelve null para seguir con el reintento normal: si no existe, si se esta
+ * simulando, o si la consulta falla (el reintento no se bloquea por eso).
+ */
+export async function tomarSiYaExpedido(viaje: Viaje): Promise<{ status: number; cuerpo: unknown } | null> {
+  if (config.rndc.simular || viaje.numeroManifiestoRndc || !viaje.consecutivoManifiesto) return null;
+  const credenciales = {
+    usuario: config.rndc.usuario,
+    password: config.rndc.password,
+    nitEmpresa: config.rndc.empresaNit,
+  };
+  // Mismo servidor que expide; soloConsultas: este cliente no puede registrar nada.
+  const cliente = new RndcClient({
+    wsdlUrl: config.rndc.wsdlUrl,
+    usuario: config.rndc.usuario,
+    password: config.rndc.password,
+    simular: false,
+    reintentos: config.rndc.reintentos,
+    soloConsultas: true,
+  });
+
+  let m;
+  try {
+    m = await buscarManifiestoRadicado(cliente, credenciales, viaje.consecutivoManifiesto);
+  } catch (exc) {
+    console.warn(`No se pudo verificar en el RNDC el manifiesto ${viaje.consecutivoManifiesto}:`, (exc as Error).message);
+    return null;
+  }
+  if (!m) return null;
+
+  const vehiculo = await vehiculos.findById(viaje.vehiculoId);
+  if (m.placa && vehiculo && m.placa.toUpperCase() !== vehiculo.placa.toUpperCase()) {
+    const actualizado = await viajes.update(viaje.id, {
+      mensajeError:
+        `El manifiesto ${viaje.consecutivoManifiesto} YA EXISTE en el RNDC (radicado ${m.radicado}), pero ` +
+        `con la placa ${m.placa} y no ${vehiculo.placa}: ese numero lo uso otro despacho. Cambia el ` +
+        "numero de este viaje y reintenta.",
+      codigoError: null,
+      errorCrudo: null,
+    });
+    return { status: 409, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viaje.id) } };
+  }
+
+  // Las remesas que aqui no figuran como creadas: el manifiesto del RNDC las
+  // ampara, asi que deben existir alla. Se toma su radicado.
+  const faltantes: string[] = [];
+  for (const f of await viajeRemesas.findByViaje(viaje.id)) {
+    if (f.estado === "CREADA" || f.estado === "ANULADA") continue;
+    let radicado: string | null = null;
+    try {
+      radicado = await buscarRemesaRadicada(cliente, credenciales, f.consecutivoRemesa!);
+    } catch {
+      radicado = null;
+    }
+    if (radicado) {
+      await viajeRemesas.update(f.id, { estado: "CREADA", numeroRemesaRndc: radicado, mensajeError: null });
+    } else {
+      faltantes.push(f.consecutivoRemesa!);
+    }
+  }
+
+  const final = await viajes.update(viaje.id, {
+    estado: "CONFIRMADO",
+    numeroManifiestoRndc: m.radicado,
+    // Los valores con que quedo expedido mandan sobre los del intento fallido.
+    valorFleteReal: m.valorFlete ?? viaje.valorFleteReal,
+    retencionFopat: m.retencionFopat ?? viaje.retencionFopat,
+    valorAnticipoManifiesto: m.valorAnticipo ?? viaje.valorAnticipoManifiesto,
+    codVia: m.codVia ?? viaje.codVia,
+    mensajeError: null,
+    codigoError: null,
+    errorCrudo: null,
+    avisos:
+      `Manifiesto encontrado en el RNDC: ya estaba expedido (radicado ${m.radicado}` +
+      `${m.fecha ? `, ${m.fecha}` : ""}). Se tomaron sus valores: flete, FOPAT, anticipo y via.` +
+      (faltantes.length > 0 ? ` | OJO: no se encontraron en el RNDC las remesas ${faltantes.join(", ")}.` : ""),
+  });
+  return {
+    status: 200,
+    cuerpo: { ...final, remesas: await viajeRemesas.findByViaje(viaje.id), encontradoEnRndc: true },
+  };
+}
+
+/**
  * Todos los datos que el viaje envia (o enviaria) al RNDC, sin enviar nada.
  * Para revisarlos antes de reintentar.
  */
@@ -906,6 +999,11 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
           : `Un viaje en estado ${viaje.estado} no se puede reintentar.`,
     });
   }
+
+  // Primero: si el manifiesto ya se expidio por fuera del sistema, se toma ese
+  // y no se reenvia nada (las correcciones del formulario ya no aplican).
+  const yaExpedido = await tomarSiYaExpedido(viaje);
+  if (yaExpedido) return res.status(yaExpedido.status).json(yaExpedido.cuerpo);
 
   const b = req.body ?? {};
   const cambios: Partial<Viaje> = {};

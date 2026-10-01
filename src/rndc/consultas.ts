@@ -226,3 +226,118 @@ export async function probarAcceso(
 export function valoresDe(xml: string, etiqueta: string): string[] {
   return leerEtiquetas(xml, etiqueta);
 }
+
+// ---------------------------------------------------------------------------
+// Documentos propios ya radicados (tipo 3)
+// ---------------------------------------------------------------------------
+//
+// Tipo 3 = "Consultar documentos o registros de cualquier proceso" [Guia Uso
+// del Web Service V5, pag. 9 y ejemplos pag. 18-19]. Verificado en produccion
+// (2026-10-01) con el manifiesto y la remesa 00006740:
+// - Proceso 4 por NUMMANIFIESTOCARGA y proceso 3 por CONSECUTIVOREMESA, con el
+//   valor entre comillas sencillas (la remesa sin comillas da RNDC027).
+// - Devuelve <documento> con las variables pedidas en minuscula; el manifiesto
+//   acepta VALORFLETEPACTADOVIAJE, RETENCIONFOPAT, VALORANTICIPOMANIFIESTO y
+//   CODVIA, ademas de INGRESOID (radicado), FECHAING y NUMPLACA.
+// - Si no existe: RNDC11 "Documento no encontrado".
+
+export const TIPO_SOLICITUD_DOCUMENTOS_PROPIOS = "3";
+
+function xmlDocumentoPropio(
+  credenciales: CredencialesRndc,
+  procesoId: string,
+  variables: string[],
+  filtroEtiqueta: string,
+  filtroValor: string
+): string {
+  return `<?xml version='1.0' encoding='ISO-8859-1' ?>
+<root>
+  <acceso>
+    <username>${escapeXml(credenciales.usuario)}</username>
+    <password>${escapeXml(credenciales.password)}</password>
+  </acceso>
+  <solicitud>
+    <tipo>${TIPO_SOLICITUD_DOCUMENTOS_PROPIOS}</tipo>
+    <procesoid>${procesoId}</procesoid>
+  </solicitud>
+  <variables>${variables.join(",")}</variables>
+  <documento>
+    <NUMNITEMPRESATRANSPORTE>${escapeXml(credenciales.nitEmpresa)}</NUMNITEMPRESATRANSPORTE>
+    <${filtroEtiqueta}>'${escapeTexto(filtroValor.replace(/'/g, ""))}'</${filtroEtiqueta}>
+  </documento>
+</root>`;
+}
+
+/** null = el RNDC dice que no existe (RNDC11). Cualquier otro error se lanza. */
+async function consultarDocumentoPropio(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  procesoId: string,
+  variables: string[],
+  filtroEtiqueta: string,
+  filtroValor: string
+): Promise<string | null> {
+  const r = await cliente.enviar(
+    xmlDocumentoPropio(credenciales, procesoId, variables, filtroEtiqueta, filtroValor),
+    procesoId
+  );
+  if (r.ok) return r.xmlRespuesta ?? "";
+  if (/RNDC11/i.test(r.errorCrudo ?? "")) return null;
+  throw new Error(`No se pudo consultar el RNDC: ${r.errorCrudo ?? r.error}`);
+}
+
+export interface ManifiestoEnRndc {
+  radicado: string;
+  fecha: string | null;
+  placa: string | null;
+  valorFlete: number | null;
+  retencionFopat: number | null;
+  valorAnticipo: number | null;
+  codVia: string | null;
+}
+
+const numeroDe = (v: string | null) => (v === null || v.trim() === "" ? null : Number(v));
+
+/** El manifiesto con ese numero, si ya esta radicado en el RNDC para la empresa. */
+export async function buscarManifiestoRadicado(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  numero: string
+): Promise<ManifiestoEnRndc | null> {
+  const xml = await consultarDocumentoPropio(
+    cliente,
+    credenciales,
+    "4",
+    ["INGRESOID", "FECHAING", "NUMMANIFIESTOCARGA", "NUMPLACA", "VALORFLETEPACTADOVIAJE", "RETENCIONFOPAT", "VALORANTICIPOMANIFIESTO", "CODVIA"],
+    "NUMMANIFIESTOCARGA",
+    numero
+  );
+  const radicado = xml === null ? null : leerEtiqueta(xml, "ingresoid");
+  if (!xml || !radicado) return null;
+  return {
+    radicado,
+    fecha: leerEtiqueta(xml, "fechaing"),
+    placa: leerEtiqueta(xml, "numplaca"),
+    valorFlete: numeroDe(leerEtiqueta(xml, "valorfletepactadoviaje")),
+    retencionFopat: numeroDe(leerEtiqueta(xml, "retencionfopat")),
+    valorAnticipo: numeroDe(leerEtiqueta(xml, "valoranticipomanifiesto")),
+    codVia: leerEtiqueta(xml, "codvia") || null,
+  };
+}
+
+/** Radicado de la remesa con ese consecutivo, si ya esta en el RNDC. */
+export async function buscarRemesaRadicada(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  consecutivo: string
+): Promise<string | null> {
+  const xml = await consultarDocumentoPropio(
+    cliente,
+    credenciales,
+    "3",
+    ["INGRESOID", "FECHAING", "CONSECUTIVOREMESA"],
+    "CONSECUTIVOREMESA",
+    consecutivo
+  );
+  return xml === null ? null : leerEtiqueta(xml, "ingresoid");
+}
