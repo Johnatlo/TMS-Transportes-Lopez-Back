@@ -145,6 +145,73 @@ async function validarPisoSicetac(
   return null;
 }
 
+/** Quita los campos vacios: el XML tampoco los lleva. */
+function sinVacios(datos: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(datos).filter(([, v]) => v !== null && v !== undefined && v !== "")
+  );
+}
+
+/**
+ * Todos los datos del manifiesto y de cada remesa tal como van al RNDC (mismas
+ * funciones que arman el XML), mas la via elegida con su piso de SICETAC. Si
+ * algun bloque no se puede armar, se informa el motivo en vez de fallar.
+ */
+async function armarDatosRndc(
+  viaje: Viaje,
+  filas: ViajeRemesa[],
+  datosViaje: DatosViajeParaRndc,
+  datosRemesas: DatosRemesaParaRndc[],
+  consecutivoManifiesto: string,
+  rutaBase: { origen: string | null; destino: string | null }
+) {
+  let manifiesto: Record<string, unknown> | null = null;
+  let errorManifiesto: string | null = null;
+  try {
+    manifiesto = sinVacios(construirDatosManifiesto(datosViaje, consecutivoManifiesto));
+  } catch (exc) {
+    errorManifiesto = (exc as Error).message;
+  }
+
+  const remesas = filas.map((f) => {
+    const d = datosRemesas.find((x) => x.consecutivo === f.consecutivoRemesa);
+    let datos: Record<string, unknown> | null = null;
+    let error: string | null = null;
+    try {
+      datos = d ? sinVacios(construirDatosRemesa(d)) : null;
+    } catch (exc) {
+      error = (exc as Error).message;
+    }
+    return {
+      consecutivo: f.consecutivoRemesa,
+      estado: f.estado,
+      radicado: f.numeroRemesaRndc,
+      mensajeError: f.mensajeError,
+      datos,
+      error,
+    };
+  });
+
+  // Via y piso: con la misma clave con que se consultaron a SICETAC.
+  let via: { codVia: string; descripcion: string; pisoSicetac: number | null } | null = null;
+  const origen = aCabeceraMunicipal(rutaBase.origen);
+  const destino = aCabeceraMunicipal(rutaBase.destino);
+  if (viaje.codVia && origen && destino) {
+    const v = (await vias.findByRuta(origen, destino)).find((x) => x.codVia === viaje.codVia);
+    if (v) via = { codVia: v.codVia, descripcion: v.descripcion, pisoSicetac: v.valorSicetac };
+  }
+
+  return {
+    manifiesto,
+    errorManifiesto,
+    remesas,
+    via,
+    // Par origen-destino con el que se consultan las vias (para elegir otra).
+    rutaVias: origen && destino ? { origen, destino } : null,
+    valorFlete: datosViaje.valorFleteReal,
+  };
+}
+
 function mensajesDe(problemas: ProblemaValidacion[], gravedad: "ERROR" | "AVISO"): string[] {
   return problemas.filter((p) => p.gravedad === gravedad).map((p) => p.mensaje);
 }
@@ -399,7 +466,10 @@ const ESTADOS_REINTENTABLES = ["VALIDACION_ERROR", "REMESA_ERROR", "MANIFIESTO_E
  * remesas activas (ni cumplidas ni anuladas) [MANIFIESTO V7, validaciones de
  * REMESASMAN].
  */
-async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo: unknown }> {
+async function procesarViaje(
+  viajeId: number,
+  opciones: { soloDatos?: boolean } = {}
+): Promise<{ status: number; cuerpo: unknown }> {
   const viaje = (await viajes.findById(viajeId))!;
   const filasRemesa = await viajeRemesas.findByViaje(viajeId);
 
@@ -411,6 +481,9 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
     viaje.remolqueId ? remolques.findById(viaje.remolqueId) : Promise.resolve(null),
   ]);
   if (!plantillaPrincipal || !vehiculo || !conductor || !remolque) {
+    if (opciones.soloDatos) {
+      return { status: 404, cuerpo: { error: "Plantilla, vehiculo, conductor o remolque del viaje ya no existe." } };
+    }
     const actualizado = await viajes.update(viajeId, {
       estado: "VALIDACION_ERROR",
       mensajeError: "Plantilla, vehiculo, conductor o remolque del viaje ya no existe.",
@@ -423,6 +496,9 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
     if (!plantillasRemesa.has(fila.plantillaId)) {
       const p = await plantillas.findById(fila.plantillaId);
       if (!p) {
+        if (opciones.soloDatos) {
+          return { status: 404, cuerpo: { error: `No encontre la plantilla ${fila.plantillaId}.` } };
+        }
         const actualizado = await viajes.update(viajeId, {
           estado: "VALIDACION_ERROR",
           mensajeError: `No encontre la plantilla ${fila.plantillaId} de la remesa ${fila.consecutivoRemesa}.`,
@@ -521,6 +597,19 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
     ),
   };
 
+  // Lo que se envia (o se enviaria) al RNDC, campo por campo. Va en cada
+  // respuesta de error: el rechazo puede venir de cualquier dato (la via, el
+  // piso de SICETAC, el FOPAT, el titular...), asi que se muestran todos.
+  const datosRndc = await armarDatosRndc(
+    viaje,
+    filasRemesa,
+    datosViaje,
+    datosRemesas,
+    consecutivoManifiesto,
+    rutaBase
+  );
+  if (opciones.soloDatos) return { status: 200, cuerpo: datosRndc };
+
   // Remesas que ya existen en el RNDC (de un intento anterior).
   const yaCreadas = filasRemesa.filter((f) => f.estado === "CREADA").map((f) => f.consecutivoRemesa!);
   const avisoYaCreadas =
@@ -579,7 +668,7 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
       codigoError: null,
       errorCrudo: null,
     });
-    return { status: 422, cuerpo: { ...actualizado, remesas: filasRemesa } };
+    return { status: 422, cuerpo: { ...actualizado, remesas: filasRemesa, datosRndc } };
   }
 
   const credenciales = {
@@ -629,7 +718,7 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
         codigoError: null,
         errorCrudo: null,
       });
-      return { status: 502, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId) } };
+      return { status: 502, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId), datosRndc } };
     }
 
     if (!resultado.ok) {
@@ -643,7 +732,7 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
         codigoError: resultado.codigoError,
         errorCrudo: resultado.errorCrudo,
       });
-      return { status: 422, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId) } };
+      return { status: 422, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId), datosRndc } };
     }
 
     await viajeRemesas.update(fila.id, {
@@ -676,7 +765,7 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
       codigoError: null,
       errorCrudo: null,
     });
-    return { status: 502, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId) } };
+    return { status: 502, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId), datosRndc } };
   }
 
   if (!resultadoManifiesto.ok) {
@@ -690,7 +779,7 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
       codigoError: resultadoManifiesto.codigoError,
       errorCrudo: resultadoManifiesto.errorCrudo,
     });
-    return { status: 422, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId) } };
+    return { status: 422, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId), datosRndc } };
   }
 
   // Se persiste el FOPAT realmente enviado, incluso cuando se calculo solo:
@@ -722,6 +811,69 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
 }
 
 /**
+ * "Ya existe" en el RNDC: la remesa o el manifiesto quedaron creados en un
+ * intento anterior aunque aqui figure el error (por ejemplo, se perdio la
+ * respuesta). El RNDC lo dice con "DUPLICADO:<radicado>".
+ *
+ * No se adopta solo: el numero repetido tambien puede ser de OTRO documento
+ * (asi paso con la remesa 00006728, expedida desde el portal). La persona
+ * confirma que es el mismo y entonces se toma ese radicado. Solo se acepta el
+ * radicado que el propio RNDC informo en el error.
+ */
+despachoRouter.post("/remesas/:remesaId/usar-existente", async (req, res) => {
+  const remesa = await viajeRemesas.findById(Number(req.params.remesaId));
+  if (!remesa) return res.status(404).json({ error: "Remesa no encontrada" });
+  const viaje = await viajes.findById(remesa.viajeId);
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  const radicado = radicadoDeDuplicado(remesa.mensajeError);
+  if (remesa.estado === "CREADA" || !radicado || !ESTADOS_REINTENTABLES.includes(viaje.estado)) {
+    return res.status(409).json({
+      error: "El RNDC no reporto esta remesa como existente: no hay radicado que tomar.",
+    });
+  }
+  await viajeRemesas.update(remesa.id, { estado: "CREADA", numeroRemesaRndc: radicado, mensajeError: null });
+  const actualizado = await viajes.update(viaje.id, {
+    mensajeError:
+      `La remesa ${remesa.consecutivoRemesa} se tomo del RNDC (ya existia, radicado ${radicado}). ` +
+      "Reintenta para enviar lo que falta.",
+    codigoError: null,
+    errorCrudo: null,
+  });
+  res.json({ ...actualizado, remesas: await viajeRemesas.findByViaje(viaje.id) });
+});
+
+despachoRouter.post("/:id/usar-manifiesto-existente", async (req, res) => {
+  const viaje = await viajes.findById(Number(req.params.id));
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  const radicado = radicadoDeDuplicado(viaje.errorCrudo);
+  if (viaje.estado !== "MANIFIESTO_ERROR" || !radicado) {
+    return res.status(409).json({
+      error: "El RNDC no reporto este manifiesto como existente: no hay radicado que tomar.",
+    });
+  }
+  const final = await viajes.update(viaje.id, {
+    estado: "CONFIRMADO",
+    numeroManifiestoRndc: radicado,
+    mensajeError: null,
+    codigoError: null,
+    errorCrudo: null,
+    avisos: `Manifiesto tomado del RNDC: ya existia con radicado ${radicado}.`,
+  });
+  res.json({ ...final, remesas: await viajeRemesas.findByViaje(viaje.id) });
+});
+
+/**
+ * Todos los datos que el viaje envia (o enviaria) al RNDC, sin enviar nada.
+ * Para revisarlos antes de reintentar.
+ */
+despachoRouter.get("/:id/datos-rndc", async (req, res) => {
+  const viaje = await viajes.findById(Number(req.params.id));
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  const r = await procesarViaje(viaje.id, { soloDatos: true });
+  res.status(r.status).json(r.cuerpo);
+});
+
+/**
  * Reintenta un viaje que quedo a medias, despues de corregir lo necesario.
  *
  * Caso tipico: la remesa se creo pero el manifiesto fue rechazado (ej. MAN130,
@@ -729,11 +881,17 @@ async function procesarViaje(viajeId: number): Promise<{ status: number; cuerpo:
  * del RNDC y se reintenta: las remesas ya creadas se reutilizan y solo se envia
  * lo que falta.
  *
- * El body puede corregir los datos que son SOLO del manifiesto: vehiculo,
- * conductores, remolque, valores, via, EMF y el numero del manifiesto. Las
- * remesas no llevan placa ni conductor, asi que cambiarlos no las afecta. Lo
- * que es de la remesa (pesos, citas, clientes) no se cambia aqui: una remesa
- * creada con datos errados se corrige anulandola en el RNDC.
+ * El body puede corregir los datos del manifiesto: vehiculo, conductores,
+ * remolque, valores, via, EMF, vacios, viajes del dia y el numero.
+ *
+ * Tambien las cargas (`remesas`), pero solo las que el RNDC aun no creo:
+ *   - Si ninguna remesa esta creada, se reemplazan todas (se pueden agregar o
+ *     quitar cargas) y se renumeran con el numero base del viaje.
+ *   - Si alguna ya esta creada, esas no se tocan (en el RNDC ya existen; si
+ *     tienen un error se anulan) y no se pueden agregar ni quitar cargas: solo
+ *     se corrigen las pendientes, en el mismo orden.
+ * Es lo que usa "Despachar" cuando el RNDC rechaza: reintenta el mismo viaje
+ * en vez de crear otro con el mismo numero.
  */
 despachoRouter.post("/:id/reintentar", async (req, res) => {
   const viajeId = Number(req.params.id);
@@ -789,6 +947,15 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
   if (b.fechaPagoSaldo !== undefined) {
     cambios.fechaPagoSaldo = b.fechaPagoSaldo ? new Date(b.fechaPagoSaldo) : null;
   }
+  if (b.viajesDia !== undefined) cambios.viajesDia = num(b.viajesDia);
+  for (const n of [1, 2] as const) {
+    const o = `vacio${n}Origen` as const;
+    const d = `vacio${n}Destino` as const;
+    const v = `vacio${n}Valor` as const;
+    if (b[o] !== undefined) cambios[o] = b[o] ? String(b[o]) : null;
+    if (b[d] !== undefined) cambios[d] = b[d] ? String(b[d]) : null;
+    if (b[v] !== undefined) cambios[v] = num(b[v]) ?? 0;
+  }
 
   if (b.consecutivoManifiesto !== undefined) {
     const nuevo = String(b.consecutivoManifiesto).trim().toUpperCase();
@@ -809,13 +976,134 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
     }
   }
 
+  // ---- Cargas (remesas) ----
+  const filasActuales = (await viajeRemesas.findByViaje(viajeId)).filter((r) => r.estado !== "ANULADA");
+  const yaCreadas = filasActuales.filter((r) => r.estado === "CREADA");
+  const base = cambios.consecutivoManifiesto ?? viaje.consecutivoManifiesto!;
+  let reemplazarRemesas: NuevaViajeRemesa[] | null = null;
+  const corregirRemesas: Array<{ id: number; datos: Partial<ViajeRemesa> }> = [];
+
+  if (Array.isArray(b.remesas) && b.remesas.length > 0) {
+    const entrada: any[] = b.remesas;
+    if (entrada.length > MAX_REMESAS_POR_MANIFIESTO) {
+      return res.status(422).json({ error: `Un manifiesto admite hasta ${MAX_REMESAS_POR_MANIFIESTO} remesas` });
+    }
+    for (const [i, r] of entrada.entries()) {
+      if (!r.plantillaId || !(await plantillas.findById(Number(r.plantillaId)))) {
+        return res.status(422).json({ error: `La carga ${i + 1} no tiene una plantilla valida.` });
+      }
+      if (!r.fechaHoraCargue || !r.fechaHoraDescargue) {
+        return res.status(422).json({ error: `La carga ${i + 1} necesita cita de cargue y de descargue.` });
+      }
+    }
+    const nueva = (r: any, i: number): NuevaViajeRemesa => ({
+      plantillaId: Number(r.plantillaId),
+      orden: i + 1,
+      pesoReal: r.pesoReal ? Number(r.pesoReal) : null,
+      cantidadReal: r.cantidadReal ? Number(r.cantidadReal) : null,
+      fechaHoraCargue: new Date(r.fechaHoraCargue),
+      fechaHoraDescargue: new Date(r.fechaHoraDescargue),
+      ordenServicioGenerador: r.ordenServicioGenerador ?? null,
+      valorFleteRemesa: r.valorFleteRemesa ? Number(r.valorFleteRemesa) : null,
+    });
+
+    if (yaCreadas.length === 0) {
+      // Nada esta en el RNDC: las cargas se reemplazan completas.
+      reemplazarRemesas = entrada.map(nueva);
+    } else {
+      if (entrada.length !== filasActuales.length) {
+        return res.status(422).json({
+          error:
+            `Las remesas ${yaCreadas.map((r) => r.consecutivoRemesa).join(", ")} ya estan creadas en el ` +
+            "RNDC: no se pueden agregar ni quitar cargas. Corrige solo las pendientes, o anula el viaje " +
+            "para empezar de nuevo.",
+        });
+      }
+      entrada.forEach((r, i) => {
+        const fila = filasActuales[i];
+        if (fila.estado === "CREADA") return; // ya existe en el RNDC: no se toca
+        const n = nueva(r, i);
+        corregirRemesas.push({
+          id: fila.id,
+          datos: {
+            plantillaId: n.plantillaId,
+            pesoReal: n.pesoReal,
+            cantidadReal: n.cantidadReal,
+            fechaHoraCargue: n.fechaHoraCargue,
+            fechaHoraDescargue: n.fechaHoraDescargue,
+            ordenServicioGenerador: n.ordenServicioGenerador,
+            valorFleteRemesa: n.valorFleteRemesa,
+          },
+        });
+      });
+    }
+  } else if (yaCreadas.length === 0 && cambios.consecutivoManifiesto) {
+    // Cambio de numero sin tocar las cargas: las remesas se renumeran igual,
+    // porque ninguna existe aun en el RNDC.
+    reemplazarRemesas = filasActuales.map((f) => ({
+      plantillaId: f.plantillaId,
+      orden: f.orden,
+      pesoReal: f.pesoReal,
+      cantidadReal: f.cantidadReal,
+      fechaHoraCargue: new Date(f.fechaHoraCargue),
+      fechaHoraDescargue: new Date(f.fechaHoraDescargue),
+      ordenServicioGenerador: f.ordenServicioGenerador,
+      valorFleteRemesa: f.valorFleteRemesa,
+    }));
+  }
+
+  // Con remesas nuevas, el numero base debe servir para todas (con letra).
+  if (reemplazarRemesas) {
+    const propios = new Set(
+      [viaje.consecutivoManifiesto, ...filasActuales.map((f) => f.consecutivoRemesa)].filter(Boolean) as string[]
+    );
+    const usados = new Set([...(await viajes.consecutivosUsados())].filter((c) => !propios.has(c)));
+    const problemas = validarBase(base, reemplazarRemesas.length, usados);
+    if (problemas.length > 0) {
+      return res.status(422).json({ error: problemas.map((p) => p.mensaje).join(" ") });
+    }
+  }
+
   // Candado contra el doble clic: solo un reintento a la vez toma el viaje.
   if (!(await viajes.tomarParaReintento(viajeId, ESTADOS_REINTENTABLES))) {
     return res.status(409).json({ error: "El viaje ya se esta reintentando. Espera el resultado." });
   }
 
   try {
+    if (reemplazarRemesas) {
+      // El viaje guarda la plantilla principal y las fechas extremas de las cargas.
+      cambios.plantillaId = reemplazarRemesas[0].plantillaId;
+      cambios.fechaHoraCargue = reemplazarRemesas.reduce(
+        (m, r) => (r.fechaHoraCargue < m ? r.fechaHoraCargue : m),
+        reemplazarRemesas[0].fechaHoraCargue
+      );
+      cambios.fechaHoraDescargue = reemplazarRemesas.reduce(
+        (m, r) => (r.fechaHoraDescargue > m ? r.fechaHoraDescargue : m),
+        reemplazarRemesas[0].fechaHoraDescargue
+      );
+    } else if (corregirRemesas.length > 0) {
+      const todas = filasActuales.map((f) => corregirRemesas.find((c) => c.id === f.id)?.datos ?? f);
+      cambios.fechaHoraCargue = todas.reduce(
+        (m, r) => (new Date(r.fechaHoraCargue!) < m ? new Date(r.fechaHoraCargue!) : m),
+        new Date(todas[0].fechaHoraCargue!)
+      );
+      cambios.fechaHoraDescargue = todas.reduce(
+        (m, r) => (new Date(r.fechaHoraDescargue!) > m ? new Date(r.fechaHoraDescargue!) : m),
+        new Date(todas[0].fechaHoraDescargue!)
+      );
+      if (filasActuales[0].estado !== "CREADA") cambios.plantillaId = todas[0].plantillaId;
+    }
     if (Object.keys(cambios).length > 0) await viajes.update(viajeId, cambios);
+    if (reemplazarRemesas) {
+      await viajeRemesas.borrarDeViaje(viajeId);
+      await viajeRemesas.crearParaViaje(
+        viajeId,
+        reemplazarRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) }))
+      );
+    }
+    for (const c of corregirRemesas) {
+      await viajeRemesas.update(c.id, { ...c.datos, estado: "PENDIENTE", mensajeError: null });
+    }
     const resultado = await procesarViaje(viajeId);
     res.status(resultado.status).json(resultado.cuerpo);
   } catch (exc) {

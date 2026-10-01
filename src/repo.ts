@@ -1368,6 +1368,14 @@ export const viajeRemesas = {
   },
 
   /**
+   * Borra las remesas de un viaje. Solo para reemplazarlas en un reintento
+   * cuando NINGUNA existe en el RNDC (lo verifica la ruta de reintento).
+   */
+  async borrarDeViaje(viajeId: number): Promise<void> {
+    await pool.query("DELETE FROM viaje_remesas WHERE viajeId = ? AND estado <> 'CREADA'", [viajeId]);
+  },
+
+  /**
    * Pasa la remesa a `nuevoEstado` solo si esta en uno de los permitidos, en
    * una sola sentencia: es el candado contra el doble clic al cumplir.
    */
