@@ -876,8 +876,13 @@ despachoRouter.post("/:id/usar-manifiesto-existente", async (req, res) => {
  * Devuelve null para seguir con el reintento normal: si no existe, si se esta
  * simulando, o si la consulta falla (el reintento no se bloquea por eso).
  */
-export async function tomarSiYaExpedido(viaje: Viaje): Promise<{ status: number; cuerpo: unknown } | null> {
-  if (config.rndc.simular || viaje.numeroManifiestoRndc || !viaje.consecutivoManifiesto) return null;
+export async function tomarSiYaExpedido(
+  viaje: Viaje,
+  /** Numero a buscar: el que se escribio en el reintento, o el del viaje. */
+  numeroPedido?: string | null
+): Promise<{ status: number; cuerpo: unknown } | null> {
+  const numero = (numeroPedido || viaje.consecutivoManifiesto || "").trim().toUpperCase();
+  if (config.rndc.simular || viaje.numeroManifiestoRndc || !numero) return null;
   const credenciales = {
     usuario: config.rndc.usuario,
     password: config.rndc.password,
@@ -895,9 +900,9 @@ export async function tomarSiYaExpedido(viaje: Viaje): Promise<{ status: number;
 
   let m;
   try {
-    m = await buscarManifiestoRadicado(cliente, credenciales, viaje.consecutivoManifiesto);
+    m = await buscarManifiestoRadicado(cliente, credenciales, numero);
   } catch (exc) {
-    console.warn(`No se pudo verificar en el RNDC el manifiesto ${viaje.consecutivoManifiesto}:`, (exc as Error).message);
+    console.warn(`No se pudo verificar en el RNDC el manifiesto ${numero}:`, (exc as Error).message);
     return null;
   }
   if (!m) return null;
@@ -906,7 +911,7 @@ export async function tomarSiYaExpedido(viaje: Viaje): Promise<{ status: number;
   if (m.placa && vehiculo && m.placa.toUpperCase() !== vehiculo.placa.toUpperCase()) {
     const actualizado = await viajes.update(viaje.id, {
       mensajeError:
-        `El manifiesto ${viaje.consecutivoManifiesto} YA EXISTE en el RNDC (radicado ${m.radicado}), pero ` +
+        `El manifiesto ${numero} YA EXISTE en el RNDC (radicado ${m.radicado}), pero ` +
         `con la placa ${m.placa} y no ${vehiculo.placa}: ese numero lo uso otro despacho. Cambia el ` +
         "numero de este viaje y reintenta.",
       codigoError: null,
@@ -931,6 +936,23 @@ export async function tomarSiYaExpedido(viaje: Viaje): Promise<{ status: number;
     } else {
       faltantes.push(f.consecutivoRemesa!);
     }
+  }
+
+  // Si se encontro con otro numero (el que se uso en el portal), el viaje pasa
+  // a llevar ese. El indice unico impide que quede repetido con otro viaje.
+  if (numero !== (viaje.consecutivoManifiesto ?? "").toUpperCase()) {
+    // Los numeros del propio viaje (sus remesas) no cuentan como "de otro".
+    const propios = new Set((await viajeRemesas.findByViaje(viaje.id)).map((r) => r.consecutivoRemesa));
+    const otro = (await viajes.consecutivosUsados()).has(numero) && !propios.has(numero);
+    if (otro) {
+      const actualizado = await viajes.update(viaje.id, {
+        mensajeError:
+          `El manifiesto ${numero} existe en el RNDC (radicado ${m.radicado}), pero en este sistema ese ` +
+          "numero ya lo tiene otro viaje. Revisa en Viajes cual es el correcto.",
+      });
+      return { status: 409, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viaje.id) } };
+    }
+    await viajes.update(viaje.id, { consecutivoManifiesto: numero });
   }
 
   const final = await viajes.update(viaje.id, {
@@ -1002,7 +1024,10 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
 
   // Primero: si el manifiesto ya se expidio por fuera del sistema, se toma ese
   // y no se reenvia nada (las correcciones del formulario ya no aplican).
-  const yaExpedido = await tomarSiYaExpedido(viaje);
+  const yaExpedido = await tomarSiYaExpedido(
+    viaje,
+    req.body?.consecutivoManifiesto ? String(req.body.consecutivoManifiesto) : null
+  );
   if (yaExpedido) return res.status(yaExpedido.status).json(yaExpedido.cuerpo);
 
   const b = req.body ?? {};
