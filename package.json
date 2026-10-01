@@ -14,7 +14,8 @@
     "habituales": "ts-node src/scripts/habituales.ts",
     "crear-usuario": "ts-node src/scripts/crear-usuario.ts",
     "probar-correo": "ts-node src/scripts/probar-correo.ts",
-    "respaldo": "ts-node src/scripts/respaldo.ts"
+    "respaldo": "ts-node src/scripts/respaldo.ts",
+    "borrar-viaje": "ts-node src/scripts/borrar-viaje.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

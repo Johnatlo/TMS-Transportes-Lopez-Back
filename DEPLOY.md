@@ -145,7 +145,30 @@ docker compose --env-file .env.production exec backend \
   node dist/scripts/probar-correo.js destino@correo.com
 ```
 
-## 7. Respaldos
+## 7. Borrar viajes de prueba
+
+Los viajes simulados (radicados `SIMULADO-...`) y los hechos contra el servidor
+de pruebas del Ministerio (radicados desde 900.000.000) no existen en
+producción: fallan al imprimir y su número queda como usado. Se borran con:
+
+```bash
+# Cuáles se pueden borrar
+docker compose --env-file .env.production exec backend node dist/scripts/borrar-viaje.js --listar
+# Ver qué borraría (no borra nada)
+docker compose --env-file .env.production exec backend node dist/scripts/borrar-viaje.js 00006735
+# Borrarlo
+docker compose --env-file .env.production exec backend node dist/scripts/borrar-viaje.js 00006735 --confirmar
+```
+
+El viaje se indica por número de manifiesto o por id (`#36`). El script **se
+niega a borrar un viaje con cualquier radicado de producción**: su número ya
+existe en el RNDC, y borrarlo haría que el próximo despacho lo repitiera. Un
+viaje real que sobra se anula desde Viajes. Si el viaje no tiene ningún
+radicado, pide además `--sin-radicado`.
+
+Antes de borrar, sacar un respaldo (sección 8).
+
+## 8. Respaldos
 
 `npm run respaldo` es para la instalación sin Docker. Con Docker, el volcado se
 saca del contenedor de MySQL:
@@ -164,7 +187,7 @@ en el mismo disco no sirve si el disco falla.
 Los datos viven en el volumen `mysql-data`. `docker compose down` lo conserva;
 **`docker compose down -v` lo borra**: no usar `-v`.
 
-## 8. Actualizar a una versión nueva
+## 9. Actualizar a una versión nueva
 
 ```bash
 cd frontend-react && git pull && npm ci && npm run build
@@ -176,7 +199,7 @@ Caddy toma el frontend nuevo de inmediato (lee la carpeta `dist`). Los
 navegadores cargan la versión nueva sin borrar la caché: `index.html` va sin
 caché y los archivos de `/assets` llevan un hash en el nombre.
 
-## 9. Lista para el día del lanzamiento
+## 10. Lista para el día del lanzamiento
 
 - [ ] Respaldo de la base actual y carga en el contenedor (sección 5).
 - [ ] `HTTP_BIND` con la IP de Tailscale; comprobar que desde fuera de Tailscale
