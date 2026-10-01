@@ -16,3 +16,7 @@ dist/
 conductores.csv
 terceros.csv
 personas_sin_licencia_revisar.csv
+
+# Respaldos de la base de datos: datos personales, nunca al repositorio.
+*.sql
+*.sql.gz
