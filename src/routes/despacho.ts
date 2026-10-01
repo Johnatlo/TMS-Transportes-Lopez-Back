@@ -67,6 +67,7 @@ import {
   UnidadMedidaProducto,
 } from "../rndc/builders";
 import { conCandado } from "../db";
+import { fechaHoraColombia } from "../fechas";
 import { buscarManifiestoRadicado, buscarRemesaRadicada } from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
 import { aCabeceraMunicipal } from "../rndc/sicetac";
@@ -341,8 +342,8 @@ despachoRouter.post("/", async (req, res) => {
     orden: i + 1,
     pesoReal: r.pesoReal ? Number(r.pesoReal) : null,
     cantidadReal: r.cantidadReal ? Number(r.cantidadReal) : null,
-    fechaHoraCargue: new Date(r.fechaHoraCargue),
-    fechaHoraDescargue: new Date(r.fechaHoraDescargue),
+    fechaHoraCargue: fechaHoraColombia(r.fechaHoraCargue),
+    fechaHoraDescargue: fechaHoraColombia(r.fechaHoraDescargue),
     ordenServicioGenerador: r.ordenServicioGenerador ?? null,
     valorFleteRemesa: r.valorFleteRemesa ? Number(r.valorFleteRemesa) : null,
   }));
@@ -1124,8 +1125,8 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
       orden: i + 1,
       pesoReal: r.pesoReal ? Number(r.pesoReal) : null,
       cantidadReal: r.cantidadReal ? Number(r.cantidadReal) : null,
-      fechaHoraCargue: new Date(r.fechaHoraCargue),
-      fechaHoraDescargue: new Date(r.fechaHoraDescargue),
+      fechaHoraCargue: fechaHoraColombia(r.fechaHoraCargue),
+      fechaHoraDescargue: fechaHoraColombia(r.fechaHoraDescargue),
       ordenServicioGenerador: r.ordenServicioGenerador ?? null,
       valorFleteRemesa: r.valorFleteRemesa ? Number(r.valorFleteRemesa) : null,
     });
@@ -1573,8 +1574,8 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
     consecutivoRemesa: remesa.consecutivoRemesa!,
     cantidadCargada: Number(remesa.pesoReal ?? 0),
     cantidadEntregada: Number(b.cantidadEntregada),
-    entradaCargue: new Date(b.entradaCargue),
-    entradaDescargue: new Date(b.entradaDescargue),
+    entradaCargue: fechaHoraColombia(b.entradaCargue),
+    entradaDescargue: fechaHoraColombia(b.entradaDescargue),
   };
   const problemas = validarCumplidoRemesa(datos);
   if (problemas.length > 0) return res.status(422).json({ error: problemas.join(" ") });

@@ -210,6 +210,21 @@ export function formatearFecha(fecha: Date): string {
   return `${p.dia}/${p.mes}/${p.anio}`;
 }
 
+/**
+ * DD/MM/AAAA de una fecha SIN hora (columna DATE, o "AAAA-MM-DD" del
+ * formulario). Llega como medianoche UTC; pasarla a hora de Colombia la
+ * corria al dia anterior (el 30 salia como 29). Se usa el dia tal cual.
+ */
+export function formatearFechaCalendario(fecha: Date): string {
+  const dos = (n: number) => String(n).padStart(2, "0");
+  return `${dos(fecha.getUTCDate())}/${dos(fecha.getUTCMonth() + 1)}/${fecha.getUTCFullYear()}`;
+}
+
+/** La misma fecha sin hora, a mediodia de Colombia: para contar dias sin correrse. */
+export function mediodiaColombia(fecha: Date): Date {
+  return new Date(Date.UTC(fecha.getUTCFullYear(), fecha.getUTCMonth(), fecha.getUTCDate(), 17));
+}
+
 /** HH:MM en formato militar (00:00 a 23:59) [REM pag. 13]. */
 export function formatearHora(fecha: Date): string {
   const p = partesBogota(fecha);
@@ -906,7 +921,7 @@ export function construirDatosManifiesto(
 
     CODMUNICIPIOPAGOSALDO: m.codMunicipioPagoSaldo ?? m.ruta.codigoDestinoRndc,
     FECHAPAGOSALDOMANIFIESTO: v.fechaPagoSaldo
-      ? formatearFecha(v.fechaPagoSaldo)
+      ? formatearFechaCalendario(new Date(v.fechaPagoSaldo))
       : formatearFecha(ultimoDescargueDe(v.remesas)),
     CODRESPONSABLEPAGOCARGUE: m.codResponsablePagoCargue,
     CODRESPONSABLEPAGODESCARGUE: m.codResponsablePagoDescargue,
@@ -1082,7 +1097,7 @@ export function validarReglasRndc(
   // --- Fecha de pago del saldo: maximo 5 dias habiles despues del ultimo
   //     descargue [MAN pag. 16, Decreto 1079/2015 art. 2.2.1.7.6.6]
   if (v.fechaPagoSaldo) {
-    const habiles = diasHabilesEntre(ultimoDescargueDe(v.remesas), v.fechaPagoSaldo);
+    const habiles = diasHabilesEntre(ultimoDescargueDe(v.remesas), mediodiaColombia(new Date(v.fechaPagoSaldo)));
     if (habiles > 30) {
       error(
         `La fecha de pago del saldo supera los 30 dias habiles despues del ultimo descargue ` +
