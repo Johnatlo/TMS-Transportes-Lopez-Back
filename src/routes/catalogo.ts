@@ -447,6 +447,12 @@ catalogoRouter.get("/vias/sicetac", async (req, res) => {
       destino,
     });
   } catch (exc) {
+    // Queda en el log del backend: sin esto no habia forma de saber por que
+    // Despachar mostraba "No se pudo consultar SICETAC".
+    console.warn(
+      `SICETAC: fallo la consulta de vias ${origen} -> ${destino} (${configuracion}):`,
+      (exc as Error).message
+    );
     // Sin conexion se cae a lo ultimo consultado: es preferible una tarifa de
     // hace unos dias a no poder despachar.
     const enCache = await vias.findByRuta(origen, destino);

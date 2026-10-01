@@ -780,10 +780,12 @@ export const vias = {
         ORDER BY esEstandar DESC, descripcion`,
       [origen, destino]
     );
-    return (rows as Via[]).map((v) => ({
+    return (rows as Array<Via & { pisoVerificado?: number }>).map((v) => ({
       ...v,
       esEstandar: !!v.esEstandar,
-      valorSicetac: v.valorSicetac === null ? null : Number(v.valorSicetac),
+      // Un piso guardado antes de corregir el filtro no es confiable: se trata
+      // como desconocido hasta que SICETAC lo vuelva a dar.
+      valorSicetac: v.valorSicetac === null || !v.pisoVerificado ? null : Number(v.valorSicetac),
     }));
   },
 
@@ -791,10 +793,12 @@ export const vias = {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM vias ORDER BY codMunicipioOrigen, codMunicipioDestino, descripcion"
     );
-    return (rows as Via[]).map((v) => ({
+    return (rows as Array<Via & { pisoVerificado?: number }>).map((v) => ({
       ...v,
       esEstandar: !!v.esEstandar,
-      valorSicetac: v.valorSicetac === null ? null : Number(v.valorSicetac),
+      // Un piso guardado antes de corregir el filtro no es confiable: se trata
+      // como desconocido hasta que SICETAC lo vuelva a dar.
+      valorSicetac: v.valorSicetac === null || !v.pisoVerificado ? null : Number(v.valorSicetac),
     }));
   },
 
@@ -805,11 +809,12 @@ export const vias = {
   async guardar(v: Omit<Via, "id" | "actualizadoEn">): Promise<void> {
     await pool.query(
       `INSERT INTO vias
-         (codVia, codMunicipioOrigen, codMunicipioDestino, descripcion, valorSicetac, esEstandar, actualizadoEn)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+         (codVia, codMunicipioOrigen, codMunicipioDestino, descripcion, valorSicetac, esEstandar, actualizadoEn, pisoVerificado)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
        ON DUPLICATE KEY UPDATE
          descripcion = VALUES(descripcion),
          valorSicetac = VALUES(valorSicetac),
+         pisoVerificado = 1,
          esEstandar = VALUES(esEstandar),
          actualizadoEn = VALUES(actualizadoEn)`,
       [

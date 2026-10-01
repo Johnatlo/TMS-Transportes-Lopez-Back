@@ -526,6 +526,11 @@ export async function initSchema(): Promise<void> {
     ["viajes", "radicadoCumplido", "VARCHAR(30)"],
     ["viajes", "fechaCumplido", "DATETIME"],
     ["viajes", "cumplidoPorId", "INT"],
+
+    // Pisos de SICETAC guardados con el filtro corregido (2026-10-01). Los
+    // anteriores se calcularon con la fila mas barata (contenedor vacio) y
+    // quedaban muy por debajo del piso real: con 0 no se usan.
+    ["vias", "pisoVerificado", "TINYINT(1) NOT NULL DEFAULT 0"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).

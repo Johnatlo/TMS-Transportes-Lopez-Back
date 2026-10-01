@@ -70,7 +70,7 @@ import { conCandado } from "../db";
 import { fechaHoraColombia } from "../fechas";
 import { buscarManifiestoRadicado, buscarRemesaRadicada } from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
-import { aCabeceraMunicipal } from "../rndc/sicetac";
+import { aCabeceraMunicipal, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
 import { estamparLogo, logoComoDataUri } from "../rndc/estampado";
 import { construirHtmlRemesa } from "../rndc/remesa-impresion";
@@ -116,35 +116,79 @@ function validarDocumentos(
 }
 
 /**
- * Verifica el flete contra el piso de SICETAC de la via elegida.
+ * Piso de SICETAC antes de enviar: el flete debe ser igual o mayor al costo
+ * eficiente de la via, o el RNDC rechaza el manifiesto (MAN045).
  *
- * Se hace tambien en el servidor y no solo en pantalla: el aviso del navegador
- * se puede ignorar, y un manifiesto por debajo del piso lo rechaza el RNDC.
+ * Se consulta SICETAC EN EL MOMENTO, con la misma configuracion, ruta, via y
+ * horas pactadas del viaje: es el valor que va a exigir el RNDC. Antes se usaba
+ * el ultimo valor guardado, que podia estar desactualizado o mal filtrado, y
+ * dejaba pasar fletes que el RNDC rechazaba DESPUES de crear la remesa.
  *
- * Usa el valor guardado al consultar SICETAC. Si no hay via elegida o no se
- * conoce su piso, no se afirma nada: es peor bloquear un despacho por un dato
- * que no tenemos que dejarlo pasar al RNDC, que si tiene la verdad.
+ * Si SICETAC no responde, se usa el valor guardado y se avisa que no se pudo
+ * verificar en vivo: es peor no poder despachar que despachar con la duda, y
+ * el RNDC tiene la ultima palabra.
  */
-async function validarPisoSicetac(
-  codVia: string | null,
-  origen: string | null,
-  destino: string | null,
-  valorFlete: number
-): Promise<string | null> {
-  if (!codVia || !origen || !destino) return null;
+async function validarPisoSicetac(datos: {
+  codVia: string | null;
+  origen: string | null;
+  destino: string | null;
+  configuracion: string | null;
+  horasPactadas: number;
+  valorFlete: number;
+}): Promise<{ error: string | null; aviso: string | null }> {
+  const { codVia, origen, destino, configuracion, horasPactadas, valorFlete } = datos;
+  if (!origen || !destino || !configuracion || config.rndc.simular) return { error: null, aviso: null };
 
-  const disponibles = await vias.findByRuta(origen, destino);
-  const via = disponibles.find((v) => v.codVia === codVia);
-  if (!via?.valorSicetac) return null;
+  const debajoDelPiso = (piso: number, via: string) =>
+    `El flete (${valorFlete}) esta por debajo del minimo de SICETAC (${piso}) para la via ${via}. ` +
+    "El RNDC no permite expedir manifiestos por debajo de los costos eficientes de operacion " +
+    `(MAN045). Sube el flete a ${piso} o mas, y el FOPAT al 0,1% del nuevo flete.`;
 
-  if (valorFlete < via.valorSicetac) {
-    return (
-      `El flete (${valorFlete}) esta por debajo del minimo de SICETAC para la via elegida ` +
-      `(${via.valorSicetac}). El RNDC no permite expedir manifiestos por debajo de los costos ` +
-      `eficientes de operacion.`
+  try {
+    const cliente = new RndcClient({
+      wsdlUrl: config.rndc.consultasWsdlUrl,
+      usuario: config.rndc.usuario,
+      password: config.rndc.password,
+      simular: false,
+      reintentos: config.rndc.reintentos,
+      soloConsultas: true,
+    });
+    const vivo = await pisoSicetacEnVivo(
+      cliente,
+      { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit },
+      {
+        configuracion,
+        origen,
+        destino,
+        codVia,
+        horasPactadas,
+        unidadTransporte: config.sicetac.unidadTransporte,
+        tipoCarga: config.sicetac.tipoCarga,
+      },
+      config.sicetac.mesesHaciaAtras
     );
+    if (!vivo) {
+      return {
+        error: null,
+        aviso:
+          `La via ${codVia ?? "estandar"} no aparece en SICETAC para ${origen} -> ${destino} con la ` +
+          `configuracion ${configuracion}: no se pudo verificar el piso antes de enviar.`,
+      };
+    }
+    const via = `${vivo.codVia ?? ""}${vivo.descripcion ? ` (${vivo.descripcion.slice(0, 60)})` : ""}`;
+    return { error: valorFlete < vivo.piso ? debajoDelPiso(vivo.piso, via) : null, aviso: null };
+  } catch (exc) {
+    console.warn("SICETAC: no se pudo consultar el piso en vivo:", (exc as Error).message);
+    const guardada = codVia ? (await vias.findByRuta(origen, destino)).find((v) => v.codVia === codVia) : null;
+    const aviso =
+      `No se pudo consultar SICETAC en vivo (${(exc as Error).message.slice(0, 120)}). ` +
+      "Se uso el ultimo piso guardado, que puede estar desactualizado: si el RNDC responde MAN045, " +
+      "sube el flete.";
+    if (guardada?.valorSicetac && valorFlete < guardada.valorSicetac) {
+      return { error: debajoDelPiso(Math.ceil(guardada.valorSicetac), codVia!), aviso };
+    }
+    return { error: null, aviso };
   }
-  return null;
 }
 
 /** Quita los campos vacios: el XML tampoco los lleva. */
@@ -646,19 +690,25 @@ async function procesarViaje(
   // El piso se busca con la ruta de la plantilla (sin ajuste por vacios) y en
   // cabecera municipal: es exactamente como quedaron guardadas las vias al
   // consultarlas a SICETAC. Con otra clave no se encontraria la via elegida.
-  const avisoPiso = await validarPisoSicetac(
-    viaje.codVia,
-    aCabeceraMunicipal(rutaBase.origen),
-    aCabeceraMunicipal(rutaBase.destino),
-    datosViaje.valorFleteReal ?? 0
-  );
+  const piso = await validarPisoSicetac({
+    codVia: viaje.codVia,
+    origen: aCabeceraMunicipal(rutaBase.origen),
+    destino: aCabeceraMunicipal(rutaBase.destino),
+    configuracion: vehiculo.configuracion,
+    // Las mismas horas con que Despachar consulta las vias: las de la plantilla principal.
+    horasPactadas: horasPactadasTotales([
+      { horas: plantillaPrincipal.horasPactoCargue, minutos: plantillaPrincipal.minutosPactoCargue },
+      { horas: plantillaPrincipal.horasPactoDescargue, minutos: plantillaPrincipal.minutosPactoDescargue },
+    ]),
+    valorFlete: datosViaje.valorFleteReal ?? 0,
+  });
 
   const errores = [
     ...mensajesDe(reglas, "ERROR"),
     ...erroresDocumentos,
-    ...(avisoPiso ? [avisoPiso] : []),
+    ...(piso.error ? [piso.error] : []),
   ];
-  const avisos = [...mensajesDe(reglas, "AVISO"), ...avisosMonitoreo];
+  const avisos = [...mensajesDe(reglas, "AVISO"), ...avisosMonitoreo, ...(piso.aviso ? [piso.aviso] : [])];
 
   // Se reemplazan en cada intento: los de un intento anterior pueden ya no aplicar.
   await viajes.update(viajeId, { avisos: avisos.length > 0 ? avisos.join(" | ") : null });

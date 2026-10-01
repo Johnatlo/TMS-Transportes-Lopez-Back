@@ -203,7 +203,8 @@ export function calcularPisoSicetac(
 ): number | null {
   if (fila.valorMoviliza === null) return null;
   const porHoras = (fila.valorHora ?? 0) * horasPactadas;
-  return Math.round(fila.valorMoviliza + porHoras);
+  // Hacia arriba: un peso de menos basta para que el RNDC rechace (MAN045).
+  return Math.ceil(fila.valorMoviliza + porHoras);
 }
 
 /** Horas pactadas totales, con los minutos convertidos a fraccion de hora. */
@@ -264,43 +265,123 @@ export async function consultarSicetac(
   return { filas: [], periodoUsado: null, periodosVacios };
 }
 
+/** Sin tildes, en minuscula y sin espacios sobrantes: "Granel Sólido" = "granel solido". */
+function normalizar(texto: string | null | undefined): string {
+  return (texto ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+/** Filas de vehiculo vacio: no son el piso de un viaje cargado. */
+function esFilaVacia(f: FilaSicetac): boolean {
+  const tipo = normalizar(f.nombreTipoCarga);
+  return tipo.includes("vacio") || tipo.includes("sin carga");
+}
+
 /**
- * Deja una sola fila por ruta, quedandose con la que corresponde a la
- * operacion de la empresa (unidad de transporte y tipo de carga).
+ * Deja una sola fila por ruta: la de la operacion de la empresa (unidad de
+ * transporte y tipo de carga).
  *
  * SICETAC devuelve una fila por cada combinacion de ruta, tipo de carga y
- * unidad de transporte, y cada una tiene un piso distinto. Sin filtrar, el
- * desplegable mostraria la misma via repetida con valores que no aplican.
+ * unidad de transporte, y cada una tiene un piso distinto.
+ *
+ * Se compara sin tildes: el RNDC responde "Granel Sólido" y la configuracion
+ * dice "Granel Solido". Antes la comparacion era exacta, nunca coincidia, y se
+ * caia a TODAS las filas quedandose con la mas barata: "Contenedor vacio",
+ * cuyo piso es mucho menor. El sistema mostraba ese piso, el flete lo pasaba
+ * y el RNDC rechazaba el manifiesto (MAN045).
+ *
+ * Si la combinacion exacta no existe, se descartan las filas de vehiculo vacio
+ * y se toma el piso MAS ALTO de las que quedan (primero las del mismo tipo de
+ * carga): con un piso de mas el flete pasa; con uno de menos, el RNDC rechaza.
  */
 export function filasDeLaOperacion(
   filas: FilaSicetac[],
   unidadTransporte: string,
   tipoCarga: string
 ): FilaSicetac[] {
-  const coincide = (valor: string | null, esperado: string) =>
-    (valor ?? "").toLowerCase().trim() === esperado.toLowerCase().trim();
-
-  const propias = filas.filter(
-    (f) =>
-      coincide(f.nombreUnidadTransporte, unidadTransporte) &&
-      coincide(f.nombreTipoCarga, tipoCarga)
+  const cargadas = filas.filter((f) => !esFilaVacia(f));
+  const mismoTipo = cargadas.filter((f) => normalizar(f.nombreTipoCarga) === normalizar(tipoCarga));
+  const exactas = mismoTipo.filter(
+    (f) => normalizar(f.nombreUnidadTransporte) === normalizar(unidadTransporte)
   );
+  const base = exactas.length > 0 ? exactas : mismoTipo.length > 0 ? mismoTipo : cargadas;
 
-  // Si la combinacion exacta no existe para esa ruta, es preferible mostrar
-  // todo a mostrar nada: el despachador decide con la descripcion a la vista.
-  const base = propias.length > 0 ? propias : filas;
-
-  // Una sola entrada por ruta: si se repite, se conserva la mas barata, que es
-  // el piso real que el RNDC va a exigir.
   const porRuta = new Map<string, FilaSicetac>();
   for (const f of base) {
     const clave = f.rutasId ?? f.via ?? "";
     const previa = porRuta.get(clave);
-    if (!previa || (f.valorMoviliza ?? Infinity) < (previa.valorMoviliza ?? Infinity)) {
+    if (!previa || (f.valorMoviliza ?? 0) > (previa.valorMoviliza ?? 0)) {
       porRuta.set(clave, f);
     }
   }
   return [...porRuta.values()].sort(
     (a, b) => Number(b.esEstandar) - Number(a.esEstandar)
   );
+}
+
+export interface PisoEnVivo {
+  codVia: string | null;
+  descripcion: string | null;
+  piso: number;
+  periodo: string | null;
+  unidadTransporte: string | null;
+  tipoCarga: string | null;
+}
+
+/**
+ * Piso de SICETAC de la via del viaje, consultado en el momento.
+ *
+ * Es lo que el RNDC va a exigir, asi que se usa justo antes de enviar. Si la
+ * via va vacia, el RNDC asigna la estandar: se toma esa. La consulta a veces
+ * responde RNDC13 y al repetirla funciona (visto el 2026-10-01 con los mismos
+ * datos, sobre todo con consultas muy seguidas), por eso se intenta otra vez
+ * tras una pausa antes de rendirse.
+ *
+ * Devuelve null si la via no aparece entre las de la ruta. Lanza si SICETAC
+ * no responde.
+ */
+export async function pisoSicetacEnVivo(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  datos: {
+    configuracion: string;
+    origen: string;
+    destino: string;
+    codVia: string | null;
+    horasPactadas: number;
+    unidadTransporte: string;
+    tipoCarga: string;
+  },
+  mesesHaciaAtras = 3
+): Promise<PisoEnVivo | null> {
+  const filtros: FiltrosSicetac = {
+    periodo: periodoDe(new Date()),
+    configuracion: datos.configuracion,
+    origen: datos.origen,
+    destino: datos.destino,
+    condicionCarga: CONDICION_CARGA.CARGADO,
+  };
+  let resultado: ResultadoConsultaSicetac;
+  try {
+    resultado = await consultarSicetac(cliente, credenciales, filtros, mesesHaciaAtras);
+  } catch {
+    // El RNDC13 intermitente aparece sobre todo con consultas muy seguidas:
+    // se espera un momento antes de repetir.
+    await new Promise((listo) => setTimeout(listo, 3000));
+    resultado = await consultarSicetac(cliente, credenciales, filtros, mesesHaciaAtras);
+  }
+  const propias = filasDeLaOperacion(resultado.filas, datos.unidadTransporte, datos.tipoCarga);
+  const fila = datos.codVia
+    ? propias.find((f) => f.rutasId === datos.codVia)
+    : propias.find((f) => f.esEstandar) ?? propias[0];
+  if (!fila) return null;
+  const piso = calcularPisoSicetac(fila, datos.horasPactadas);
+  if (piso === null) return null;
+  return {
+    codVia: fila.rutasId,
+    descripcion: fila.via,
+    piso,
+    periodo: resultado.periodoUsado,
+    unidadTransporte: fila.nombreUnidadTransporte,
+    tipoCarga: fila.nombreTipoCarga,
+  };
 }
