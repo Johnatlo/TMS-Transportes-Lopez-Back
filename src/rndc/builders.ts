@@ -1142,7 +1142,8 @@ export function validarReglasRndc(
 
   // --- Valores
   const valorAPagar = v.valorFleteReal ?? 0;
-  if (valorAPagar <= 0) {
+  // 0 es valido: flota propia va con valor a pagar 0 (Manual 5.2.4).
+  if (v.valorFleteReal === null || v.valorFleteReal === undefined) {
     error(
       "Falta el valor del flete. Se digita en cada despacho, porque se pacta con el cliente " +
         "y el minimo de SICETAC cambia con frecuencia."

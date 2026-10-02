@@ -137,7 +137,10 @@ async function validarPisoSicetac(datos: {
   valorFlete: number;
 }): Promise<{ error: string | null; aviso: string | null }> {
   const { codVia, origen, destino, configuracion, horasPactadas, valorFlete } = datos;
-  if (!origen || !destino || !configuracion || config.rndc.simular) return { error: null, aviso: null };
+  // Valor 0 = flota propia: el piso de SICETAC no aplica [Guia Cumplido 3.4].
+  if (!origen || !destino || !configuracion || config.rndc.simular || valorFlete === 0) {
+    return { error: null, aviso: null };
+  }
 
   const debajoDelPiso = (piso: number, via: string) =>
     `El flete (${valorFlete}) esta por debajo del minimo de SICETAC (${piso}) para la via ${via}. ` +
@@ -435,7 +438,11 @@ despachoRouter.post("/", async (req, res) => {
       ),
       pesoReal: null,
       cantidadReal: null,
-      valorFleteReal: b.valorFleteReal ? Number(b.valorFleteReal) : null,
+      // 0 es un valor real (flota propia); solo vacio es "sin flete".
+      valorFleteReal:
+        b.valorFleteReal === undefined || b.valorFleteReal === null || b.valorFleteReal === ""
+          ? null
+          : Number(b.valorFleteReal),
       valorAnticipoManifiesto: b.valorAnticipoManifiesto ? Number(b.valorAnticipoManifiesto) : 0,
       // El despachador ve el FOPAT en pantalla y lo puede ajustar. Si no llega,
       // se calcula al armar el manifiesto.
