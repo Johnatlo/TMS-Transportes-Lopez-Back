@@ -1633,6 +1633,10 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
     cantidadEntregada: Number(b.cantidadEntregada),
     entradaCargue: fechaHoraColombia(b.entradaCargue),
     entradaDescargue: fechaHoraColombia(b.entradaDescargue),
+    llegadaCargue: b.llegadaCargue ? fechaHoraColombia(b.llegadaCargue) : null,
+    salidaCargue: b.salidaCargue ? fechaHoraColombia(b.salidaCargue) : null,
+    llegadaDescargue: b.llegadaDescargue ? fechaHoraColombia(b.llegadaDescargue) : null,
+    salidaDescargue: b.salidaDescargue ? fechaHoraColombia(b.salidaDescargue) : null,
   };
   const problemas = validarCumplidoRemesa(datos);
   if (problemas.length > 0) return res.status(422).json({ error: problemas.join(" ") });
@@ -1669,6 +1673,10 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
       cantidadEntregada: datos.cantidadEntregada,
       entradaCargue: datos.entradaCargue,
       entradaDescargue: datos.entradaDescargue,
+      llegadaCargue: datos.llegadaCargue,
+      salidaCargue: datos.salidaCargue,
+      llegadaDescargue: datos.llegadaDescargue,
+      salidaDescargue: datos.salidaDescargue,
       fechaCumplido: new Date(),
       cumplidoPorId: req.usuario?.id ?? null,
       mensajeError: resultado.ok ? null : `Ya estaba cumplida en el RNDC (radicado ${radicado}).`,

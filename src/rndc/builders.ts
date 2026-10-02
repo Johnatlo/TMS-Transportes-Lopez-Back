@@ -1526,6 +1526,15 @@ export interface DatosCumplidoRemesa {
   cantidadEntregada: number;
   entradaCargue: Date;
   entradaDescargue: Date;
+  /**
+   * Llegada y salida del cargue y del descargue. Si el GPS genero el cumplido
+   * inicial, el RNDC las toma de ahi; si no, son obligatorias (CRE090, CRE150,
+   * CRE160...). Se envian siempre que se tengan.
+   */
+  llegadaCargue?: Date | null;
+  salidaCargue?: Date | null;
+  llegadaDescargue?: Date | null;
+  salidaDescargue?: Date | null;
 }
 
 /** Proceso 5 [Guia Cumplido de Remesa y Manifiesto V1, pag. 18]. */
@@ -1540,6 +1549,24 @@ export function construirDatosCumplidoRemesa(d: DatosCumplidoRemesa): Record<str
     HORAENTRADACARGUEREMESA: formatearHora(d.entradaCargue),
     FECHAENTRADADESCARGUE: formatearFecha(d.entradaDescargue),
     HORAENTRADADESCARGUECUMPLIDO: formatearHora(d.entradaDescargue),
+    // Etiquetas verificadas en el RNDC de pruebas (2026-10-02, remesa 00010016,
+    // radicado 900000201): sin ellas responde CRE080/090/130/150/160.
+    ...(d.llegadaCargue && {
+      FECHALLEGADACARGUE: formatearFecha(d.llegadaCargue),
+      HORALLEGADACARGUEREMESA: formatearHora(d.llegadaCargue),
+    }),
+    ...(d.salidaCargue && {
+      FECHASALIDACARGUE: formatearFecha(d.salidaCargue),
+      HORASALIDACARGUEREMESA: formatearHora(d.salidaCargue),
+    }),
+    ...(d.llegadaDescargue && {
+      FECHALLEGADADESCARGUE: formatearFecha(d.llegadaDescargue),
+      HORALLEGADADESCARGUECUMPLIDO: formatearHora(d.llegadaDescargue),
+    }),
+    ...(d.salidaDescargue && {
+      FECHASALIDADESCARGUE: formatearFecha(d.salidaDescargue),
+      HORASALIDADESCARGUECUMPLIDO: formatearHora(d.salidaDescargue),
+    }),
   };
 }
 

@@ -520,6 +520,11 @@ export async function initSchema(): Promise<void> {
     ["viaje_remesas", "cantidadEntregada", "DOUBLE"],
     ["viaje_remesas", "entradaCargue", "DATETIME"],
     ["viaje_remesas", "entradaDescargue", "DATETIME"],
+    // Llegada y salida del cumplido, cuando no hay cumplido inicial del GPS.
+    ["viaje_remesas", "llegadaCargue", "DATETIME"],
+    ["viaje_remesas", "salidaCargue", "DATETIME"],
+    ["viaje_remesas", "llegadaDescargue", "DATETIME"],
+    ["viaje_remesas", "salidaDescargue", "DATETIME"],
     ["viaje_remesas", "radicadoCumplido", "VARCHAR(30)"],
     ["viaje_remesas", "fechaCumplido", "DATETIME"],
     ["viaje_remesas", "cumplidoPorId", "INT"],
