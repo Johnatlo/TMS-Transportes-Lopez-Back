@@ -1924,7 +1924,8 @@ despachoRouter.get("/siguiente-consecutivo", async (_req, res) => {
 
 despachoRouter.get("/historial", async (_req, res) => {
   const ahora = new Date();
-  const lista = await viajes.findMany(100);
+  // Todos: la tabla de Viajes pagina de a 50 en el navegador.
+  const lista = await viajes.findMany(5000);
   // Plazo del cumplido: solo para manifiestos vigentes sin cumplir cuya
   // entrega (cita de descargue) ya paso; antes de eso el plazo no corre.
   res.json(
