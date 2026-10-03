@@ -160,6 +160,16 @@ export async function descargarPdfProceso(
     );
   }
 
+  // Falla interna del servicio del Ministerio (visto el 2026-10-02 con todos
+  // los radicados, incluso los que antes imprimian): no es el radicado.
+  if (/access violation|svr009svr/i.test(String(json.ErrorText ?? ""))) {
+    throw new RndcPdfError(
+      "El servicio de PDF del RNDC esta fallando por dentro (error del Ministerio, no del " +
+        `manifiesto). El manifiesto ${radicado} sigue expedido y vigente. Intenta de nuevo mas ` +
+        "tarde, o descarga el PDF desde el portal del RNDC."
+    );
+  }
+
   if (json.ErrorCode || json.ErrorText) {
     // La guia advierte que este mismo mensaje sale cuando el radicado no existe
     // y cuando pertenece a otra empresa de transporte, asi que conviene
