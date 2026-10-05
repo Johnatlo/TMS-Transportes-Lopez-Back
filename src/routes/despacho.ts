@@ -673,7 +673,10 @@ async function procesarViaje(
   // 1. Validaciones locales. Cada rechazo del RNDC cuesta tiempo en el despacho
   //    nocturno, y algunos consumen cupos de la empresa.
   const reglas = validarReglasRndc(datosViaje, consecutivoManifiesto);
-  const erroresDocumentos = validarDocumentos(
+  // SOAT, tecnomecanica y licencia que vencen antes del ultimo descargue: solo
+  // AVISO. La renovacion tarda dias en reflejarse y el manifiesto se expide
+  // cuando el carro sale; si el RNDC no lo acepta, lo dira el.
+  const avisosDocumentos = validarDocumentos(
     vehiculo,
     conductor,
     conductor2,
@@ -712,10 +715,14 @@ async function procesarViaje(
 
   const errores = [
     ...mensajesDe(reglas, "ERROR"),
-    ...erroresDocumentos,
     ...(piso.error ? [piso.error] : []),
   ];
-  const avisos = [...mensajesDe(reglas, "AVISO"), ...avisosMonitoreo, ...(piso.aviso ? [piso.aviso] : [])];
+  const avisos = [
+    ...mensajesDe(reglas, "AVISO"),
+    ...avisosDocumentos,
+    ...avisosMonitoreo,
+    ...(piso.aviso ? [piso.aviso] : []),
+  ];
 
   // Se reemplazan en cada intento: los de un intento anterior pueden ya no aplicar.
   await viajes.update(viajeId, { avisos: avisos.length > 0 ? avisos.join(" | ") : null });
