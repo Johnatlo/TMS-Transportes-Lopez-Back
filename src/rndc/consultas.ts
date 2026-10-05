@@ -401,3 +401,55 @@ export async function leerTiemposCumplidoRemesa(
   }
   return t;
 }
+
+/**
+ * Tiempos del cumplido inicial de la remesa (proceso 45), el que genera el
+ * GPS. El portal los muestra bloqueados al cumplir y no hay que reenviarlos:
+ * mandar otros distintos hace rechazar el cumplido (CRE111). Puede traer solo
+ * el cargue (el GPS no siempre reporta el descargue).
+ *
+ * Nombres verificados en produccion (2026-10-06, solo lectura, remesa
+ * 00006733, cumplido inicial 7869182): FECHALLEGADACARGUE + HORALLEGADACARGUE,
+ * FECHASALIDACARGUE + HORASALIDACARGUE, y los mismos de DESCARGUE (sin el
+ * sufijo REMESA/CUMPLIDO del proceso 5). Devuelve null si no hay cumplido inicial.
+ */
+export interface TiemposGps {
+  radicado: string | null;
+  llegadaCargue: Date | null;
+  salidaCargue: Date | null;
+  llegadaDescargue: Date | null;
+  salidaDescargue: Date | null;
+}
+
+export async function leerCumplidoInicial(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  consecutivo: string
+): Promise<TiemposGps | null> {
+  const campos = [
+    ["llegadaCargue", "FECHALLEGADACARGUE", "HORALLEGADACARGUE"],
+    ["salidaCargue", "FECHASALIDACARGUE", "HORASALIDACARGUE"],
+    ["llegadaDescargue", "FECHALLEGADADESCARGUE", "HORALLEGADADESCARGUE"],
+    ["salidaDescargue", "FECHASALIDADESCARGUE", "HORASALIDADESCARGUE"],
+  ] as const;
+  const xml = await consultarDocumentoPropio(
+    cliente,
+    credenciales,
+    "45",
+    ["INGRESOID", ...campos.flatMap(([, f, h]) => [f, h])],
+    "CONSECUTIVOREMESA",
+    consecutivo
+  );
+  if (!xml) return null;
+  // Puede haber mas de un registro (por ejemplo cargue y descargue por
+  // separado): se toma el primer valor no vacio de cada tiempo.
+  const documentos = xml.match(/<documento>[\s\S]*?<\/documento>/gi) ?? [];
+  if (documentos.length === 0) return null;
+  const t: TiemposGps = { radicado: leerEtiqueta(documentos[0] ?? "", "ingresoid"), llegadaCargue: null, salidaCargue: null, llegadaDescargue: null, salidaDescargue: null };
+  for (const doc of documentos) {
+    for (const [campo, f, h] of campos) {
+      if (!t[campo]) t[campo] = fechaHoraRndc(leerEtiqueta(doc, f.toLowerCase()), leerEtiqueta(doc, h.toLowerCase()));
+    }
+  }
+  return t;
+}

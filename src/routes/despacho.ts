@@ -77,7 +77,7 @@ import {
 } from "../rndc/builders";
 import { conCandado } from "../db";
 import { fechaHoraColombia } from "../fechas";
-import { buscarManifiestoRadicado, buscarRemesaRadicada, leerTiemposCumplidoRemesa } from "../rndc/consultas";
+import { buscarManifiestoRadicado, buscarRemesaRadicada, leerTiemposCumplidoRemesa, leerCumplidoInicial } from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
 import { aCabeceraMunicipal, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
@@ -1668,23 +1668,30 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
         construirXmlMensaje(credenciales, PROCESO_ID_CUMPLIR_REMESA, construirDatosCumplidoRemesa(d)),
         PROCESO_ID_CUMPLIR_REMESA
       );
-    // Como el portal: si el GPS genero el cumplido inicial, el RNDC ya tiene la
-    // llegada y la salida, y mandar otras distintas lo hace rechazar (CRE111).
-    // Primero se envia solo con las entradas; si el RNDC pide la llegada o la
-    // salida (no hubo GPS: CRE080/090/130/150/160), se reenvia con ellas. Un
-    // envio rechazado no registra nada.
-    const sinLlegadaSalida = {
-      ...datos,
-      llegadaCargue: null,
-      salidaCargue: null,
-      llegadaDescargue: null,
-      salidaDescargue: null,
-    };
-    let resultado = await enviar(sinLlegadaSalida);
-    let enviados: typeof datos = sinLlegadaSalida;
-    if (!resultado.ok && /CRE(080|090|130|150|160)/.test(resultado.errorCrudo ?? "")) {
-      resultado = await enviar(datos);
-      enviados = datos;
+    // Como el portal: lo que el GPS ya reporto (cumplido inicial, proceso 45)
+    // no se envia; mandar otro valor distinto hace rechazar el cumplido
+    // (CRE111). Solo van los tiempos que el GPS no tiene.
+    const gps = await gpsDeRemesa(remesa.consecutivoRemesa!);
+    let enviados: typeof datos = datos;
+    let resultado;
+    if (gps !== undefined) {
+      enviados = {
+        ...datos,
+        llegadaCargue: gps?.llegadaCargue ? null : datos.llegadaCargue,
+        salidaCargue: gps?.salidaCargue ? null : datos.salidaCargue,
+        llegadaDescargue: gps?.llegadaDescargue ? null : datos.llegadaDescargue,
+        salidaDescargue: gps?.salidaDescargue ? null : datos.salidaDescargue,
+      };
+      resultado = await enviar(enviados);
+    } else {
+      // No se pudo consultar el GPS: primero solo con las entradas y, si el
+      // RNDC pide llegada o salida, con todo. Un rechazo no registra nada.
+      enviados = { ...datos, llegadaCargue: null, salidaCargue: null, llegadaDescargue: null, salidaDescargue: null };
+      resultado = await enviar(enviados);
+      if (!resultado.ok && /CRE(080|090|130|150|160)/.test(resultado.errorCrudo ?? "")) {
+        enviados = datos;
+        resultado = await enviar(datos);
+      }
     }
     // Si ya estaba cumplida en el RNDC (por ejemplo desde el portal), se toma
     // ese radicado: el cumplido existe y no hay que repetirlo.
@@ -1708,11 +1715,11 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
       cantidadEntregada: datos.cantidadEntregada,
       entradaCargue: datos.entradaCargue,
       entradaDescargue: datos.entradaDescargue,
-      // Lo que de verdad se envio: null si llegada y salida las puso el GPS.
-      llegadaCargue: enviados.llegadaCargue,
-      salidaCargue: enviados.salidaCargue,
-      llegadaDescargue: enviados.llegadaDescargue,
-      salidaDescargue: enviados.salidaDescargue,
+      // Los del GPS cuando los hay (asi quedaron en el RNDC); si no, lo enviado.
+      llegadaCargue: gps?.llegadaCargue ?? enviados.llegadaCargue,
+      salidaCargue: gps?.salidaCargue ?? enviados.salidaCargue,
+      llegadaDescargue: gps?.llegadaDescargue ?? enviados.llegadaDescargue,
+      salidaDescargue: gps?.salidaDescargue ?? enviados.salidaDescargue,
       fechaCumplido: new Date(),
       cumplidoPorId: req.usuario?.id ?? null,
       mensajeError: resultado.ok ? null : `Ya estaba cumplida en el RNDC (radicado ${radicado}).`,
@@ -1731,6 +1738,39 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
  * los del manifiesto expedido. Con adicionales, descuentos o suspension, se
  * hace en el portal.
  */
+/**
+ * Cumplido inicial (GPS) de una remesa. undefined = no se pudo consultar;
+ * null = no hay cumplido inicial (sin GPS).
+ */
+async function gpsDeRemesa(consecutivo: string) {
+  if (config.rndc.simular) return null;
+  try {
+    return await leerCumplidoInicial(
+      new RndcClient({
+        wsdlUrl: config.rndc.wsdlUrl,
+        usuario: config.rndc.usuario,
+        password: config.rndc.password,
+        simular: false,
+        reintentos: config.rndc.reintentos,
+        soloConsultas: true,
+      }),
+      { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit },
+      consecutivo
+    );
+  } catch (exc) {
+    console.warn(`No se pudo leer el cumplido inicial (GPS) de ${consecutivo}:`, (exc as Error).message);
+    return undefined;
+  }
+}
+
+/** Tiempos que ya reporto el GPS, para mostrarlos bloqueados al cumplir. */
+despachoRouter.get("/remesas/:remesaId/gps", async (req, res) => {
+  const r = await viajeRemesas.findById(Number(req.params.remesaId));
+  if (!r) return res.status(404).json({ error: "Remesa no encontrada" });
+  const gps = await gpsDeRemesa(r.consecutivoRemesa!);
+  res.json(gps === undefined ? { consultado: false } : { consultado: true, ...(gps ?? { radicado: null }) });
+});
+
 /**
  * Lo que quedo registrado en el cumplido de una remesa: kilos entregados y
  * los seis tiempos, leidos del RNDC (la verdad, incluso si se cumplio en el
