@@ -1663,10 +1663,29 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
 
   try {
     const { credenciales, cliente } = clienteRegistro();
-    const resultado = await cliente.enviar(
-      construirXmlMensaje(credenciales, PROCESO_ID_CUMPLIR_REMESA, construirDatosCumplidoRemesa(datos)),
-      PROCESO_ID_CUMPLIR_REMESA
-    );
+    const enviar = (d: typeof datos) =>
+      cliente.enviar(
+        construirXmlMensaje(credenciales, PROCESO_ID_CUMPLIR_REMESA, construirDatosCumplidoRemesa(d)),
+        PROCESO_ID_CUMPLIR_REMESA
+      );
+    // Como el portal: si el GPS genero el cumplido inicial, el RNDC ya tiene la
+    // llegada y la salida, y mandar otras distintas lo hace rechazar (CRE111).
+    // Primero se envia solo con las entradas; si el RNDC pide la llegada o la
+    // salida (no hubo GPS: CRE080/090/130/150/160), se reenvia con ellas. Un
+    // envio rechazado no registra nada.
+    const sinLlegadaSalida = {
+      ...datos,
+      llegadaCargue: null,
+      salidaCargue: null,
+      llegadaDescargue: null,
+      salidaDescargue: null,
+    };
+    let resultado = await enviar(sinLlegadaSalida);
+    let enviados: typeof datos = sinLlegadaSalida;
+    if (!resultado.ok && /CRE(080|090|130|150|160)/.test(resultado.errorCrudo ?? "")) {
+      resultado = await enviar(datos);
+      enviados = datos;
+    }
     // Si ya estaba cumplida en el RNDC (por ejemplo desde el portal), se toma
     // ese radicado: el cumplido existe y no hay que repetirlo.
     const radicado = resultado.ok ? resultado.radicado : radicadoDeDuplicado(resultado.errorCrudo);
@@ -1689,10 +1708,11 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
       cantidadEntregada: datos.cantidadEntregada,
       entradaCargue: datos.entradaCargue,
       entradaDescargue: datos.entradaDescargue,
-      llegadaCargue: datos.llegadaCargue,
-      salidaCargue: datos.salidaCargue,
-      llegadaDescargue: datos.llegadaDescargue,
-      salidaDescargue: datos.salidaDescargue,
+      // Lo que de verdad se envio: null si llegada y salida las puso el GPS.
+      llegadaCargue: enviados.llegadaCargue,
+      salidaCargue: enviados.salidaCargue,
+      llegadaDescargue: enviados.llegadaDescargue,
+      salidaDescargue: enviados.salidaDescargue,
       fechaCumplido: new Date(),
       cumplidoPorId: req.usuario?.id ?? null,
       mensajeError: resultado.ok ? null : `Ya estaba cumplida en el RNDC (radicado ${radicado}).`,
@@ -1768,6 +1788,28 @@ despachoRouter.post("/remesas/:remesaId/anular-cumplido", async (req, res) => {
   const observaciones = String(req.body?.observaciones ?? "").trim() || "Anulacion de cumplido para corregir datos";
 
   const { credenciales, cliente } = clienteRegistro();
+  // Lo registrado en el RNDC (incluidos los tiempos del GPS), para que el
+  // formulario de correccion vuelva con esos mismos valores. Se lee antes de
+  // anular: despues el RNDC ya no lo devuelve.
+  let registrado: Awaited<ReturnType<typeof leerTiemposCumplidoRemesa>> = null;
+  if (!config.rndc.simular) {
+    try {
+      registrado = await leerTiemposCumplidoRemesa(
+        new RndcClient({
+          wsdlUrl: config.rndc.wsdlUrl,
+          usuario: config.rndc.usuario,
+          password: config.rndc.password,
+          simular: false,
+          reintentos: config.rndc.reintentos,
+          soloConsultas: true,
+        }),
+        credenciales,
+        remesa.consecutivoRemesa!
+      );
+    } catch {
+      registrado = null;
+    }
+  }
   const resultado = await cliente.enviar(
     construirXmlMensaje(
       credenciales,
@@ -1791,6 +1833,15 @@ despachoRouter.post("/remesas/:remesaId/anular-cumplido", async (req, res) => {
     radicadoCumplido: null,
     fechaCumplido: null,
     radicadoAnulacionCumplidoRemesa: resultado.radicado,
+    ...(registrado && {
+      cantidadEntregada: registrado.cantidadEntregada ?? remesa.cantidadEntregada,
+      llegadaCargue: registrado.llegadaCargue,
+      entradaCargue: registrado.entradaCargue,
+      salidaCargue: registrado.salidaCargue,
+      llegadaDescargue: registrado.llegadaDescargue,
+      entradaDescargue: registrado.entradaDescargue,
+      salidaDescargue: registrado.salidaDescargue,
+    }),
     mensajeError: `Cumplido anulado en el RNDC (radicado ${resultado.radicado}). Corrige y vuelve a cumplir.`,
   });
   res.json({ viaje: await viajes.findById(viaje.id), remesas: await viajeRemesas.findByViaje(viaje.id) });
