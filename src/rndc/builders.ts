@@ -1571,20 +1571,79 @@ export function construirDatosCumplidoRemesa(d: DatosCumplidoRemesa): Record<str
 }
 
 /**
- * Proceso 6 [Guia Cumplido, pag. 19]. Sin ajustes de valor, el valor a pagar
- * es el del manifiesto y el FOPAT es el mismo que se reporto al expedirlo
- * (el RNDC verifica que sea el 0.1% del valor a pagar). Si el vehiculo no
- * causa FOPAT, la etiqueta se omite igual que en la expedicion.
+ * Motivos y codigos del cumplido de manifiesto, tal como los lista el RNDC de
+ * pruebas al recibir un valor invalido (2026-10-05, manifiesto 00010016):
+ * CMA160 (descuento), CMA170 (adicional), CMA060 (suspension), CMA150
+ * (consecuencia). Los nombres de descuento y suspension vienen en el propio
+ * mensaje o en la Guia de Cumplido (3.2: Accidente, Varada, Siniestro).
  */
-export function construirDatosCumplidoManifiesto(
-  numManifiesto: string,
-  retencionFopat: number | null
-): Record<string, unknown> {
+export const MOTIVOS_DESCUENTO_MANIFIESTO = {
+  T: "Menor tiempo de cargue o descargue",
+  V: "Viaje incompleto por suspension",
+} as const;
+/** CMA170 lista [C], [R], [O]; la guia solo nombra "Variacion en ruta". */
+export const MOTIVOS_VALOR_ADICIONAL = ["C", "R", "O"] as const;
+
+export interface DatosCumplidoManifiesto {
+  numManifiesto: string;
+  /** Sin ella el RNDC responde CMA140. */
+  fechaEntregaDocumentos: Date;
+  retencionFuente: number;
+  /** null = el vehiculo no causa FOPAT: la etiqueta no se envia. */
+  retencionFopat: number | null;
+  valorAdicionalHorasCargue?: number;
+  valorAdicionalHorasDescargue?: number;
+  valorAdicionalFlete?: number;
+  motivoValorAdicional?: string | null;
+  valorDescuentoFlete?: number;
+  motivoDescuento?: string | null;
+  valorSobreanticipo?: number;
+  observaciones?: string | null;
+}
+
+/**
+ * Proceso 6. Etiquetas: lista de variables del wstest del RNDC (proceso 6) y
+ * ejemplo de la Guia de Cumplido, pag. 19. Verificado en pruebas (2026-10-05,
+ * radicado 900000917): con fecha de entrega, retencion en la fuente y FOPAT
+ * correctos el cumplido normal pasa. Los ceros no se envian.
+ */
+export function construirDatosCumplidoManifiesto(d: DatosCumplidoManifiesto): Record<string, unknown> {
+  const siHay = (v: number | undefined) => (v && v > 0 ? v : null);
   return {
-    NUMMANIFIESTOCARGA: numManifiesto,
+    NUMMANIFIESTOCARGA: d.numManifiesto,
     TIPOCUMPLIDOMANIFIESTO: TIPO_CUMPLIDO_NORMAL,
-    RETENCIONFOPAT: retencionFopat,
+    FECHAENTREGADOCUMENTOS: formatearFecha(d.fechaEntregaDocumentos),
+    VALORADICIONALHORASCARGUE: siHay(d.valorAdicionalHorasCargue),
+    VALORADICIONALHORASDESCARGUE: siHay(d.valorAdicionalHorasDescargue),
+    VALORADICIONALFLETE: siHay(d.valorAdicionalFlete),
+    MOTIVOVALORADICIONAL: siHay(d.valorAdicionalFlete) ? d.motivoValorAdicional : null,
+    VALORDESCUENTOFLETE: siHay(d.valorDescuentoFlete),
+    MOTIVOVALORDESCUENTOMANIFIESTO: siHay(d.valorDescuentoFlete) ? d.motivoDescuento : null,
+    VALORSOBREANTICIPO: siHay(d.valorSobreanticipo),
+    RETENCIONFUENTEMANIFIESTO: d.retencionFuente,
+    RETENCIONFOPAT: d.retencionFopat,
+    OBSERVACIONES: d.observaciones?.trim() ? d.observaciones.trim().slice(0, 200) : null,
   };
+}
+
+/**
+ * Valor a pagar final del cumplido: el del manifiesto mas los adicionales y
+ * menos el descuento [Guia Cumplido 3.3 y 3.4].
+ */
+export function valorFinalCumplido(d: {
+  valorFlete: number;
+  valorAdicionalHorasCargue?: number;
+  valorAdicionalHorasDescargue?: number;
+  valorAdicionalFlete?: number;
+  valorDescuentoFlete?: number;
+}): number {
+  return (
+    d.valorFlete +
+    (d.valorAdicionalHorasCargue ?? 0) +
+    (d.valorAdicionalHorasDescargue ?? 0) +
+    (d.valorAdicionalFlete ?? 0) -
+    (d.valorDescuentoFlete ?? 0)
+  );
 }
 
 /**

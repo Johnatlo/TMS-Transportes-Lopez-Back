@@ -54,6 +54,13 @@ import {
   PROCESO_ID_CUMPLIR_MANIFIESTO,
   construirDatosCumplidoRemesa,
   construirDatosCumplidoManifiesto,
+  valorFinalCumplido,
+  TARIFA_RETENCION_FUENTE_DEFECTO,
+  baseRetenciones,
+  calcularRetencionFuente,
+  calcularFopat,
+  MOTIVOS_DESCUENTO_MANIFIESTO,
+  MOTIVOS_VALOR_ADICIONAL,
   validarCumplidoRemesa,
   plazoCumplido,
   radicadoDeDuplicado,
@@ -1702,6 +1709,45 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
  * los del manifiesto expedido. Con adicionales, descuentos o suspension, se
  * hace en el portal.
  */
+/**
+ * Lo que necesita la ventana de cumplido del manifiesto para calcular en
+ * pantalla: valor del manifiesto, tarifa de retencion, si causa FOPAT y los
+ * motivos que acepta el RNDC.
+ */
+async function baseCumplidoManifiesto(viaje: Viaje) {
+  const [vehiculo, plantilla] = await Promise.all([
+    vehiculos.findById(viaje.vehiculoId),
+    plantillas.findById(viaje.plantillaId),
+  ]);
+  return {
+    valorFlete: viaje.valorFleteReal ?? 0,
+    valorAnticipo: viaje.valorAnticipoManifiesto ?? 0,
+    vacio1Valor: viaje.vacio1Valor ?? 0,
+    vacio2Valor: viaje.vacio2Valor ?? 0,
+    tarifaRetencionFuente: plantilla?.tarifaRetencionFuente ?? TARIFA_RETENCION_FUENTE_DEFECTO,
+    titularEsRegimenSimple: !!plantilla?.titularEsRegimenSimple,
+    // Si al expedir se reporto FOPAT 0, el vehiculo no lo causa.
+    aplicaFopat: !!vehiculo?.aplicaFopat && viaje.retencionFopat !== 0,
+  };
+}
+
+despachoRouter.get("/:id/cumplir/previa", async (req, res) => {
+  const viaje = await viajes.findById(Number(req.params.id));
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  const base = await baseCumplidoManifiesto(viaje);
+  res.json({
+    ...base,
+    retencionFuente: calcularRetencionFuente(
+      baseRetenciones(base.valorFlete, base.vacio1Valor, base.vacio2Valor),
+      base.tarifaRetencionFuente,
+      base.titularEsRegimenSimple
+    ),
+    retencionFopat: calcularFopat(base.valorFlete, base.aplicaFopat),
+    motivosDescuento: MOTIVOS_DESCUENTO_MANIFIESTO,
+    motivosAdicional: MOTIVOS_VALOR_ADICIONAL,
+  });
+});
+
 despachoRouter.post("/:id/cumplir", async (req, res) => {
   const viajeId = Number(req.params.id);
   const viaje = await viajes.findById(viajeId);
@@ -1723,6 +1769,32 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
     });
   }
 
+  // Valores del cumplido. Retencion y FOPAT se calculan sobre el valor final
+  // (con adicionales y descuento); si se escribieron a mano, mandan esos.
+  const b = req.body ?? {};
+  const n = (v: unknown) => (v === undefined || v === null || v === "" ? 0 : Number(v));
+  const base = await baseCumplidoManifiesto(viaje);
+  const valores = {
+    valorAdicionalHorasCargue: n(b.valorAdicionalHorasCargue),
+    valorAdicionalHorasDescargue: n(b.valorAdicionalHorasDescargue),
+    valorAdicionalFlete: n(b.valorAdicionalFlete),
+    valorDescuentoFlete: n(b.valorDescuentoFlete),
+  };
+  const valorFinal = valorFinalCumplido({ valorFlete: base.valorFlete, ...valores });
+  const retencionFuente =
+    b.retencionFuente !== undefined && b.retencionFuente !== null && b.retencionFuente !== ""
+      ? Number(b.retencionFuente)
+      : calcularRetencionFuente(
+          baseRetenciones(valorFinal, base.vacio1Valor, base.vacio2Valor),
+          base.tarifaRetencionFuente,
+          base.titularEsRegimenSimple
+        );
+  const retencionFopat =
+    b.retencionFopat !== undefined && b.retencionFopat !== null && b.retencionFopat !== ""
+      ? Number(b.retencionFopat)
+      : calcularFopat(valorFinal, base.aplicaFopat);
+  const fechaEntrega = b.fechaEntregaDocumentos ? fechaHoraColombia(b.fechaEntregaDocumentos) : new Date();
+
   if (!(await viajes.tomarConEstado(viajeId, ["CONFIRMADO"], "CUMPLIENDO"))) {
     return res.status(409).json({ error: "El manifiesto ya se esta cumpliendo. Espera el resultado." });
   }
@@ -1733,7 +1805,17 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
       construirXmlMensaje(
         credenciales,
         PROCESO_ID_CUMPLIR_MANIFIESTO,
-        construirDatosCumplidoManifiesto(viaje.consecutivoManifiesto!, viaje.retencionFopat)
+        construirDatosCumplidoManifiesto({
+          numManifiesto: viaje.consecutivoManifiesto!,
+          fechaEntregaDocumentos: fechaEntrega,
+          retencionFuente,
+          retencionFopat,
+          ...valores,
+          motivoValorAdicional: b.motivoValorAdicional ?? null,
+          motivoDescuento: b.motivoDescuento ?? null,
+          valorSobreanticipo: n(b.valorSobreanticipo),
+          observaciones: b.observaciones ?? null,
+        })
       ),
       PROCESO_ID_CUMPLIR_MANIFIESTO
     );
@@ -1752,6 +1834,9 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
     const final = await viajes.update(viajeId, {
       estado: "CUMPLIDO",
       radicadoCumplido: radicado,
+      // El FOPAT se causa con el cumplido [Manual RNDC 5.3.5]: el que se declara
+      // a la DIAN es este, no el de la expedicion.
+      ...(resultado.ok ? { retencionFopat: retencionFopat ?? 0 } : {}),
       fechaCumplido: new Date(),
       cumplidoPorId: req.usuario?.id ?? null,
       mensajeError: null,
