@@ -722,11 +722,17 @@ async function procesarViaje(
     valorFlete: datosViaje.valorFleteReal ?? 0,
   });
 
-  const errores = [
-    ...mensajesDe(reglas, "ERROR"),
-    ...(piso.error ? [piso.error] : []),
-  ];
+  // El RNDC decide. Las reglas propias son la lectura de los manuales, no la
+  // validacion real del RNDC, y a veces bloqueaban lo que el portal si acepta
+  // (piso de SICETAC, capacidad del catalogo...). Ahora solo detienen el envio
+  // las que impiden armar los documentos; el resto se muestran como aviso y el
+  // RNDC responde con su propio error si de verdad algo esta mal.
+  const ESTRUCTURALES = [/no tiene remesas/, /consecutivo/i, /repetidos/];
+  const reglasError = mensajesDe(reglas, "ERROR");
+  const errores = reglasError.filter((m) => ESTRUCTURALES.some((r) => r.test(m)));
   const avisos = [
+    ...reglasError.filter((m) => !ESTRUCTURALES.some((r) => r.test(m))),
+    ...(piso.error ? [piso.error] : []),
     ...mensajesDe(reglas, "AVISO"),
     ...avisosDocumentos,
     ...avisosMonitoreo,
