@@ -322,6 +322,8 @@ export interface PisoEnVivo {
   codVia: string | null;
   descripcion: string | null;
   piso: number;
+  /** Costo de cada hora de cargue o descargue en esa via [SIC21]. */
+  valorHora: number | null;
   periodo: string | null;
   unidadTransporte: string | null;
   tipoCarga: string | null;
@@ -380,6 +382,7 @@ export async function pisoSicetacEnVivo(
     codVia: fila.rutasId,
     descripcion: fila.via,
     piso,
+    valorHora: fila.valorHora,
     periodo: resultado.periodoUsado,
     unidadTransporte: fila.nombreUnidadTransporte,
     tipoCarga: fila.nombreTipoCarga,

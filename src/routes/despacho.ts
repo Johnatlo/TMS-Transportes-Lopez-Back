@@ -75,7 +75,7 @@ import {
 } from "../rndc/builders";
 import { conCandado } from "../db";
 import { fechaHoraColombia } from "../fechas";
-import { buscarManifiestoRadicado, buscarRemesaRadicada } from "../rndc/consultas";
+import { buscarManifiestoRadicado, buscarRemesaRadicada, leerTiemposCumplidoRemesa } from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
 import { aCabeceraMunicipal, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
@@ -1731,12 +1731,123 @@ async function baseCumplidoManifiesto(viaje: Viaje) {
   };
 }
 
+/**
+ * Tiempos logisticos del manifiesto, como los muestra el portal al cumplir:
+ * pactados (de la plantilla de cada remesa) contra ejecutados (los que tiene
+ * el RNDC en el cumplido de cada remesa: los del GPS o los reportados). El
+ * ejecutado es salida menos entrada; asi lo calcula el portal (remesa 00006733:
+ * entrada 19:10, salida 20:13 -> 1 h 3 min).
+ *
+ * Con el valor hora de SICETAC de la via se sugiere el adicional por las horas
+ * de mas (o el descuento por las de menos): es el mismo valor con que SICETAC
+ * suma las horas pactadas al piso.
+ */
+export async function tiemposLogisticos(viaje: Viaje) {
+  const remesas = (await viajeRemesas.findByViaje(viaje.id)).filter((r) => r.estado !== "ANULADA");
+  const credenciales = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
+  const lector = new RndcClient({
+    wsdlUrl: config.rndc.wsdlUrl,
+    usuario: config.rndc.usuario,
+    password: config.rndc.password,
+    simular: false,
+    reintentos: config.rndc.reintentos,
+    soloConsultas: true,
+  });
+  const minutos = (a: Date | null | undefined, b: Date | null | undefined) =>
+    a && b ? Math.max(0, Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000)) : null;
+
+  const filas: Array<{
+    consecutivo: string | null;
+    fuente: "RNDC" | "sistema" | null;
+    tiempos: Awaited<ReturnType<typeof leerTiemposCumplidoRemesa>>;
+    pactadoCargue: number | null;
+    pactadoDescargue: number | null;
+    ejecutadoCargue: number | null;
+    ejecutadoDescargue: number | null;
+  }> = [];
+  for (const r of remesas) {
+    const p = await plantillas.findById(r.plantillaId);
+    let t: Awaited<ReturnType<typeof leerTiemposCumplidoRemesa>> = null;
+    let fuente: "RNDC" | "sistema" | null = null;
+    if (!config.rndc.simular && r.consecutivoRemesa) {
+      try {
+        t = await leerTiemposCumplidoRemesa(lector, credenciales, r.consecutivoRemesa);
+        if (t) fuente = "RNDC";
+      } catch (exc) {
+        console.warn(`No se pudieron leer los tiempos de la remesa ${r.consecutivoRemesa}:`, (exc as Error).message);
+      }
+    }
+    // Sin respuesta del RNDC, los que se reportaron desde este sistema.
+    if (!t && r.entradaCargue) {
+      t = {
+        llegadaCargue: r.llegadaCargue, entradaCargue: r.entradaCargue, salidaCargue: r.salidaCargue,
+        llegadaDescargue: r.llegadaDescargue, entradaDescargue: r.entradaDescargue, salidaDescargue: r.salidaDescargue,
+      };
+      fuente = "sistema";
+    }
+    filas.push({
+      consecutivo: r.consecutivoRemesa,
+      fuente,
+      tiempos: t,
+      pactadoCargue: p ? p.horasPactoCargue * 60 + p.minutosPactoCargue : null,
+      pactadoDescargue: p ? p.horasPactoDescargue * 60 + p.minutosPactoDescargue : null,
+      ejecutadoCargue: minutos(t?.entradaCargue, t?.salidaCargue),
+      ejecutadoDescargue: minutos(t?.entradaDescargue, t?.salidaDescargue),
+    });
+  }
+  const suma = (k: "pactadoCargue" | "pactadoDescargue" | "ejecutadoCargue" | "ejecutadoDescargue") =>
+    filas.every((f) => f[k] !== null) ? filas.reduce((t, f) => t + (f[k] ?? 0), 0) : null;
+
+  // Valor hora de SICETAC de la via del viaje.
+  let valorHora: number | null = null;
+  let errorSicetac: string | null = null;
+  const [principal, vehiculo] = await Promise.all([plantillas.findById(viaje.plantillaId), vehiculos.findById(viaje.vehiculoId)]);
+  const ultima = remesas.length ? await plantillas.findById(remesas[remesas.length - 1].plantillaId) : null;
+  const origen = aCabeceraMunicipal(principal?.municipioOrigen);
+  const destino = aCabeceraMunicipal(ultima?.municipioDestino ?? principal?.municipioDestino);
+  if (!config.rndc.simular && origen && destino && vehiculo?.configuracion) {
+    try {
+      const vivo = await pisoSicetacEnVivo(
+        new RndcClient({ wsdlUrl: config.rndc.consultasWsdlUrl, usuario: config.rndc.usuario, password: config.rndc.password, simular: false, reintentos: config.rndc.reintentos, soloConsultas: true }),
+        credenciales,
+        { configuracion: vehiculo.configuracion, origen, destino, codVia: viaje.codVia, horasPactadas: 0,
+          unidadTransporte: config.sicetac.unidadTransporte, tipoCarga: config.sicetac.tipoCarga },
+        config.sicetac.mesesHaciaAtras
+      );
+      valorHora = vivo?.valorHora ?? null;
+      if (!vivo) errorSicetac = "La via no aparece en SICETAC para esta ruta y configuracion.";
+    } catch (exc) {
+      errorSicetac = (exc as Error).message.slice(0, 160);
+    }
+  }
+
+  const pactadoCargue = suma("pactadoCargue");
+  const pactadoDescargue = suma("pactadoDescargue");
+  const ejecutadoCargue = suma("ejecutadoCargue");
+  const ejecutadoDescargue = suma("ejecutadoDescargue");
+  // Diferencia en horas (positiva = horas de mas) por el valor hora.
+  const valorPor = (ejec: number | null, pact: number | null) =>
+    ejec === null || pact === null || valorHora === null ? null : Math.round(((ejec - pact) / 60) * valorHora);
+  return {
+    remesas: filas,
+    pactadoCargue,
+    pactadoDescargue,
+    ejecutadoCargue,
+    ejecutadoDescargue,
+    valorHora,
+    errorSicetac,
+    diferenciaValorCargue: valorPor(ejecutadoCargue, pactadoCargue),
+    diferenciaValorDescargue: valorPor(ejecutadoDescargue, pactadoDescargue),
+  };
+}
+
 despachoRouter.get("/:id/cumplir/previa", async (req, res) => {
   const viaje = await viajes.findById(Number(req.params.id));
   if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
   const base = await baseCumplidoManifiesto(viaje);
   res.json({
     ...base,
+    tiempos: await tiemposLogisticos(viaje),
     retencionFuente: calcularRetencionFuente(
       baseRetenciones(base.valorFlete, base.vacio1Valor, base.vacio2Valor),
       base.tarifaRetencionFuente,

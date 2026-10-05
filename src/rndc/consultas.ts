@@ -341,3 +341,55 @@ export async function buscarRemesaRadicada(
   );
   return xml === null ? null : leerEtiqueta(xml, "ingresoid");
 }
+
+/**
+ * Tiempos reales de una remesa ya cumplida (tipo 3, proceso 5), como los
+ * registro el RNDC: los del GPS si hubo cumplido inicial, o los que se
+ * reportaron al cumplir. Verificado en produccion (2026-10-05, remesa 00006733)
+ * y en pruebas (00010013). Devuelve null si la remesa no esta cumplida.
+ */
+export interface TiemposCumplidoRemesa {
+  llegadaCargue: Date | null;
+  entradaCargue: Date | null;
+  salidaCargue: Date | null;
+  llegadaDescargue: Date | null;
+  entradaDescargue: Date | null;
+  salidaDescargue: Date | null;
+}
+
+/** "29/09/2026" + "14:13" en hora de Colombia (UTC-5). */
+function fechaHoraRndc(fecha: string | null, hora: string | null): Date | null {
+  const f = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((fecha ?? "").trim());
+  const h = /^(\d{1,2}):(\d{2})$/.exec((hora ?? "").trim());
+  if (!f || !h) return null;
+  return new Date(Date.UTC(+f[3], +f[2] - 1, +f[1], +h[1] + 5, +h[2]));
+}
+
+export async function leerTiemposCumplidoRemesa(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  consecutivo: string
+): Promise<TiemposCumplidoRemesa | null> {
+  const pares = [
+    ["llegadaCargue", "FECHALLEGADACARGUE", "HORALLEGADACARGUEREMESA"],
+    ["entradaCargue", "FECHAENTRADACARGUE", "HORAENTRADACARGUEREMESA"],
+    ["salidaCargue", "FECHASALIDACARGUE", "HORASALIDACARGUEREMESA"],
+    ["llegadaDescargue", "FECHALLEGADADESCARGUE", "HORALLEGADADESCARGUECUMPLIDO"],
+    ["entradaDescargue", "FECHAENTRADADESCARGUE", "HORAENTRADADESCARGUECUMPLIDO"],
+    ["salidaDescargue", "FECHASALIDADESCARGUE", "HORASALIDADESCARGUECUMPLIDO"],
+  ] as const;
+  const xml = await consultarDocumentoPropio(
+    cliente,
+    credenciales,
+    "5",
+    ["INGRESOID", ...pares.flatMap(([, f, h]) => [f, h])],
+    "CONSECUTIVOREMESA",
+    consecutivo
+  );
+  if (!xml || !leerEtiqueta(xml, "ingresoid")) return null;
+  const t = {} as TiemposCumplidoRemesa;
+  for (const [campo, f, h] of pares) {
+    t[campo] = fechaHoraRndc(leerEtiqueta(xml, f.toLowerCase()), leerEtiqueta(xml, h.toLowerCase()));
+  }
+  return t;
+}
