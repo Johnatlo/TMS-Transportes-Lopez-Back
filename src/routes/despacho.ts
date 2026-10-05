@@ -54,6 +54,8 @@ import {
   PROCESO_ID_CUMPLIR_MANIFIESTO,
   construirDatosCumplidoRemesa,
   construirDatosCumplidoManifiesto,
+  construirDatosAnularCumplidoRemesa,
+  PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
   valorFinalCumplido,
   TARIFA_RETENCION_FUENTE_DEFECTO,
   baseRetenciones,
@@ -1709,6 +1711,91 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
  * los del manifiesto expedido. Con adicionales, descuentos o suspension, se
  * hace en el portal.
  */
+/**
+ * Lo que quedo registrado en el cumplido de una remesa: kilos entregados y
+ * los seis tiempos, leidos del RNDC (la verdad, incluso si se cumplio en el
+ * portal). Si el RNDC no responde, lo que se envio desde este sistema.
+ */
+despachoRouter.get("/remesas/:remesaId/cumplido", async (req, res) => {
+  const r = await viajeRemesas.findById(Number(req.params.remesaId));
+  if (!r) return res.status(404).json({ error: "Remesa no encontrada" });
+  if (!config.rndc.simular && r.consecutivoRemesa) {
+    try {
+      const lector = new RndcClient({
+        wsdlUrl: config.rndc.wsdlUrl,
+        usuario: config.rndc.usuario,
+        password: config.rndc.password,
+        simular: false,
+        reintentos: config.rndc.reintentos,
+        soloConsultas: true,
+      });
+      const t = await leerTiemposCumplidoRemesa(
+        lector,
+        { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit },
+        r.consecutivoRemesa
+      );
+      if (t) return res.json({ fuente: "RNDC", ...t });
+      return res.json({ fuente: "RNDC", noCumplida: true });
+    } catch (exc) {
+      console.warn(`No se pudo leer el cumplido de ${r.consecutivoRemesa}:`, (exc as Error).message);
+    }
+  }
+  res.json({
+    fuente: "sistema",
+    radicado: r.radicadoCumplido,
+    cantidadEntregada: r.cantidadEntregada,
+    llegadaCargue: r.llegadaCargue,
+    entradaCargue: r.entradaCargue,
+    salidaCargue: r.salidaCargue,
+    llegadaDescargue: r.llegadaDescargue,
+    entradaDescargue: r.entradaDescargue,
+    salidaDescargue: r.salidaDescargue,
+  });
+});
+
+/**
+ * Anula el cumplido de una remesa (proceso 28) para corregirlo y volver a
+ * cumplirla. La remesa vuelve a "creada" con los datos que tenia, para
+ * corregir solo lo que estaba mal. Si el manifiesto ya esta cumplido, el RNDC
+ * lo rechaza (ACR070): primero hay que anular el cumplido del manifiesto.
+ */
+despachoRouter.post("/remesas/:remesaId/anular-cumplido", async (req, res) => {
+  const remesa = await viajeRemesas.findById(Number(req.params.remesaId));
+  if (!remesa) return res.status(404).json({ error: "Remesa no encontrada" });
+  const viaje = await viajes.findById(remesa.viajeId);
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  const motivo = String(req.body?.motivo ?? "").toUpperCase();
+  const observaciones = String(req.body?.observaciones ?? "").trim() || "Anulacion de cumplido para corregir datos";
+
+  const { credenciales, cliente } = clienteRegistro();
+  const resultado = await cliente.enviar(
+    construirXmlMensaje(
+      credenciales,
+      PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
+      construirDatosAnularCumplidoRemesa(remesa.consecutivoRemesa!, motivo, observaciones)
+    ),
+    PROCESO_ID_ANULAR_CUMPLIDO_REMESA
+  );
+  if (!resultado.ok) {
+    let error = resultado.error ?? "El RNDC rechazo la anulacion.";
+    if (/ACR070/.test(resultado.errorCrudo ?? "") && viaje.estado === "CUMPLIDO") {
+      error +=
+        " El manifiesto de este viaje ya esta cumplido: el RNDC no deja anular el cumplido de la " +
+        "remesa hasta anular primero el cumplido del manifiesto (en el portal del RNDC).";
+    }
+    return res.status(422).json({ error, codigoError: resultado.codigoError });
+  }
+
+  await viajeRemesas.update(remesa.id, {
+    estado: "CREADA",
+    radicadoCumplido: null,
+    fechaCumplido: null,
+    radicadoAnulacionCumplidoRemesa: resultado.radicado,
+    mensajeError: `Cumplido anulado en el RNDC (radicado ${resultado.radicado}). Corrige y vuelve a cumplir.`,
+  });
+  res.json({ viaje: await viajes.findById(viaje.id), remesas: await viajeRemesas.findByViaje(viaje.id) });
+});
+
 /**
  * Lo que necesita la ventana de cumplido del manifiesto para calcular en
  * pantalla: valor del manifiesto, tarifa de retencion, si causa FOPAT y los

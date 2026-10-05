@@ -47,6 +47,23 @@ export const PROCESO_ID_VEHICULO = "12"; // Crear/actualizar Vehiculo (maestro)
 // respuesta CRE350 del RNDC de pruebas (2026-09-30).
 export const PROCESO_ID_CUMPLIR_REMESA = "5"; // Cumplir Remesa Terrestre de Carga
 export const PROCESO_ID_CUMPLIR_MANIFIESTO = "6"; // Cumplir Manifiesto de Carga
+// Anular cumplido de remesa. Etiquetas: lista de variables del wstest
+// (proceso 28). Motivos D/O: ACR040 del RNDC de pruebas. Verificado en pruebas
+// (2026-10-05, remesa 00010012, radicado 900000019). Con el manifiesto ya
+// cumplido responde ACR070 ("no ha sido cumplido").
+export const PROCESO_ID_ANULAR_CUMPLIDO_REMESA = "28";
+
+export function construirDatosAnularCumplidoRemesa(
+  consecutivoRemesa: string,
+  motivo: string,
+  observaciones: string
+): Record<string, unknown> {
+  return {
+    CONSECUTIVOREMESA: consecutivoRemesa,
+    CODMOTIVOANULACIONCUMPLIDO: motivo,
+    OBSERVACIONES: observaciones.slice(0, 200),
+  };
+}
 
 /** Naturaleza de carga: 1 = Carga General. Unico valor que usa esta empresa. */
 export const NATURALEZA_CARGA_GENERAL = "1";

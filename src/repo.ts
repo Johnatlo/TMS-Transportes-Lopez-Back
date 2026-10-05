@@ -1298,6 +1298,7 @@ export interface ViajeRemesa {
   salidaCargue: Date | null;
   llegadaDescargue: Date | null;
   salidaDescargue: Date | null;
+  radicadoAnulacionCumplidoRemesa: string | null;
   radicadoCumplido: string | null;
   fechaCumplido: Date | null;
   cumplidoPorId: number | null;

@@ -349,6 +349,9 @@ export async function buscarRemesaRadicada(
  * y en pruebas (00010013). Devuelve null si la remesa no esta cumplida.
  */
 export interface TiemposCumplidoRemesa {
+  radicado?: string | null;
+  fechaRegistro?: string | null;
+  cantidadEntregada?: number | null;
   llegadaCargue: Date | null;
   entradaCargue: Date | null;
   salidaCargue: Date | null;
@@ -382,12 +385,17 @@ export async function leerTiemposCumplidoRemesa(
     cliente,
     credenciales,
     "5",
-    ["INGRESOID", ...pares.flatMap(([, f, h]) => [f, h])],
+    ["INGRESOID", "FECHAING", "CANTIDADENTREGADA", ...pares.flatMap(([, f, h]) => [f, h])],
     "CONSECUTIVOREMESA",
     consecutivo
   );
   if (!xml || !leerEtiqueta(xml, "ingresoid")) return null;
-  const t = {} as TiemposCumplidoRemesa;
+  const cantidad = leerEtiqueta(xml, "cantidadentregada");
+  const t: TiemposCumplidoRemesa = {
+    radicado: leerEtiqueta(xml, "ingresoid"),
+    fechaRegistro: leerEtiqueta(xml, "fechaing"),
+    cantidadEntregada: cantidad === null ? null : Number(cantidad),
+  } as TiemposCumplidoRemesa;
   for (const [campo, f, h] of pares) {
     t[campo] = fechaHoraRndc(leerEtiqueta(xml, f.toLowerCase()), leerEtiqueta(xml, h.toLowerCase()));
   }

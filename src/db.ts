@@ -525,6 +525,8 @@ export async function initSchema(): Promise<void> {
     ["viaje_remesas", "salidaCargue", "DATETIME"],
     ["viaje_remesas", "llegadaDescargue", "DATETIME"],
     ["viaje_remesas", "salidaDescargue", "DATETIME"],
+    // Ultima anulacion del cumplido de la remesa (proceso 28).
+    ["viaje_remesas", "radicadoAnulacionCumplidoRemesa", "VARCHAR(30)"],
     ["viaje_remesas", "radicadoCumplido", "VARCHAR(30)"],
     ["viaje_remesas", "fechaCumplido", "DATETIME"],
     ["viaje_remesas", "cumplidoPorId", "INT"],
