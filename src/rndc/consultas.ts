@@ -453,3 +453,39 @@ export async function leerCumplidoInicial(
   }
   return t;
 }
+
+/**
+ * Cumplido de un manifiesto (tipo 3, proceso 6), si ya existe en el RNDC.
+ * Verificado en produccion (2026-10-06, solo lectura, manifiesto 00006765
+ * cumplido en el portal, radicado 119242852): INGRESOID, FECHAING,
+ * RETENCIONFUENTEMANIFIESTO y RETENCIONFOPAT. Sin cumplido: RNDC11 (null).
+ */
+export interface CumplidoManifiestoEnRndc {
+  radicado: string;
+  fechaRegistro: string | null;
+  retencionFuente: number | null;
+  retencionFopat: number | null;
+}
+
+export async function leerCumplidoManifiesto(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  numero: string
+): Promise<CumplidoManifiestoEnRndc | null> {
+  const xml = await consultarDocumentoPropio(
+    cliente,
+    credenciales,
+    "6",
+    ["INGRESOID", "FECHAING", "NUMMANIFIESTOCARGA", "RETENCIONFUENTEMANIFIESTO", "RETENCIONFOPAT"],
+    "NUMMANIFIESTOCARGA",
+    numero
+  );
+  const radicado = xml === null ? null : leerEtiqueta(xml, "ingresoid");
+  if (!xml || !radicado) return null;
+  return {
+    radicado,
+    fechaRegistro: leerEtiqueta(xml, "fechaing"),
+    retencionFuente: numeroDe(leerEtiqueta(xml, "retencionfuentemanifiesto")),
+    retencionFopat: numeroDe(leerEtiqueta(xml, "retencionfopat")),
+  };
+}

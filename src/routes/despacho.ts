@@ -78,7 +78,13 @@ import {
 } from "../rndc/builders";
 import { conCandado } from "../db";
 import { fechaHoraColombia } from "../fechas";
-import { buscarManifiestoRadicado, buscarRemesaRadicada, leerTiemposCumplidoRemesa, leerCumplidoInicial } from "../rndc/consultas";
+import {
+  buscarManifiestoRadicado,
+  buscarRemesaRadicada,
+  leerTiemposCumplidoRemesa,
+  leerCumplidoInicial,
+  leerCumplidoManifiesto,
+} from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
 import { aCabeceraMunicipal, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
@@ -2026,6 +2032,79 @@ export async function tiemposLogisticos(viaje: Viaje) {
   };
 }
 
+/**
+ * Trae del RNDC los cumplidos hechos por fuera de este sistema (en el portal):
+ * remesas que aqui siguen CREADA pero en el RNDC ya estan cumplidas, y el
+ * cumplido del manifiesto. Sin esto el viaje quedaba trabado: el sistema pedia
+ * cumplir remesas que el RNDC ya tenia (y rechazaba el reenvio). Solo lectura
+ * (tipo 3). Devuelve lo que adopto, para mostrarlo.
+ */
+async function sincronizarCumplidos(viajeId: number): Promise<string[]> {
+  if (config.rndc.simular) return [];
+  const viaje = await viajes.findById(viajeId);
+  if (!viaje || viaje.estado !== "CONFIRMADO" || !viaje.consecutivoManifiesto) return [];
+  const lector = new RndcClient({
+    wsdlUrl: config.rndc.wsdlUrl,
+    usuario: config.rndc.usuario,
+    password: config.rndc.password,
+    simular: false,
+    reintentos: config.rndc.reintentos,
+    soloConsultas: true,
+  });
+  const cred = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
+  const adoptados: string[] = [];
+
+  for (const r of await viajeRemesas.findByViaje(viajeId)) {
+    if (r.estado !== "CREADA" || !r.consecutivoRemesa) continue;
+    const t = await leerTiemposCumplidoRemesa(lector, cred, r.consecutivoRemesa);
+    if (!t?.radicado) continue;
+    // Se vuelve a exigir CREADA: si justo se estaba cumpliendo desde aqui, gana ese envio.
+    if (!(await viajeRemesas.tomarConEstado(r.id, ["CREADA"], "CUMPLIDA"))) continue;
+    const nota = `Remesa ${r.consecutivoRemesa}: ya estaba cumplida en el RNDC (radicado ${t.radicado}).`;
+    await viajeRemesas.update(r.id, {
+      radicadoCumplido: t.radicado,
+      cantidadEntregada: t.cantidadEntregada ?? null,
+      llegadaCargue: t.llegadaCargue,
+      entradaCargue: t.entradaCargue,
+      salidaCargue: t.salidaCargue,
+      llegadaDescargue: t.llegadaDescargue,
+      entradaDescargue: t.entradaDescargue,
+      salidaDescargue: t.salidaDescargue,
+      fechaCumplido: new Date(),
+      mensajeError: `Ya estaba cumplida en el RNDC (radicado ${t.radicado}).`,
+    });
+    adoptados.push(nota);
+  }
+
+  const m = await leerCumplidoManifiesto(lector, cred, viaje.consecutivoManifiesto);
+  if (m && (await viajes.tomarConEstado(viajeId, ["CONFIRMADO"], "CUMPLIDO"))) {
+    const nota = `Ya estaba cumplido en el RNDC (radicado ${m.radicado}).`;
+    await viajes.update(viajeId, {
+      radicadoCumplido: m.radicado,
+      // El FOPAT que se declara es el del cumplido [Manual RNDC 5.3.5].
+      ...(m.retencionFopat !== null ? { retencionFopat: m.retencionFopat } : {}),
+      fechaCumplido: new Date(),
+      mensajeError: null,
+      codigoError: null,
+      errorCrudo: null,
+      avisos: nota,
+    });
+    adoptados.push(`Manifiesto ${viaje.consecutivoManifiesto}: ya estaba cumplido en el RNDC (radicado ${m.radicado}).`);
+  }
+  return adoptados;
+}
+
+despachoRouter.post("/:id/cumplir/sincronizar", async (req, res) => {
+  const viajeId = Number(req.params.id);
+  try {
+    const adoptados = await sincronizarCumplidos(viajeId);
+    res.json({ adoptados, viaje: await viajes.findById(viajeId), remesas: await viajeRemesas.findByViaje(viajeId) });
+  } catch (exc) {
+    // Si el RNDC no responde, la ventana sigue funcionando con lo que hay aqui.
+    res.json({ adoptados: [], error: `No se pudo consultar el RNDC: ${(exc as Error).message}` });
+  }
+});
+
 despachoRouter.get("/:id/cumplir/previa", async (req, res) => {
   const viaje = await viajes.findById(Number(req.params.id));
   if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
@@ -2055,15 +2134,16 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
     return res.status(409).json({ error: `Un viaje en estado ${viaje.estado} no se puede cumplir.` });
   }
 
+  // Lo cumplido en el portal se adopta antes de enviar. Si el manifiesto ya
+  // estaba cumplido alla, no se reenvia.
+  await sincronizarCumplidos(viajeId).catch((exc) =>
+    console.warn(`No se pudo sincronizar el cumplido del viaje ${viajeId}:`, (exc as Error).message)
+  );
+  const sincronizado = await viajes.findById(viajeId);
   const remesas = (await viajeRemesas.findByViaje(viajeId)).filter((r) => r.estado !== "ANULADA");
-  const pendientes = remesas.filter((r) => r.estado !== "CUMPLIDA");
-  if (pendientes.length > 0) {
-    return res.status(409).json({
-      error: `Primero cumple la${pendientes.length > 1 ? "s remesas" : " remesa"} ${pendientes
-        .map((r) => r.consecutivoRemesa)
-        .join(", ")}: el RNDC exige todas las remesas cumplidas antes del manifiesto.`,
-    });
-  }
+  if (sincronizado?.estado === "CUMPLIDO") return res.json({ ...sincronizado, remesas });
+  // Remesas aun pendientes: no se bloquea. El RNDC exige todas cumplidas
+  // [Guia Cumplido 3.9] y lo dira con su error si falta alguna.
 
   // Valores del cumplido. Retencion y FOPAT se calculan sobre el valor final
   // (con adicionales y descuento); si se escribieron a mano, mandan esos.
