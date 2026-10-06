@@ -1674,3 +1674,91 @@ export const viajes = {
     return (await this.findById(id))!;
   },
 };
+
+// ---------- Control de consecutivos (una fila por remesa) ----------
+
+/**
+ * Libro de consecutivos de manifiestos y remesas, como la hoja de Excel que
+ * llevaba la empresa (docs/Ejemplo consecutivos Manifiestos & Remesas.xlsx):
+ * una fila por remesa, con el viaje, las partes, los municipios y los valores.
+ * El valor del manifiesto y el FOPAT van solo en la primera remesa del viaje,
+ * como en la hoja (las adicionales aparecen en 0).
+ */
+export interface FilaConsecutivo {
+  viajeId: number;
+  remesaId: number;
+  orden: number;
+  fechaPlanillada: Date;
+  placa: string | null;
+  cliente: string | null;
+  pesoReal: number | null;
+  valorManifiesto: number | null;
+  retencionFopat: number | null;
+  valorAnticipo: number | null;
+  citaCargue: Date;
+  citaDescargue: Date;
+  consecutivoManifiesto: string | null;
+  radicadoManifiesto: string | null;
+  consecutivoRemesa: string | null;
+  radicadoRemesa: string | null;
+  estadoViaje: string;
+  estadoRemesa: string;
+  codMunicipioCargue: string | null;
+  municipioCargue: string | null;
+  producto: string | null;
+  codMercancia: string | null;
+  remitenteTipoId: string | null;
+  remitenteNit: string | null;
+  remitenteNombre: string | null;
+  codMunicipioDescargue: string | null;
+  municipioDescargue: string | null;
+  destinatarioTipoId: string | null;
+  destinatarioNit: string | null;
+  destinatarioNombre: string | null;
+  conductor: string | null;
+  creadoPor: string | null;
+}
+
+export const consecutivos = {
+  async listar(limite = 10000): Promise<FilaConsecutivo[]> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT v.id AS viajeId, vr.id AS remesaId, vr.orden,
+              v.fechaCreacion AS fechaPlanillada, ve.placa,
+              con.nombre AS cliente, vr.pesoReal,
+              CASE WHEN vr.orden = 1 THEN v.valorFleteReal ELSE NULL END AS valorManifiesto,
+              CASE WHEN vr.orden = 1 THEN v.retencionFopat ELSE NULL END AS retencionFopat,
+              CASE WHEN vr.orden = 1 THEN v.valorAnticipoManifiesto ELSE NULL END AS valorAnticipo,
+              vr.fechaHoraCargue AS citaCargue, vr.fechaHoraDescargue AS citaDescargue,
+              v.consecutivoManifiesto, v.numeroManifiestoRndc AS radicadoManifiesto,
+              vr.consecutivoRemesa, vr.numeroRemesaRndc AS radicadoRemesa,
+              v.estado AS estadoViaje, vr.estado AS estadoRemesa,
+              rem.codMunicipioRndc AS codMunicipioCargue, COALESCE(mc.nombre, rem.ciudad) AS municipioCargue,
+              p.tipoMercancia AS producto, p.codMercancia,
+              rem.codTipoId AS remitenteTipoId, rem.nit AS remitenteNit, rem.nombre AS remitenteNombre,
+              des.codMunicipioRndc AS codMunicipioDescargue, COALESCE(md.nombre, des.ciudad) AS municipioDescargue,
+              des.codTipoId AS destinatarioTipoId, des.nit AS destinatarioNit, des.nombre AS destinatarioNombre,
+              c.nombre AS conductor, u.nombre AS creadoPor
+         FROM viaje_remesas vr
+         JOIN viajes v ON v.id = vr.viajeId
+         LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId
+         LEFT JOIN conductores c ON c.id = v.conductorId
+         LEFT JOIN plantillas_viaje p ON p.id = vr.plantillaId
+         LEFT JOIN terceros con ON con.id = p.contratanteId
+         LEFT JOIN terceros rem ON rem.id = p.remitenteId
+         LEFT JOIN terceros des ON des.id = p.destinatarioId
+         LEFT JOIN municipios mc ON mc.codigo = rem.codMunicipioRndc
+         LEFT JOIN municipios md ON md.codigo = des.codMunicipioRndc
+         LEFT JOIN usuarios u ON u.id = v.creadoPorId
+        ORDER BY v.fechaCreacion DESC, v.id DESC, vr.orden
+        LIMIT ?`,
+      [limite]
+    );
+    return (rows as FilaConsecutivo[]).map((r) => ({
+      ...r,
+      pesoReal: aNumero(r.pesoReal),
+      valorManifiesto: aNumero(r.valorManifiesto),
+      retencionFopat: aNumero(r.retencionFopat),
+      valorAnticipo: aNumero(r.valorAnticipo),
+    }));
+  },
+};

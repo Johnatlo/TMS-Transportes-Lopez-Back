@@ -14,6 +14,7 @@ import {
   NuevaViajeRemesa,
   vias,
   empresasMonitoreo,
+  consecutivos,
   parametros,
 } from "../repo";
 import { config } from "../config";
@@ -2307,6 +2308,64 @@ despachoRouter.get("/siguiente-consecutivo", async (_req, res) => {
     config.consecutivos.prefijo
   );
   res.json({ base });
+});
+
+/** Libro de consecutivos: una fila por remesa (la hoja de control de la empresa). */
+despachoRouter.get("/consecutivos", async (_req, res) => {
+  res.json(await consecutivos.listar());
+});
+
+/**
+ * Todo lo que se registro al despachar un viaje, para leerlo en una sola
+ * ventana: documentos y radicados, vehiculo y conductores, cada remesa con sus
+ * partes y su mercancia, valores, tiempos pactados, y quien hizo que.
+ */
+despachoRouter.get("/:id/detalle", async (req, res) => {
+  const viaje = await viajes.findById(Number(req.params.id));
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  const filas = await viajeRemesas.findByViaje(viaje.id);
+  const [vehiculo, conductor, conductor2, remolque, monitoreo, principal] = await Promise.all([
+    vehiculos.findById(viaje.vehiculoId),
+    conductores.findById(viaje.conductorId),
+    viaje.conductor2Id ? conductores.findById(viaje.conductor2Id) : Promise.resolve(null),
+    viaje.remolqueId ? remolques.findById(viaje.remolqueId) : Promise.resolve(null),
+    viaje.nitMonitoreoFlota ? empresasMonitoreo.findByNit(viaje.nitMonitoreoFlota) : Promise.resolve(null),
+    plantillas.findById(viaje.plantillaId),
+  ]);
+  const tercero = (t: { nombre: string; nit: string; codTipoId: string; codSede: string; ciudad: string | null; codMunicipioRndc?: string | null; direccion?: string | null } | null | undefined) =>
+    t ? { nombre: t.nombre, nit: t.nit, tipoId: t.codTipoId, sede: t.codSede, ciudad: t.ciudad, codMunicipio: t.codMunicipioRndc ?? null, direccion: t.direccion ?? null } : null;
+  const remesas = [];
+  for (const r of filas) {
+    const p = await plantillas.findById(r.plantillaId);
+    remesas.push({
+      ...r,
+      plantilla: p?.nombre ?? null,
+      producto: p?.tipoMercancia ?? null,
+      codMercancia: p?.codMercancia ?? null,
+      codTipoEmpaque: p?.codTipoEmpaque ?? null,
+      unidadMedidaProducto: p?.unidadMedidaProducto ?? null,
+      pactoCargue: p ? `${p.horasPactoCargue} h ${p.minutosPactoCargue} min` : null,
+      pactoDescargue: p ? `${p.horasPactoDescargue} h ${p.minutosPactoDescargue} min` : null,
+      contratante: tercero(p?.contratante),
+      remitente: tercero(p?.remitente),
+      destinatario: tercero(p?.destinatario),
+    });
+  }
+  res.json({
+    viaje,
+    tipoManifiesto: principal?.tipoManifiesto ?? null,
+    origen: principal?.municipioOrigen ?? null,
+    destino: remesas.length ? (await plantillas.findById(filas[filas.length - 1].plantillaId))?.municipioDestino ?? null : null,
+    vehiculo: vehiculo && {
+      placa: vehiculo.placa, marca: vehiculo.marca, configuracion: vehiculo.configuracion,
+      titular: vehiculo.nombreTenedor, titularId: vehiculo.numIdTenedor, titularTipoId: vehiculo.codTipoIdTenedor,
+    },
+    remolque: remolque && { placa: remolque.placa },
+    conductor: conductor && { nombre: conductor.nombre, cedula: conductor.cedula, licencia: conductor.licencia },
+    conductor2: conductor2 && { nombre: conductor2.nombre, cedula: conductor2.cedula },
+    monitoreo: monitoreo ? { nombre: monitoreo.nombre, nit: monitoreo.nit } : viaje.nitMonitoreoFlota ? { nombre: null, nit: viaje.nitMonitoreoFlota } : null,
+    remesas,
+  });
 });
 
 despachoRouter.get("/historial", async (_req, res) => {
