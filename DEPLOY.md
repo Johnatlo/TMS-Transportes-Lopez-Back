@@ -187,17 +187,184 @@ en el mismo disco no sirve si el disco falla.
 Los datos viven en el volumen `mysql-data`. `docker compose down` lo conserva;
 **`docker compose down -v` lo borra**: no usar `-v`.
 
-## 9. Actualizar a una versión nueva
+## 9. Rutina de actualización (guardar cambios y subirlos al servidor)
+
+Como está montado hoy el servidor (`ubuntu-4gb-hel1-2`, IP de Tailscale
+`100.99.218.10`):
+
+| Qué | Dónde |
+|---|---|
+| Backend: repo, `docker-compose.yml`, `Caddyfile`, `.env.production` | `/opt/tms` (repo del backend, rama `main`) |
+| Frontend compilado que sirve Caddy | `/opt/frontend-react/dist` (carpeta simple, **no** es un repo) |
+
+En el computador se trabaja en la rama `feature/ruta-explicita` de los dos
+repos (`backend` y `frontend-react`); el servidor usa `main`.
+
+### 9.1 Guardar los cambios en GitHub (en el computador, cada repo por separado)
+
+```powershell
+cd "C:\Users\Jhon1\Desktop\TMS Transportes Lopez\frontend-react"
+```
+Entra a la carpeta del repo. Para el backend: `...\TMS Transportes Lopez\backend`.
+
+```powershell
+git status
+```
+Lista lo que cambió:
+- `modified:`: un archivo que ya existía y se modificó.
+- `Untracked files`: archivos nuevos.
+
+**Leerla antes de seguir**: no deben ir `.env`, `.csv` con datos personales ni
+respaldos (`.sql`).
+
+```powershell
+git add src index.html GUIA-UI.md
+```
+Marca qué archivos entran al commit. Es más seguro nombrarlos que usar
+`git add -A`, que agrega **todo**. En el backend casi siempre basta `git add src`.
+
+```powershell
+git status
+```
+Lo que va al commit aparece en verde, bajo `Changes to be committed`. Revisar que
+sea solo lo que se quería.
+
+```powershell
+git commit -m "Descripcion corta del cambio"
+```
+Guarda una foto del cambio **en el computador**. Todavía no sube nada.
+
+```powershell
+git push origin feature/ruta-explicita
+```
+Sube el commit a GitHub, en la rama de trabajo.
+
+```powershell
+git push origin feature/ruta-explicita:main
+```
+Lo sube también a `main`, que es la que descarga el servidor.
+
+Si GitHub responde `rejected` o `non-fast-forward`, **no forzar** (`--force`):
+`main` tiene algo que el computador no tiene. Hay que revisarlo antes.
+
+### 9.2 Actualizar el backend (consola del servidor)
+
+Solo si cambió el repo `backend`.
+
+```powershell
+ssh root@100.99.218.10
+```
+Desde PowerShell del computador: abre la consola del servidor por Tailscale y
+pide la contraseña. Si se demora y falla, correr
+`tailscale ping 100.99.218.10` y volver a intentar.
 
 ```bash
-cd frontend-react && git pull && npm ci && npm run build
-cd ../backend && git pull
-docker compose --env-file .env.production up -d --build
+cd /opt/tms
+```
+Carpeta del repo del backend y del `docker-compose.yml`.
+
+```bash
+git pull
+```
+Descarga de GitHub lo que se subió a `main`.
+
+```bash
+docker compose --env-file .env.production up -d --build backend
+```
+Reconstruye la imagen del backend con el código nuevo y reinicia solo ese
+contenedor:
+- `--env-file .env.production`: usa las claves de producción.
+- `--build`: recompila.
+- `-d`: queda corriendo en segundo plano.
+- `backend`: no toca MySQL ni Caddy.
+
+La base de datos no se afecta.
+
+```bash
+docker compose --env-file .env.production ps
+```
+`backend` debe decir **Up** y, a los segundos, **(healthy)**.
+
+```bash
+docker compose --env-file .env.production logs backend --tail 20
+```
+Últimas 20 líneas del log: debe terminar con
+`PRODUCCION - DOCUMENTOS REALES`. Si hay un error, sale aquí.
+
+```bash
+exit
+```
+Cierra la consola del servidor. La aplicación sigue corriendo.
+
+### 9.3 Actualizar el frontend (computador + servidor)
+
+Solo si cambió el repo `frontend-react`. Se compila en el computador y se sube
+la carpeta `dist`.
+
+En el computador (PowerShell):
+
+```powershell
+cd "C:\Users\Jhon1\Desktop\TMS Transportes Lopez\frontend-react"
+npm run build
+```
+Compila el frontend en `dist`. Debe terminar con `✓ built in ...`; si dice
+`error`, no subir nada.
+
+```powershell
+scp -r dist root@100.99.218.10:/opt/frontend-react/dist-nuevo
+```
+Copia `dist` al servidor en una carpeta **aparte** (`dist-nuevo`): lo que está
+en uso no se toca todavía. Pide la contraseña.
+
+En el servidor (`ssh root@100.99.218.10`):
+
+```bash
+cd /opt/frontend-react
+ls dist-nuevo
+```
+Debe mostrar `assets  favicon.png  index.html`: la subida llegó completa.
+
+```bash
+rm -rf dist-anterior && cp -r dist dist-anterior
+```
+Borra el respaldo anterior y guarda la versión **actual** como `dist-anterior`,
+por si hay que volver atrás.
+
+```bash
+rm -rf dist/* && cp -r dist-nuevo/. dist/
+```
+Vacía `dist` y copia **adentro** la versión nueva. Se hace así, y no
+renombrando carpetas, porque Caddy está pegado a esa carpeta exacta: una carpeta
+renombrada lo dejaría mostrando la versión vieja.
+
+```bash
+rm -rf dist-nuevo
+```
+Borra la copia temporal.
+
+Comprobar: abrir **https://ubuntu-4gb-hel1-2.tail841fce.ts.net** con **Ctrl+F5**,
+que recarga sin caché. Caddy toma el frontend nuevo de inmediato, y
+`index.html` va sin caché.
+
+Si algo se ve mal, volver a la versión anterior:
+
+```bash
+cd /opt/frontend-react && rm -rf dist/* && cp -r dist-anterior/. dist/
 ```
 
-Caddy toma el frontend nuevo de inmediato (lee la carpeta `dist`). Los
-navegadores cargan la versión nueva sin borrar la caché: `index.html` va sin
-caché y los archivos de `/assets` llevan un hash en el nombre.
+### 9.4 Resumen
+
+| Qué | Dónde | Comandos |
+|---|---|---|
+| Guardar cambios | Computador, en cada repo | `git status` → `git add ...` → `git commit -m "..."` → `git push origin feature/ruta-explicita` → `git push origin feature/ruta-explicita:main` |
+| Actualizar backend | Servidor | `cd /opt/tms` → `git pull` → `docker compose --env-file .env.production up -d --build backend` |
+| Actualizar frontend | Computador y servidor | `npm run build` → `scp -r dist ...:/opt/frontend-react/dist-nuevo` → en el servidor: respaldo y copia dentro de `dist` |
+
+Reglas:
+- Leer siempre `git status` antes de `git add`.
+- Nunca `--force` en un push.
+- Nunca `docker compose down -v`: borra la base de datos.
+- Respaldo antes de cambios grandes (sección 8).
 
 ## 10. Lista para el día del lanzamiento
 
