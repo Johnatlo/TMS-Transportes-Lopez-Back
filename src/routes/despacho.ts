@@ -1959,6 +1959,9 @@ export async function tiemposLogisticos(viaje: Viaje) {
     pactadoDescargue: number | null;
     ejecutadoCargue: number | null;
     ejecutadoDescargue: number | null;
+    /** Desde la llegada (espera + cargue/descargue): con estos calcula el RNDC el piso del cumplido. */
+    conEsperaCargue: number | null;
+    conEsperaDescargue: number | null;
   }> = [];
   for (const r of remesas) {
     const p = await plantillas.findById(r.plantillaId);
@@ -1988,9 +1991,13 @@ export async function tiemposLogisticos(viaje: Viaje) {
       pactadoDescargue: p ? p.horasPactoDescargue * 60 + p.minutosPactoDescargue : null,
       ejecutadoCargue: minutos(t?.entradaCargue, t?.salidaCargue),
       ejecutadoDescargue: minutos(t?.entradaDescargue, t?.salidaDescargue),
+      conEsperaCargue: minutos(t?.llegadaCargue ?? t?.entradaCargue, t?.salidaCargue),
+      conEsperaDescargue: minutos(t?.llegadaDescargue ?? t?.entradaDescargue, t?.salidaDescargue),
     });
   }
-  const suma = (k: "pactadoCargue" | "pactadoDescargue" | "ejecutadoCargue" | "ejecutadoDescargue") =>
+  const suma = (
+    k: "pactadoCargue" | "pactadoDescargue" | "ejecutadoCargue" | "ejecutadoDescargue" | "conEsperaCargue" | "conEsperaDescargue"
+  ) =>
     filas.every((f) => f[k] !== null) ? filas.reduce((t, f) => t + (f[k] ?? 0), 0) : null;
 
   // Valor hora de SICETAC de la via del viaje.
@@ -2031,12 +2038,17 @@ export async function tiemposLogisticos(viaje: Viaje) {
   const pactadoDescargue = suma("pactadoDescargue");
   const ejecutadoCargue = suma("ejecutadoCargue");
   const ejecutadoDescargue = suma("ejecutadoDescargue");
-  // Piso del cumplido. El RNDC lo calcula con las horas EJECUTADAS (entrada a
-  // salida, cargue + descargue): 00006775 (5,72 h de mas, valor hora $92.958)
-  // dio CMA045 con $530.000 adicionales y le faltaban ~$1.400 para
-  // movilizacion + horas ejecutadas x valor hora. Sin tiempos, el de despacho.
+  const conEsperaCargue = suma("conEsperaCargue");
+  const conEsperaDescargue = suma("conEsperaDescargue");
+  // Piso del cumplido (CMA045): movilizacion + valor hora x horas desde la
+  // LLEGADA hasta la salida, cargue + descargue (la espera cuenta, como dice
+  // el portal: "Incluye Espera + Cargue"). Verificado en produccion con
+  // 00006775 (2026-10-06): movilizacion $3.647.929, valor hora $92.958,
+  // llegada->salida 8 h 13 + 2 h = 10,22 h -> piso $4.597.650. Con valor a
+  // pagar $4.551.761 (horas de entrada a salida) dio CMA045; con $4.597.761
+  // paso. Sin tiempos, el piso de despacho (horas pactadas).
   const horasEjecutadas =
-    ejecutadoCargue !== null && ejecutadoDescargue !== null ? (ejecutadoCargue + ejecutadoDescargue) / 60 : null;
+    conEsperaCargue !== null && conEsperaDescargue !== null ? (conEsperaCargue + conEsperaDescargue) / 60 : null;
   const piso = vivo
     ? {
         valor: Math.ceil(vivo.valorMoviliza + (vivo.valorHora ?? 0) * (horasEjecutadas ?? horasPactadas)),
@@ -2067,8 +2079,11 @@ export async function tiemposLogisticos(viaje: Viaje) {
      * [Guia Cumplido 3.4 y 3.9; CMA045], salvo flota propia (valor 0).
      */
     piso,
-    diferenciaValorCargue: valorPor(ejecutadoCargue, pactadoCargue),
-    diferenciaValorDescargue: valorPor(ejecutadoDescargue, pactadoDescargue),
+    conEsperaCargue,
+    conEsperaDescargue,
+    // El adicional sugerido usa las mismas horas que el piso del RNDC.
+    diferenciaValorCargue: valorPor(conEsperaCargue ?? ejecutadoCargue, pactadoCargue),
+    diferenciaValorDescargue: valorPor(conEsperaDescargue ?? ejecutadoDescargue, pactadoDescargue),
   };
 }
 
