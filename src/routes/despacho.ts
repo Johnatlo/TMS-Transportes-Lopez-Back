@@ -1682,18 +1682,22 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
         PROCESO_ID_CUMPLIR_REMESA
       );
     // Como el portal: lo que el GPS ya reporto (cumplido inicial, proceso 45)
-    // no se envia; mandar otro valor distinto hace rechazar el cumplido
-    // (CRE111). Solo van los tiempos que el GPS no tiene.
+    // no se reenvia igual. Si el usuario lo corrigio a mano, va su valor y el
+    // RNDC decide (puede responder CRE111 si no acepta cambiar el del GPS).
     const gps = await gpsDeRemesa(remesa.consecutivoRemesa!);
+    const mismoMinuto = (a: Date | null, b: Date | null | undefined) =>
+      !!a && !!b && Math.floor(a.getTime() / 60000) === Math.floor(new Date(b).getTime() / 60000);
+    const segunGps = (campo: "llegadaCargue" | "salidaCargue" | "llegadaDescargue" | "salidaDescargue") =>
+      gps?.[campo] && (datos[campo] === null || mismoMinuto(datos[campo], gps[campo])) ? null : datos[campo];
     let enviados: typeof datos = datos;
     let resultado;
     if (gps !== undefined) {
       enviados = {
         ...datos,
-        llegadaCargue: gps?.llegadaCargue ? null : datos.llegadaCargue,
-        salidaCargue: gps?.salidaCargue ? null : datos.salidaCargue,
-        llegadaDescargue: gps?.llegadaDescargue ? null : datos.llegadaDescargue,
-        salidaDescargue: gps?.salidaDescargue ? null : datos.salidaDescargue,
+        llegadaCargue: segunGps("llegadaCargue"),
+        salidaCargue: segunGps("salidaCargue"),
+        llegadaDescargue: segunGps("llegadaDescargue"),
+        salidaDescargue: segunGps("salidaDescargue"),
       };
       resultado = await enviar(enviados);
     } else {
@@ -1728,11 +1732,11 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
       cantidadEntregada: datos.cantidadEntregada,
       entradaCargue: datos.entradaCargue,
       entradaDescargue: datos.entradaDescargue,
-      // Los del GPS cuando los hay (asi quedaron en el RNDC); si no, lo enviado.
-      llegadaCargue: gps?.llegadaCargue ?? enviados.llegadaCargue,
-      salidaCargue: gps?.salidaCargue ?? enviados.salidaCargue,
-      llegadaDescargue: gps?.llegadaDescargue ?? enviados.llegadaDescargue,
-      salidaDescargue: gps?.salidaDescargue ?? enviados.salidaDescargue,
+      // Lo enviado (incluida una correccion al GPS); si no se envio, el del GPS.
+      llegadaCargue: enviados.llegadaCargue ?? gps?.llegadaCargue ?? null,
+      salidaCargue: enviados.salidaCargue ?? gps?.salidaCargue ?? null,
+      llegadaDescargue: enviados.llegadaDescargue ?? gps?.llegadaDescargue ?? null,
+      salidaDescargue: enviados.salidaDescargue ?? gps?.salidaDescargue ?? null,
       fechaCumplido: new Date(),
       cumplidoPorId: req.usuario?.id ?? null,
       mensajeError: resultado.ok ? null : `Ya estaba cumplida en el RNDC (radicado ${radicado}).`,
@@ -1992,20 +1996,29 @@ export async function tiemposLogisticos(viaje: Viaje) {
   // Valor hora de SICETAC de la via del viaje.
   let valorHora: number | null = null;
   let errorSicetac: string | null = null;
+  let piso: { valor: number; codVia: string | null; via: string | null; periodo: string | null; horasPactadas: number } | null = null;
   const [principal, vehiculo] = await Promise.all([plantillas.findById(viaje.plantillaId), vehiculos.findById(viaje.vehiculoId)]);
   const ultima = remesas.length ? await plantillas.findById(remesas[remesas.length - 1].plantillaId) : null;
   const origen = aCabeceraMunicipal(principal?.municipioOrigen);
   const destino = aCabeceraMunicipal(ultima?.municipioDestino ?? principal?.municipioDestino);
+  // Las mismas horas con que se verifica el piso al despachar: las de la plantilla principal.
+  const horasPactadas = principal
+    ? horasPactadasTotales([
+        { horas: principal.horasPactoCargue, minutos: principal.minutosPactoCargue },
+        { horas: principal.horasPactoDescargue, minutos: principal.minutosPactoDescargue },
+      ])
+    : 0;
   if (!config.rndc.simular && origen && destino && vehiculo?.configuracion) {
     try {
       const vivo = await pisoSicetacEnVivo(
         new RndcClient({ wsdlUrl: config.rndc.consultasWsdlUrl, usuario: config.rndc.usuario, password: config.rndc.password, simular: false, reintentos: config.rndc.reintentos, soloConsultas: true }),
         credenciales,
-        { configuracion: vehiculo.configuracion, origen, destino, codVia: viaje.codVia, horasPactadas: 0,
+        { configuracion: vehiculo.configuracion, origen, destino, codVia: viaje.codVia, horasPactadas,
           unidadTransporte: config.sicetac.unidadTransporte, tipoCarga: config.sicetac.tipoCarga },
         config.sicetac.mesesHaciaAtras
       );
       valorHora = vivo?.valorHora ?? null;
+      piso = vivo ? { valor: vivo.piso, codVia: vivo.codVia, via: vivo.descripcion, periodo: vivo.periodo, horasPactadas } : null;
       if (!vivo) errorSicetac = "La via no aparece en SICETAC para esta ruta y configuracion.";
     } catch (exc) {
       errorSicetac = (exc as Error).message.slice(0, 160);
@@ -2027,6 +2040,11 @@ export async function tiemposLogisticos(viaje: Viaje) {
     ejecutadoDescargue,
     valorHora,
     errorSicetac,
+    /**
+     * Piso SICETAC: el valor a pagar del cumplido debe ser igual o mayor
+     * [Guia Cumplido 3.4 y 3.9], salvo flota propia (valor 0).
+     */
+    piso,
     diferenciaValorCargue: valorPor(ejecutadoCargue, pactadoCargue),
     diferenciaValorDescargue: valorPor(ejecutadoDescargue, pactadoDescargue),
   };
