@@ -1605,6 +1605,15 @@ export interface DatosCumplidoManifiesto {
   numManifiesto: string;
   /** Sin ella el RNDC responde CMA140. */
   fechaEntregaDocumentos: Date;
+  /**
+   * Via utilizada. El portal la llena con la del manifiesto y el RNDC calcula
+   * con ella el piso SICETAC del cumplido [Guia Cumplido 3.2]. Sin ella, un
+   * manifiesto expedido por una via no estandar (00006775, via 11693) daba
+   * CMA045 aun sumando $530.000 al valor a pagar. CODVIA esta en el
+   * diccionario del proceso 6 (verificado en pruebas 2026-10-06: una etiqueta
+   * inventada da "no se encuentra en Diccionario de Datos"; CODVIA no).
+   */
+  codVia?: string | null;
   retencionFuente: number;
   /** null = el vehiculo no causa FOPAT: la etiqueta no se envia. */
   retencionFopat: number | null;
@@ -1630,6 +1639,7 @@ export function construirDatosCumplidoManifiesto(d: DatosCumplidoManifiesto): Re
     NUMMANIFIESTOCARGA: d.numManifiesto,
     TIPOCUMPLIDOMANIFIESTO: TIPO_CUMPLIDO_NORMAL,
     FECHAENTREGADOCUMENTOS: formatearFecha(d.fechaEntregaDocumentos),
+    CODVIA: d.codVia || null,
     VALORADICIONALHORASCARGUE: siHay(d.valorAdicionalHorasCargue),
     VALORADICIONALHORASDESCARGUE: siHay(d.valorAdicionalHorasDescargue),
     VALORADICIONALFLETE: siHay(d.valorAdicionalFlete),

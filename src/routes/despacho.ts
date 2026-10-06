@@ -2205,6 +2205,7 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
         construirDatosCumplidoManifiesto({
           numManifiesto: viaje.consecutivoManifiesto!,
           fechaEntregaDocumentos: fechaEntrega,
+          codVia: viaje.codVia,
           retencionFuente,
           retencionFopat,
           ...valores,
