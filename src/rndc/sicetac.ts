@@ -229,11 +229,39 @@ export interface ResultadoConsultaSicetac {
  * aplicando los del mes anterior, asi que se reintenta hacia atras en vez de
  * devolver una lista vacia.
  */
+/**
+ * Respuestas de SICETAC ya obtenidas, por filtros. El RNDC limita las
+ * consultas del proceso 26: tras varias seguidas responde RNDC13 a todas
+ * durante un buen rato (visto el 2026-10-06: diez consultas iguales, todas
+ * RNDC13 en 15-30 ms, y seguia igual minutos despues). Los valores cambian
+ * por periodo, asi que se reusa la respuesta unas horas en vez de volver a
+ * preguntar cada vez que se abre un despacho o un cumplido.
+ */
+const CACHE_SICETAC = new Map<string, { hasta: number; resultado: ResultadoConsultaSicetac }>();
+const VIGENCIA_CACHE_SICETAC_MS = 6 * 3_600_000;
+
 export async function consultarSicetac(
   cliente: RndcClient,
   credenciales: CredencialesRndc,
   filtros: FiltrosSicetac,
   mesesHaciaAtras = 3
+): Promise<ResultadoConsultaSicetac> {
+  const clave = JSON.stringify([filtros, mesesHaciaAtras]);
+  const guardado = CACHE_SICETAC.get(clave);
+  if (guardado && guardado.hasta > Date.now()) return guardado.resultado;
+  const resultado = await consultarSicetacSinCache(cliente, credenciales, filtros, mesesHaciaAtras);
+  // Solo se guarda lo que trajo vias: un mes vacio puede llenarse pronto.
+  if (resultado.filas.length > 0) {
+    CACHE_SICETAC.set(clave, { hasta: Date.now() + VIGENCIA_CACHE_SICETAC_MS, resultado });
+  }
+  return resultado;
+}
+
+async function consultarSicetacSinCache(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  filtros: FiltrosSicetac,
+  mesesHaciaAtras: number
 ): Promise<ResultadoConsultaSicetac> {
   const periodosVacios: string[] = [];
   let periodo = filtros.periodo;

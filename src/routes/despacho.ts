@@ -2021,7 +2021,10 @@ export async function tiemposLogisticos(viaje: Viaje) {
       piso = vivo ? { valor: vivo.piso, codVia: vivo.codVia, via: vivo.descripcion, periodo: vivo.periodo, horasPactadas } : null;
       if (!vivo) errorSicetac = "La via no aparece en SICETAC para esta ruta y configuracion.";
     } catch (exc) {
-      errorSicetac = (exc as Error).message.slice(0, 160);
+      // RNDC13 en SICETAC: el RNDC esta limitando las consultas (ver CACHE_SICETAC).
+      errorSicetac = /RNDC13/.test((exc as Error).message)
+        ? "el RNDC esta limitando las consultas a SICETAC (RNDC13). Espera unos minutos y consulta de nuevo"
+        : (exc as Error).message.slice(0, 160);
     }
   }
 
