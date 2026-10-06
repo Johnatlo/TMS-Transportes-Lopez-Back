@@ -17,6 +17,8 @@
 
 import { RndcClient, RndcError, leerEtiqueta } from "./client";
 import { CredencialesRndc } from "./builders";
+import { pool } from "../db";
+import type { RowDataPacket } from "mysql2";
 
 export const TIPO_SOLICITUD_SICETAC = "6";
 export const PROCESO_ID_SICETAC = "26";
@@ -216,6 +218,8 @@ export function horasPactadasTotales(
 
 export interface ResultadoConsultaSicetac {
   filas: FilaSicetac[];
+  /** Si SICETAC no respondio y se uso la ultima respuesta guardada: cuando se guardo. */
+  guardadoEn?: string;
   /** Periodo que finalmente devolvio datos. */
   periodoUsado: string | null;
   /** Periodos que se intentaron sin resultado, para poder explicarlo. */
@@ -249,10 +253,28 @@ export async function consultarSicetac(
   const clave = JSON.stringify([filtros, mesesHaciaAtras]);
   const guardado = CACHE_SICETAC.get(clave);
   if (guardado && guardado.hasta > Date.now()) return guardado.resultado;
-  const resultado = await consultarSicetacSinCache(cliente, credenciales, filtros, mesesHaciaAtras);
+  let resultado: ResultadoConsultaSicetac;
+  try {
+    resultado = await consultarSicetacSinCache(cliente, credenciales, filtros, mesesHaciaAtras);
+  } catch (exc) {
+    // SICETAC no responde (casi siempre el limite de consultas, RNDC13): la
+    // ultima respuesta buena de estos mismos filtros, si la hay.
+    const [filas] = await pool
+      .query<RowDataPacket[]>("SELECT resultado, guardadoEn FROM sicetac_respuestas WHERE clave = ?", [clave])
+      .catch(() => [[] as RowDataPacket[]]);
+    if (!filas[0]) throw exc;
+    return { ...(JSON.parse(filas[0].resultado) as ResultadoConsultaSicetac), guardadoEn: new Date(filas[0].guardadoEn).toISOString() };
+  }
   // Solo se guarda lo que trajo vias: un mes vacio puede llenarse pronto.
   if (resultado.filas.length > 0) {
     CACHE_SICETAC.set(clave, { hasta: Date.now() + VIGENCIA_CACHE_SICETAC_MS, resultado });
+    await pool
+      .query(
+        `INSERT INTO sicetac_respuestas (clave, resultado, guardadoEn) VALUES (?, ?, UTC_TIMESTAMP())
+         ON DUPLICATE KEY UPDATE resultado = VALUES(resultado), guardadoEn = VALUES(guardadoEn)`,
+        [clave, JSON.stringify(resultado)]
+      )
+      .catch((e) => console.warn("SICETAC: no se pudo guardar la respuesta:", (e as Error).message));
   }
   return resultado;
 }
@@ -350,9 +372,13 @@ export interface PisoEnVivo {
   codVia: string | null;
   descripcion: string | null;
   piso: number;
+  /** Valor de movilizacion (el piso sin horas). */
+  valorMoviliza: number;
   /** Costo de cada hora de cargue o descargue en esa via [SIC21]. */
   valorHora: number | null;
   periodo: string | null;
+  /** Fecha de la respuesta guardada, si SICETAC no respondio en vivo. */
+  guardadoEn?: string;
   unidadTransporte: string | null;
   tipoCarga: string | null;
 }
@@ -410,8 +436,10 @@ export async function pisoSicetacEnVivo(
     codVia: fila.rutasId,
     descripcion: fila.via,
     piso,
+    valorMoviliza: fila.valorMoviliza ?? 0,
     valorHora: fila.valorHora,
     periodo: resultado.periodoUsado,
+    guardadoEn: resultado.guardadoEn,
     unidadTransporte: fila.nombreUnidadTransporte,
     tipoCarga: fila.nombreTipoCarga,
   };

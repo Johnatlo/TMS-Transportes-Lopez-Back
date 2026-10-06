@@ -303,6 +303,18 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Ultima respuesta buena de SICETAC por filtros (periodo, configuracion,
+  // origen, destino). El RNDC limita las consultas del proceso 26 (RNDC13 a
+  // todas durante un buen rato): con esto el cumplido usa los valores que se
+  // obtuvieron al despachar, aunque SICETAC no responda en ese momento.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sicetac_respuestas (
+      clave VARCHAR(255) PRIMARY KEY,
+      resultado MEDIUMTEXT NOT NULL,
+      guardadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Sesiones abiertas. Se guarda el HASH del token (no el token): quien lea
   // esta tabla no puede suplantar a nadie.
   await pool.query(`

@@ -1996,7 +1996,7 @@ export async function tiemposLogisticos(viaje: Viaje) {
   // Valor hora de SICETAC de la via del viaje.
   let valorHora: number | null = null;
   let errorSicetac: string | null = null;
-  let piso: { valor: number; codVia: string | null; via: string | null; periodo: string | null; horasPactadas: number } | null = null;
+  let vivo: Awaited<ReturnType<typeof pisoSicetacEnVivo>> = null;
   const [principal, vehiculo] = await Promise.all([plantillas.findById(viaje.plantillaId), vehiculos.findById(viaje.vehiculoId)]);
   const ultima = remesas.length ? await plantillas.findById(remesas[remesas.length - 1].plantillaId) : null;
   const origen = aCabeceraMunicipal(principal?.municipioOrigen);
@@ -2010,7 +2010,7 @@ export async function tiemposLogisticos(viaje: Viaje) {
     : 0;
   if (!config.rndc.simular && origen && destino && vehiculo?.configuracion) {
     try {
-      const vivo = await pisoSicetacEnVivo(
+      vivo = await pisoSicetacEnVivo(
         new RndcClient({ wsdlUrl: config.rndc.consultasWsdlUrl, usuario: config.rndc.usuario, password: config.rndc.password, simular: false, reintentos: config.rndc.reintentos, soloConsultas: true }),
         credenciales,
         { configuracion: vehiculo.configuracion, origen, destino, codVia: viaje.codVia, horasPactadas,
@@ -2018,7 +2018,6 @@ export async function tiemposLogisticos(viaje: Viaje) {
         config.sicetac.mesesHaciaAtras
       );
       valorHora = vivo?.valorHora ?? null;
-      piso = vivo ? { valor: vivo.piso, codVia: vivo.codVia, via: vivo.descripcion, periodo: vivo.periodo, horasPactadas } : null;
       if (!vivo) errorSicetac = "La via no aparece en SICETAC para esta ruta y configuracion.";
     } catch (exc) {
       // RNDC13 en SICETAC: el RNDC esta limitando las consultas (ver CACHE_SICETAC).
@@ -2032,6 +2031,26 @@ export async function tiemposLogisticos(viaje: Viaje) {
   const pactadoDescargue = suma("pactadoDescargue");
   const ejecutadoCargue = suma("ejecutadoCargue");
   const ejecutadoDescargue = suma("ejecutadoDescargue");
+  // Piso del cumplido. El RNDC lo calcula con las horas EJECUTADAS (entrada a
+  // salida, cargue + descargue): 00006775 (5,72 h de mas, valor hora $92.958)
+  // dio CMA045 con $530.000 adicionales y le faltaban ~$1.400 para
+  // movilizacion + horas ejecutadas x valor hora. Sin tiempos, el de despacho.
+  const horasEjecutadas =
+    ejecutadoCargue !== null && ejecutadoDescargue !== null ? (ejecutadoCargue + ejecutadoDescargue) / 60 : null;
+  const piso = vivo
+    ? {
+        valor: Math.ceil(vivo.valorMoviliza + (vivo.valorHora ?? 0) * (horasEjecutadas ?? horasPactadas)),
+        conHorasEjecutadas: horasEjecutadas !== null,
+        horas: horasEjecutadas ?? horasPactadas,
+        valorDespacho: vivo.piso,
+        horasPactadas,
+        valorMoviliza: vivo.valorMoviliza,
+        codVia: vivo.codVia,
+        via: vivo.descripcion,
+        periodo: vivo.periodo,
+        guardadoEn: vivo.guardadoEn ?? null,
+      }
+    : null;
   // Diferencia en horas (positiva = horas de mas) por el valor hora.
   const valorPor = (ejec: number | null, pact: number | null) =>
     ejec === null || pact === null || valorHora === null ? null : Math.round(((ejec - pact) / 60) * valorHora);
@@ -2044,8 +2063,8 @@ export async function tiemposLogisticos(viaje: Viaje) {
     valorHora,
     errorSicetac,
     /**
-     * Piso SICETAC: el valor a pagar del cumplido debe ser igual o mayor
-     * [Guia Cumplido 3.4 y 3.9], salvo flota propia (valor 0).
+     * Piso SICETAC del cumplido: el valor a pagar debe ser igual o mayor
+     * [Guia Cumplido 3.4 y 3.9; CMA045], salvo flota propia (valor 0).
      */
     piso,
     diferenciaValorCargue: valorPor(ejecutadoCargue, pactadoCargue),

@@ -1607,11 +1607,11 @@ export interface DatosCumplidoManifiesto {
   fechaEntregaDocumentos: Date;
   /**
    * Via utilizada. El portal la llena con la del manifiesto y el RNDC calcula
-   * con ella el piso SICETAC del cumplido [Guia Cumplido 3.2]. Sin ella, un
-   * manifiesto expedido por una via no estandar (00006775, via 11693) daba
-   * CMA045 aun sumando $530.000 al valor a pagar. CODVIA esta en el
-   * diccionario del proceso 6 (verificado en pruebas 2026-10-06: una etiqueta
-   * inventada da "no se encuentra en Diccionario de Datos"; CODVIA no).
+   * con ella el piso SICETAC del cumplido [Guia Cumplido 3.2]; se envia la del
+   * manifiesto, como el portal. CODVIA esta en el diccionario del proceso 6
+   * (verificado en pruebas 2026-10-06: una etiqueta inventada da "no se
+   * encuentra en Diccionario de Datos"; CODVIA no). El CMA045 de 00006775 no
+   * era por esto, sino por las horas ejecutadas (ver tiemposLogisticos).
    */
   codVia?: string | null;
   retencionFuente: number;
