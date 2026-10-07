@@ -12,6 +12,7 @@ import { catalogoRouter } from "./routes/catalogo";
 import { despachoRouter } from "./routes/despacho";
 import { authRouter } from "./routes/auth";
 import { usuariosRouter } from "./routes/usuarios";
+import { cuadroRouter } from "./routes/cuadro";
 import { exigirSesion } from "./auth";
 
 async function main() {
@@ -42,6 +43,7 @@ async function main() {
   app.use("/api/catalogo", exigirSesion, catalogoRouter);
   app.use("/api/despacho", exigirSesion, despachoRouter);
   app.use("/api/usuarios", exigirSesion, usuariosRouter);
+  app.use("/api/cuadro", exigirSesion, cuadroRouter);
 
   /**
    * Frontend compilado (despliegue).

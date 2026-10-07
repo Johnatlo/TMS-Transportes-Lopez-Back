@@ -315,6 +315,96 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // ---------------------------------------------------------------------
+  // Cuadro pagos: control operativo y financiero de cada viaje, tenga o no
+  // manifiesto (urbanos, o viajes que planilla el mismo generador de carga).
+  // Reemplaza la hoja de Excel "CUADRO PAGOS": una fila por viaje
+  // facturable (empresa + remision). Los viajes con manifiesto entran solos,
+  // una fila por remesa (viajeRemesaId).
+  // ---------------------------------------------------------------------
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bombas (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nombre VARCHAR(120) NOT NULL,
+      ciudad VARCHAR(80),
+      activa TINYINT(1) NOT NULL DEFAULT 1,
+      UNIQUE KEY uq_bomba (nombre, ciudad)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cuadro_viajes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      fecha DATE NOT NULL,
+      vehiculoId INT NULL,
+      placa VARCHAR(15) NOT NULL,
+      conductor VARCHAR(150),
+      empresa VARCHAR(200) NOT NULL,
+      viajeId INT NULL,
+      viajeRemesaId INT NULL,
+      manifiesto VARCHAR(20),
+      remesa VARCHAR(20),
+      remision VARCHAR(60),
+      pesoKg DOUBLE,
+      -- KILO: pesoKg x tarifaKilo. FIJO: valorFijo.
+      tipoFlete VARCHAR(5) NOT NULL DEFAULT 'KILO',
+      tarifaKilo DOUBLE,
+      valorFijo DOUBLE,
+      fechaDescargue DATE,
+      -- EN_RUTA, CONDUCTOR, PARQUEADERO, OFICINA, RADICADO. Parqueadero y
+      -- oficina (Don Alexander) solo en el flujo de CORAME / Cartones America.
+      estadoPapeles VARCHAR(15) NOT NULL DEFAULT 'EN_RUTA',
+      flujoCorame TINYINT(1) NOT NULL DEFAULT 0,
+      fechaRadicado DATE,
+      -- Facturado aunque aun no se haya anotado numero y fecha (azul en el Excel).
+      facturado TINYINT(1) NOT NULL DEFAULT 0,
+      facturaNumero VARCHAR(30),
+      facturaFecha DATE,
+      facturaFechaPago DATE,
+      -- Pago al dueno del vehiculo (terceros: 15 dias despues de entregar).
+      fechaPagoSaldo DATE,
+      revisadoContabilidadPorId INT,
+      revisadoContabilidadEn DATETIME,
+      revisadoGerenciaPorId INT,
+      revisadoGerenciaEn DATETIME,
+      anulado TINYINT(1) NOT NULL DEFAULT 0,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_cuadro_remesa (viajeRemesaId),
+      INDEX idx_cuadro_fecha (fecha),
+      INDEX idx_cuadro_factura (facturaNumero)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Anticipos que entregan las bombas aliadas: van aparte del anticipo del
+  // manifiesto. fechaPago = cuando la empresa le paga a la bomba.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cuadro_anticipos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      cuadroViajeId INT NOT NULL,
+      bombaId INT NOT NULL,
+      valor DOUBLE NOT NULL,
+      fecha DATE NOT NULL,
+      fechaPago DATE,
+      nota VARCHAR(200),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_anticipo_viaje (cuadroViajeId),
+      CONSTRAINT fk_anticipo_viaje FOREIGN KEY (cuadroViajeId) REFERENCES cuadro_viajes(id) ON DELETE CASCADE,
+      CONSTRAINT fk_anticipo_bomba FOREIGN KEY (bombaId) REFERENCES bombas(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Notas del viaje con autor y fecha (como los comentarios del Excel).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cuadro_notas (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      cuadroViajeId INT NOT NULL,
+      texto VARCHAR(1000) NOT NULL,
+      usuarioId INT,
+      creadaEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_nota_viaje (cuadroViajeId),
+      CONSTRAINT fk_nota_viaje FOREIGN KEY (cuadroViajeId) REFERENCES cuadro_viajes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Sesiones abiertas. Se guarda el HASH del token (no el token): quien lea
   // esta tabla no puede suplantar a nadie.
   await pool.query(`
@@ -550,6 +640,11 @@ export async function initSchema(): Promise<void> {
     // anteriores se calcularon con la fila mas barata (contenedor vacio) y
     // quedaban muy por debajo del piso real: con 0 no se usan.
     ["vias", "pisoVerificado", "TINYINT(1) NOT NULL DEFAULT 0"],
+
+    // Flota propia (Transportes Lopez o Transportes MYC: dos empresas que se
+    // manejan como una; solo Lopez planilla) o vehiculo de un tercero, que se
+    // paga aparte y a los 15 dias de entregar el viaje.
+    ["vehiculos", "flota", "VARCHAR(10) NOT NULL DEFAULT 'TERCERO'"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).

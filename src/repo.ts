@@ -39,6 +39,8 @@ export interface Vehiculo {
   nombreTenedor: string | null;
   /** Cedula del conductor habitual, para sugerirlo en el despacho. */
   cedulaConductorHabitual: string | null;
+  /** LOPEZ o MYC (flota propia) o TERCERO. */
+  flota?: "LOPEZ" | "MYC" | "TERCERO";
 }
 
 export interface Conductor {
@@ -538,6 +540,7 @@ export const vehiculos = {
       fechaVencTecnomecanica: "fecha",
       aplicaFopat: "booleano",
       nitMonitoreoFlota: "texto",
+      flota: "texto",
       activo: "booleano",
     });
     return this.findById(id);

@@ -153,8 +153,11 @@ catalogoRouter.put("/vehiculos/:id", async (req, res) => {
     "placa", "placaRemolque", "marca", "configuracion", "capacidadKg", "pesoVehiculoVacio",
     "codTipoCarroceria", "propietarioNit", "codTipoIdTenedor", "numIdTenedor", "nombreTenedor",
     "fechaVencSoat", "fechaVencTecnomecanica", "aplicaFopat", "nitMonitoreoFlota", "activo",
-    "cedulaConductorHabitual",
+    "cedulaConductorHabitual", "flota",
   ]);
+  if ("flota" in datos && !["LOPEZ", "MYC", "TERCERO"].includes(String(datos.flota))) {
+    return res.status(422).json({ error: "La flota es LOPEZ, MYC o TERCERO." });
+  }
   if ("placa" in datos) datos.placa = mayusculas(datos.placa);
   if ("placaRemolque" in datos) datos.placaRemolque = mayusculas(datos.placaRemolque);
   if ("numIdTenedor" in datos) datos.numIdTenedor = soloDigitos(datos.numIdTenedor);
