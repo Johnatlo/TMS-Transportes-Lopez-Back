@@ -32,11 +32,17 @@ function rutaMysqldump(): string {
   return fs.existsSync(xampp) ? xampp : "mysqldump";
 }
 
+/** "AAAA-MM-DD_HHMM" de la fecha, para el nombre del archivo de respaldo. */
 function marcaDeTiempo(d = new Date()): string {
   const dos = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}_${dos(d.getHours())}${dos(d.getMinutes())}`;
 }
 
+/**
+ * Punto de entrada: corre mysqldump (copia consistente sin bloquear tablas),
+ * lo comprime en .sql.gz (primero como .parcial y luego lo renombra) y borra
+ * los respaldos mas viejos que RESPALDO_DIAS.
+ */
 async function main() {
   fs.mkdirSync(DIR, { recursive: true });
   const destino = path.join(DIR, `${DB}-${marcaDeTiempo()}.sql.gz`);

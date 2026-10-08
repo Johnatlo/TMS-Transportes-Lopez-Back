@@ -1,3 +1,11 @@
+/**
+ * Capa de acceso a datos: SQL explicito y tipado, un objeto por tabla.
+ *
+ * remolques, vehiculos, conductores, terceros, rutas, municipios, vias,
+ * empresasMonitoreo, parametros, plantillas, viajeRemesas, viajes y
+ * consecutivos. Las rutas no escriben SQL: usan estos repositorios.
+ * actualizarFila permite editar desde el catalogo solo los campos enviados.
+ */
 import { pool } from "./db";
 import { config } from "./config";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -248,6 +256,7 @@ const SELECT_VIAJES = `
     LEFT JOIN usuarios ucu ON ucu.id = v.cumplidoPorId`;
 
 // ---------- Helpers ----------
+/** Normaliza 'activo' (TINYINT 0/1 de MySQL) a boolean. */
 function mapBool<T extends { activo: any }>(row: T): T {
   return { ...row, activo: !!row.activo };
 }
@@ -259,10 +268,12 @@ function aNumero(valor: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Normaliza un viaje leido de MySQL: fopatPagado llega como 0/1 y se pasa a boolean. */
 function mapViaje<T extends { fopatPagado?: any }>(row: T): T {
   return { ...row, fopatPagado: !!row.fopatPagado };
 }
 
+/** Normaliza un tercero: latitud y longitud (DECIMAL, llegan como texto) a number. */
 function mapTercero(row: Tercero): Tercero {
   return { ...row, latitud: aNumero(row.latitud), longitud: aNumero(row.longitud) };
 }
@@ -272,6 +283,7 @@ function mapVehiculo(row: Vehiculo): Vehiculo {
   return { ...row, activo: !!row.activo, aplicaFopat: !!row.aplicaFopat };
 }
 
+/** Date -> "AAAA-MM-DD HH:MM:SS" en UTC, el formato que espera MySQL. null se conserva. */
 function fechaMysql(d: Date | null | undefined): string | null {
   if (!d) return null;
   return d.toISOString().slice(0, 19).replace("T", " ");
@@ -348,16 +360,20 @@ export async function actualizarFila(
 }
 
 // ---------- Remolques (trailers) ----------
+/** Repositorio de remolques (tabla remolques). */
 export const remolques = {
+  /** Todos los remolques, por placa. */
   async findMany(): Promise<Remolque[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM remolques ORDER BY placa");
     return (rows as unknown as Remolque[]).map(mapBool);
   },
+  /** Un remolque por id, o null. */
   async findById(id: number): Promise<Remolque | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM remolques WHERE id = ?", [id]);
     const row = rows[0] as unknown as Remolque | undefined;
     return row ? mapBool(row) : null;
   },
+  /** Crea un remolque (placa, ejes, capacidad y vencimientos) y lo devuelve. */
   async create(data: Omit<Remolque, "id" | "activo">): Promise<Remolque> {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO remolques (placa, numEjes, capacidadKg, fechaVencSoat, fechaVencTecnomecanica)
@@ -372,6 +388,7 @@ export const remolques = {
     );
     return (await this.findById(result.insertId))!;
   },
+  /** Edita un remolque desde el catalogo: solo los campos enviados (ver actualizarFila). */
   async update(id: number, datos: Record<string, unknown>): Promise<Remolque | null> {
     await actualizarFila("remolques", id, datos, {
       placa: "texto",
@@ -386,6 +403,10 @@ export const remolques = {
 };
 
 // ---------- Vehiculos ----------
+/**
+ * Repositorio de vehiculos (tabla vehiculos): datos RNDC, flota, GPS y
+ * borrado logico (eliminado = 1, se recupera al crear la misma placa).
+ */
 export const vehiculos = {
   /** Cambia el proveedor de GPS (EMF) por defecto de un vehiculo. */
   async fijarMonitoreo(id: number, nit: string | null): Promise<void> {
@@ -462,11 +483,16 @@ export const vehiculos = {
   async restaurar(id: number): Promise<void> {
     await pool.query("UPDATE vehiculos SET eliminado = 0, activo = 1 WHERE id = ?", [id]);
   },
+  /** Un vehiculo por id, o null. */
   async findById(id: number): Promise<Vehiculo | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM vehiculos WHERE id = ?", [id]);
     const row = rows[0] as Vehiculo | undefined;
     return row ? mapVehiculo(row) : null;
   },
+  /**
+   * Crea un vehiculo con los datos que exige el RNDC (configuracion, titular,
+   * carroceria, peso vacio) y lo devuelve.
+   */
   async create(
     data: Omit<
       Vehiculo,
@@ -522,6 +548,10 @@ export const vehiculos = {
     );
     return (await this.findById(result.insertId))!;
   },
+  /**
+   * Edita un vehiculo desde el catalogo (incluida la flota: LOPEZ, MYC o
+   * TERCERO). Solo cambia los campos enviados (ver actualizarFila).
+   */
   async update(id: number, datos: Record<string, unknown>): Promise<Vehiculo | null> {
     await actualizarFila("vehiculos", id, datos, {
       placa: "texto",
@@ -548,6 +578,7 @@ export const vehiculos = {
 };
 
 // ---------- Conductores ----------
+/** Repositorio de conductores (tabla conductores). */
 export const conductores = {
   /**
    * Refresca los datos que el RNDC toma del RUNT (licencia, categoria y
@@ -592,15 +623,21 @@ export const conductores = {
     return res.affectedRows > 0;
   },
 
+  /** Todos los conductores, por nombre. */
   async findMany(): Promise<Conductor[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM conductores ORDER BY nombre");
     return (rows as Conductor[]).map(mapBool);
   },
+  /** Un conductor por id, o null. */
   async findById(id: number): Promise<Conductor | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM conductores WHERE id = ?", [id]);
     const row = rows[0] as Conductor | undefined;
     return row ? mapBool(row) : null;
   },
+  /**
+   * Crea un conductor (cedula, nombre, licencia y su vencimiento) y lo devuelve.
+   * El tipo de identificacion por defecto es C (cedula).
+   */
   async create(
     data: Omit<Conductor, "id" | "activo" | "codTipoId"> & Partial<Pick<Conductor, "codTipoId">>
   ): Promise<Conductor> {
@@ -618,6 +655,7 @@ export const conductores = {
     );
     return (await this.findById(result.insertId))!;
   },
+  /** Edita un conductor desde el catalogo: solo los campos enviados. */
   async update(id: number, datos: Record<string, unknown>): Promise<Conductor | null> {
     await actualizarFila("conductores", id, datos, {
       codTipoId: "texto",
@@ -633,16 +671,26 @@ export const conductores = {
 };
 
 // ---------- Terceros ----------
+/**
+ * Repositorio de terceros: clientes, remitentes y destinatarios con su sede,
+ * municipio y coordenadas (tabla terceros).
+ */
 export const terceros = {
+  /** Todos los terceros (clientes, remitentes, destinatarios), por nombre. */
   async findMany(): Promise<Tercero[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM terceros ORDER BY nombre");
     return (rows as Tercero[]).map(mapTercero);
   },
+  /** Un tercero por id, o null. */
   async findById(id: number): Promise<Tercero | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM terceros WHERE id = ?", [id]);
     const row = rows[0] as Tercero | undefined;
     return row ? mapTercero(row) : null;
   },
+  /**
+   * Crea un tercero con su sede, municipio RNDC y coordenadas, y lo devuelve.
+   * Por defecto es NIT (N) y sede "0".
+   */
   async create(
     data: Omit<
       Tercero,
@@ -671,6 +719,7 @@ export const terceros = {
     );
     return (await this.findById(result.insertId))!;
   },
+  /** Edita un tercero desde el catalogo: solo los campos enviados. */
   async update(id: number, datos: Record<string, unknown>): Promise<Tercero | null> {
     await actualizarFila("terceros", id, datos, {
       codTipoId: "texto",
@@ -689,15 +738,19 @@ export const terceros = {
 };
 
 // ---------- Rutas ----------
+/** Repositorio de rutas (tabla en desuso: la ruta sale de la plantilla). */
 export const rutas = {
+  /** Todas las rutas (tabla en desuso: hoy la ruta sale de la plantilla). */
   async findMany(): Promise<Ruta[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM rutas");
     return rows as Ruta[];
   },
+  /** Una ruta por id, o null. */
   async findById(id: number): Promise<Ruta | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM rutas WHERE id = ?", [id]);
     return (rows[0] as Ruta) ?? null;
   },
+  /** Crea una ruta origen-destino con sus codigos DIVIPOLA y distancia. */
   async create(data: Omit<Ruta, "id" | "codVia"> & Partial<Pick<Ruta, "codVia">>): Promise<Ruta> {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO rutas (ciudadOrigen, ciudadDestino, codigoOrigenRndc, codigoDestinoRndc, distanciaKm, codVia)
@@ -723,7 +776,9 @@ export interface Municipio {
   departamento: string | null;
 }
 
+/** Maestro de municipios DIVIPOLA (codigo de 8 digitos y nombre). */
 export const municipios = {
+  /** Todos los municipios, por nombre. */
   async findMany(): Promise<Municipio[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM municipios ORDER BY nombre"
@@ -731,6 +786,10 @@ export const municipios = {
     return rows as Municipio[];
   },
 
+  /**
+   * Busca municipios por parte del nombre o por el comienzo del codigo
+   * (para el buscador de municipios). Maximo 'limite' resultados.
+   */
   async buscar(texto: string, limite = 20): Promise<Municipio[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT * FROM municipios
@@ -774,6 +833,10 @@ export interface Via {
   actualizadoEn: Date | null;
 }
 
+/**
+ * Vias (CODVIA) de cada par origen-destino, como las devuelve SICETAC, con
+ * el ultimo piso verificado. Se usan en Despachar para elegir la via.
+ */
 export const vias = {
   /** Vias disponibles para un par origen-destino. La estandar va primero. */
   async findByRuta(origen: string, destino: string): Promise<Via[]> {
@@ -792,6 +855,10 @@ export const vias = {
     }));
   },
 
+  /**
+   * Todas las vias guardadas. Un piso guardado antes de corregir el filtro de
+   * SICETAC (pisoVerificado = 0) se devuelve como desconocido (null).
+   */
   async findMany(): Promise<Via[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM vias ORDER BY codMunicipioOrigen, codMunicipioDestino, descripcion"
@@ -843,7 +910,12 @@ export interface EmpresaMonitoreo {
   activa: boolean;
 }
 
+/**
+ * Empresas de monitoreo de flota (proveedores de GPS) registradas en el
+ * RNDC. El manifiesto lleva el NIT de la del vehiculo (NITMONITOREOFLOTA).
+ */
 export const empresasMonitoreo = {
+  /** Las empresas de monitoreo activas, por nombre. */
   async findMany(): Promise<EmpresaMonitoreo[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM empresas_monitoreo WHERE activa = 1 ORDER BY nombre"
@@ -851,6 +923,7 @@ export const empresasMonitoreo = {
     return (rows as EmpresaMonitoreo[]).map((e) => ({ ...e, activa: !!e.activa }));
   },
 
+  /** Una empresa de monitoreo por NIT (activa o no), o null. */
   async findByNit(nit: string): Promise<EmpresaMonitoreo | null> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM empresas_monitoreo WHERE nit = ?",
@@ -869,6 +942,7 @@ export const empresasMonitoreo = {
     );
   },
 
+  /** Cambia NIT y/o nombre de una empresa de monitoreo y la devuelve. */
   async update(id: number, datos: { nit?: string; nombre?: string }): Promise<EmpresaMonitoreo | null> {
     await actualizarFila("empresas_monitoreo", id, datos, { nit: "texto", nombre: "texto" });
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM empresas_monitoreo WHERE id = ?", [id]);
@@ -876,6 +950,7 @@ export const empresasMonitoreo = {
     return row ? { ...row, activa: !!row.activa } : null;
   },
 
+  /** Desactiva una empresa de monitoreo (no se borra: viajes viejos la usan). */
   async desactivar(id: number): Promise<boolean> {
     const [res] = await pool.query<ResultSetHeader>(
       "UPDATE empresas_monitoreo SET activa = 0 WHERE id = ?",
@@ -904,7 +979,12 @@ export interface ParametrosEmpresa {
   actualizadoEn: Date | null;
 }
 
+/**
+ * Parametros de la empresa (una sola fila, id = 1): poliza de carga,
+ * tomador, aseguradora, etc. Se usan en cada remesa.
+ */
 export const parametros = {
+  /** Lee los parametros de la empresa con valores por defecto para lo que falte. */
   async obtener(): Promise<ParametrosEmpresa> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM parametros_empresa WHERE id = 1"
@@ -921,6 +1001,11 @@ export const parametros = {
     };
   },
 
+  /**
+   * Guarda los parametros: mezcla lo actual con lo enviado (lo que no viene no
+   * cambia), actualiza la fila 1 con la fecha de actualizacion y devuelve lo
+   * guardado.
+   */
   async guardar(data: Partial<ParametrosEmpresa>): Promise<ParametrosEmpresa> {
     const actual = await this.obtener();
     // El spread copia tambien las llaves con valor undefined y pisaria lo
@@ -1058,6 +1143,10 @@ function columnasPlantilla(data: NuevaPlantilla): Array<[columna: string, valor:
   ];
 }
 
+/**
+ * Plantillas de viaje: cliente, remitente, destinatario, mercancia, tiempos
+ * pactados y valores. Cada remesa de un despacho sale de una plantilla.
+ */
 export const plantillas = {
   /**
    * "Elimina" una plantilla. En realidad la desactiva (activa = 0): el
@@ -1073,10 +1162,12 @@ export const plantillas = {
     return res.affectedRows > 0;
   },
 
+  /** Las plantillas activas, cada una con sus terceros y su ruta. */
   async findMany(): Promise<PlantillaViajeConRelaciones[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE activa = 1");
     return Promise.all((rows as PlantillaViaje[]).map((p) => this.conRelaciones(p)));
   },
+  /** Una plantilla (activa o no) con sus relaciones, o null. */
   async findById(id: number): Promise<PlantillaViajeConRelaciones | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE id = ?", [id]);
     const row = rows[0] as PlantillaViaje | undefined;
@@ -1197,6 +1288,10 @@ export const plantillas = {
     }));
   },
 
+  /**
+   * Completa una plantilla con sus terceros (contratante, remitente y
+   * destinatario) y su ruta, consultados en paralelo.
+   */
   async conRelaciones(p: PlantillaViaje): Promise<PlantillaViajeConRelaciones> {
     const [contratante, remitente, destinatario, ruta] = await Promise.all([
       terceros.findById(p.contratanteId),
@@ -1215,6 +1310,10 @@ export const plantillas = {
       ruta: ruta!,
     };
   },
+  /**
+   * Crea una plantilla. Si no viene la ruta (origen y destino), se deduce del
+   * municipio del remitente y del destinatario, como en el formulario.
+   */
   async create(data: NuevaPlantilla): Promise<PlantillaViaje> {
     // Red de seguridad para quien no mande la ruta (seed, cargas masivas): se
     // precarga igual que en el formulario, desde el remitente y el destinatario.
@@ -1324,7 +1423,12 @@ export interface NuevaViajeRemesa {
   consecutivoRemesa?: string | null;
 }
 
+/**
+ * Remesas de cada viaje (tabla viaje_remesas): una por plantilla, con su
+ * consecutivo, radicado, estado y los datos de su cumplido.
+ */
 export const viajeRemesas = {
+  /** Una remesa por id, o null. */
   async findById(id: number): Promise<ViajeRemesa | null> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM viaje_remesas WHERE id = ?",
@@ -1333,6 +1437,7 @@ export const viajeRemesas = {
     return (rows[0] as ViajeRemesa) ?? null;
   },
 
+  /** Las remesas de un viaje, en orden (la 1 es la principal). */
   async findByViaje(viajeId: number): Promise<ViajeRemesa[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM viaje_remesas WHERE viajeId = ? ORDER BY orden",
@@ -1400,6 +1505,7 @@ export const viajeRemesas = {
     return r.affectedRows === 1;
   },
 
+  /** Actualiza solo los campos enviados de una remesa. */
   async update(id: number, data: Partial<Omit<ViajeRemesa, "id">>): Promise<void> {
     const campos = Object.keys(data);
     if (campos.length === 0) return;
@@ -1410,12 +1516,18 @@ export const viajeRemesas = {
 };
 
 // ---------- Viajes ----------
+/**
+ * Repositorio de viajes (tabla viajes): cada viaje es un manifiesto con su
+ * estado, radicados, valores y quien lo creo, cumplio o anulo.
+ */
 export const viajes = {
+  /** Un viaje por id (con nombres de quien lo creo, cumplio o anulo), o null. */
   async findById(id: number): Promise<Viaje | null> {
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_VIAJES} WHERE v.id = ?`, [id]);
     const row = rows[0] as Viaje | undefined;
     return row ? mapViaje(row) : null;
   },
+  /** Los ultimos 'limit' viajes, del mas reciente al mas antiguo. */
   async findMany(limit = 100): Promise<Viaje[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       `${SELECT_VIAJES} ORDER BY v.fechaCreacion DESC LIMIT ?`,
@@ -1595,6 +1707,13 @@ export const viajes = {
     const r = rows[0] as any;
     return { expedidos: Number(r.expedidos ?? 0), anulados: Number(r.anulados ?? 0) };
   },
+  /**
+   * Crea el viaje (cabecera del manifiesto) y lo devuelve.
+   *
+   * El consecutivo del manifiesto va en el mismo INSERT: si el indice unico lo
+   * rechaza por repetido, no queda un viaje a medias sin numero. Las remesas se
+   * crean aparte (viajeRemesas.crearParaViaje).
+   */
   async create(data: {
     plantillaId: number;
     vehiculoId: number;
@@ -1667,6 +1786,7 @@ export const viajes = {
     );
     return (await this.findById(result.insertId))!;
   },
+  /** Actualiza solo los campos enviados de un viaje y lo devuelve leido de nuevo. */
   async update(id: number, data: Partial<Omit<Viaje, "id">>): Promise<Viaje> {
     const campos = Object.keys(data);
     if (campos.length > 0) {
@@ -1722,7 +1842,14 @@ export interface FilaConsecutivo {
   creadoPor: string | null;
 }
 
+/** Libro de consecutivos de manifiestos y remesas (una fila por remesa). */
 export const consecutivos = {
+  /**
+   * Una fila por remesa con las columnas de la hoja de control de la empresa:
+   * fecha planillada, placa, cliente, valor del manifiesto y FOPAT (solo en la
+   * remesa 1), citas, numeros y radicados, municipios, producto, remitente y
+   * destinatario. Del mas reciente al mas antiguo.
+   */
   async listar(limite = 10000): Promise<FilaConsecutivo[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT v.id AS viajeId, vr.id AS remesaId, vr.orden,

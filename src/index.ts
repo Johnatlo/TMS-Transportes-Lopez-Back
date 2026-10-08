@@ -1,3 +1,8 @@
+/**
+ * Punto de entrada del backend: crea el esquema, arma el servidor Express con
+ * sus rutas (/api/auth, /api/catalogo, /api/despacho, /api/usuarios,
+ * /api/cuadro), sirve el frontend compilado si existe y escucha en PORT.
+ */
 import express from "express";
 // Hace que las excepciones de los handlers async lleguen al manejador de
 // errores de Express 4 en vez de quedar como promesa rechazada y tumbar el
@@ -15,6 +20,16 @@ import { usuariosRouter } from "./routes/usuarios";
 import { cuadroRouter } from "./routes/cuadro";
 import { exigirSesion } from "./auth";
 
+/**
+ * Arranque del servidor:
+ * 1. initSchema(): crea o actualiza las tablas.
+ * 2. Express con CORS (la sesion viaja en cookie) y JSON.
+ * 3. Rutas: /api/auth abierta; catalogo, despacho, usuarios y cuadro exigen
+ *    sesion (exigirSesion).
+ * 4. Si existe el frontend compilado, lo sirve, con caida a index.html para
+ *    las rutas de React.
+ * 5. Manejador de errores comun y escucha en el puerto configurado.
+ */
 async function main() {
   await initSchema();
 

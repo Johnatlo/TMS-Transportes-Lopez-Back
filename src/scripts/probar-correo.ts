@@ -6,6 +6,10 @@
  */
 import { correoConfigurado, enviarCorreo, verificarCorreo } from "../correo";
 
+/**
+ * Punto de entrada: verifica conexion y credenciales SMTP y, si se pasa un
+ * correo de destino, envia un correo de prueba.
+ */
 async function main() {
   const destino = process.argv[2];
   if (!correoConfigurado()) {

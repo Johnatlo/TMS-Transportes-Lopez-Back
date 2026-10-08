@@ -110,15 +110,22 @@ interface Problema {
   grave: boolean;
 }
 
+/**
+ * Resultado de validar o importar un CSV: problemas por fila (errores que
+ * impiden importar y avisos que no) y contadores de nuevos, existentes y
+ * actualizados.
+ */
 class Informe {
   problemas: Problema[] = [];
   nuevos = 0;
   existentes = 0;
   actualizados = 0;
 
+  /** Registra un error grave en una fila (impide aplicar). */
   error(fila: number, mensaje: string) {
     this.problemas.push({ fila, mensaje, grave: true });
   }
+  /** Registra un aviso en una fila (no impide aplicar). */
   aviso(fila: number, mensaje: string) {
     this.problemas.push({ fila, mensaje, grave: false });
   }
@@ -136,6 +143,10 @@ class Informe {
 
 const TIPOS_ID = ["C", "N", "E", "P", "T", "D", "U", "X"];
 
+/**
+ * Valida un numero de identificacion: obligatorio y solo digitos (error si
+ * no); un tipo poco comun solo genera aviso. true si se puede usar.
+ */
 function validarIdentificacion(
   inf: Informe,
   nFila: number,
@@ -157,17 +168,26 @@ function validarIdentificacion(
   return true;
 }
 
+/** Texto recortado; vacio -> null. */
 function limpioTexto(valor: string | undefined): string | null {
   const v = (valor ?? "").trim();
   return v === "" ? null : v;
 }
 
+/**
+ * Numero escrito como en Excel colombiano (punto de miles, coma decimal) ->
+ * number; vacio o invalido -> null.
+ */
 function numeroOpcional(valor: string): number | null {
   if (!valor) return null;
   const n = Number(valor.replace(/\./g, "").replace(",", "."));
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Fecha AAAA-MM-DD o DD/MM/AAAA (como sale de Excel) -> Date. Vacia -> null;
+ * ilegible -> null y un error en el informe.
+ */
 function fechaOpcional(inf: Informe, nFila: number, valor: string, campo: string): Date | null {
   if (!valor) return null;
   // Se aceptan AAAA-MM-DD y DD/MM/AAAA, que es como suele salir de Excel.
@@ -610,6 +630,12 @@ const importadores: Record<string, { columnas: string[]; ejecutar: Importador }>
 // Principal
 // ---------------------------------------------------------------------------
 
+/**
+ * Punto de entrada: npm run importar -- <tipo> <archivo.csv> [--aplicar]
+ * [--actualizar]. Valida todo el archivo y muestra el informe; solo escribe
+ * con --aplicar. --actualizar refresca fechas de documentos de conductores y
+ * vehiculos que ya existen.
+ */
 async function main() {
   const args = process.argv.slice(2);
   const tipo = args[0];

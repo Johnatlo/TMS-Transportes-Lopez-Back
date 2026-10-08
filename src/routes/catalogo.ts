@@ -1,3 +1,9 @@
+/**
+ * Rutas del catalogo (/api/catalogo): vehiculos, remolques, conductores,
+ * terceros, empresas de monitoreo, municipios, vias y SICETAC, plantillas,
+ * tarifas por ruta, alertas de vencimiento y parametros de la empresa.
+ * Requieren sesion.
+ */
 import { Router, type Response } from "express";
 import { revisarCoordenadaSede, normalizarCodigoMercancia } from "../rndc/builders";
 import { config } from "../config";
@@ -60,14 +66,20 @@ function soloPresentes(b: Record<string, unknown>, llaves: string[]): Record<str
   return out;
 }
 
+/** Deja solo los digitos de un valor (NIT, cedula). null/undefined se conservan. */
 const soloDigitos = (v: unknown) => (v === null || v === undefined ? v : String(v).replace(/\D/g, ""));
+/**
+ * Texto en mayuscula y sin espacios en los extremos (placas, categorias). null/undefined se conservan.
+ */
 const mayusculas = (v: unknown) => (v === null || v === undefined ? v : String(v).toUpperCase().trim());
 
 // ---------- REMOLQUES (trailers) ----------
+/** GET /api/catalogo/remolques: todos los remolques. */
 catalogoRouter.get("/remolques", async (_req, res) => {
   res.json(await remolques.findMany());
 });
 
+/** POST /api/catalogo/remolques: crea un remolque (placa en mayuscula). 201 con el creado. */
 catalogoRouter.post("/remolques", async (req, res) => {
   const b = req.body;
   const creado = await remolques.create({
@@ -80,6 +92,7 @@ catalogoRouter.post("/remolques", async (req, res) => {
   res.status(201).json(creado);
 });
 
+/** PUT /api/catalogo/remolques/:id: edita solo los campos enviados. */
 catalogoRouter.put("/remolques/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
     "placa", "numEjes", "capacidadKg", "fechaVencSoat", "fechaVencTecnomecanica", "activo",
@@ -89,10 +102,18 @@ catalogoRouter.put("/remolques/:id", async (req, res) => {
 });
 
 // ---------- VEHICULOS ----------
+/** GET /api/catalogo/vehiculos: vehiculos del catalogo (sin los eliminados). */
 catalogoRouter.get("/vehiculos", async (_req, res) => {
   res.json(await vehiculos.findMany());
 });
 
+/**
+ * POST /api/catalogo/vehiculos: crea un vehiculo.
+ *
+ * El FOPAT por defecto sale de los parametros de la empresa. Si la placa
+ * existia y fue eliminada, se recupera con los datos nuevos en vez de fallar
+ * por placa repetida.
+ */
 catalogoRouter.post("/vehiculos", async (req, res) => {
   const b = req.body;
   // El FOPAT aplica a toda la flota salvo excepcion explicita, asi que el
@@ -183,10 +204,14 @@ catalogoRouter.put("/vehiculos/:id", async (req, res) => {
 });
 
 // ---------- CONDUCTORES ----------
+/** GET /api/catalogo/conductores: todos los conductores. */
 catalogoRouter.get("/conductores", async (_req, res) => {
   res.json(await conductores.findMany());
 });
 
+/**
+ * POST /api/catalogo/conductores: crea un conductor (cedula por defecto). 201 con el creado.
+ */
 catalogoRouter.post("/conductores", async (req, res) => {
   const b = req.body;
   const creado = await conductores.create({
@@ -200,6 +225,11 @@ catalogoRouter.post("/conductores", async (req, res) => {
   res.status(201).json(creado);
 });
 
+/**
+ * PUT /api/catalogo/conductores/:id: edita los campos enviados. La cedula
+ * queda solo con digitos, la categoria en mayuscula; cedula y nombre no pueden
+ * quedar vacios.
+ */
 catalogoRouter.put("/conductores/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
     "codTipoId", "cedula", "nombre", "licencia", "categoriaLicencia", "fechaVencLicencia", "activo",
@@ -213,10 +243,18 @@ catalogoRouter.put("/conductores/:id", async (req, res) => {
 });
 
 // ---------- TERCEROS (clientes) ----------
+/** GET /api/catalogo/terceros: clientes, remitentes y destinatarios. */
 catalogoRouter.get("/terceros", async (_req, res) => {
   res.json(await terceros.findMany());
 });
 
+/**
+ * POST /api/catalogo/terceros: crea un cliente, remitente o destinatario.
+ *
+ * Las coordenadas se revisan contra las reglas del RNDC (6 decimales, dentro
+ * de Colombia) y el problema se devuelve como aviso (avisoCoordenada), sin
+ * rechazar el registro.
+ */
 catalogoRouter.post("/terceros", async (req, res) => {
   const b = req.body;
 
@@ -255,6 +293,10 @@ catalogoRouter.post("/terceros", async (req, res) => {
   res.status(201).json({ ...creado, avisoCoordenada: revision.problema });
 });
 
+/**
+ * PUT /api/catalogo/terceros/:id: edita los campos enviados. NIT y nombre
+ * obligatorios; el municipio debe ser un codigo DIVIPOLA de 8 digitos.
+ */
 catalogoRouter.put("/terceros/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
     "codTipoId", "nit", "nombre", "codSede", "direccion", "ciudad", "telefono",
@@ -280,10 +322,12 @@ catalogoRouter.put("/terceros/:id", async (req, res) => {
 });
 
 // ---------- RUTAS ----------
+/** GET /api/catalogo/rutas: rutas guardadas (tabla en desuso). */
 catalogoRouter.get("/rutas", async (_req, res) => {
   res.json(await rutas.findMany());
 });
 
+/** POST /api/catalogo/rutas: crea una ruta origen-destino (tabla en desuso). */
 catalogoRouter.post("/rutas", async (req, res) => {
   const b = req.body;
   const creada = await rutas.create({
@@ -307,10 +351,15 @@ catalogoRouter.get("/municipios", async (_req, res) => {
 // El NIT de la EMF es obligatorio en el manifiesto (error MAN067) y depende del
 // proveedor de GPS del vehiculo, asi que se mantiene como catalogo.
 
+/** GET /api/catalogo/monitoreo: empresas de monitoreo de flota activas. */
 catalogoRouter.get("/monitoreo", async (_req, res) => {
   res.json(await empresasMonitoreo.findMany());
 });
 
+/**
+ * POST /api/catalogo/monitoreo: registra (o reactiva) una empresa de
+ * monitoreo de flota con NIT (maximo 15 digitos) y nombre.
+ */
 catalogoRouter.post("/monitoreo", async (req, res) => {
   const nit = String(req.body?.nit ?? "").replace(/\D/g, "");
   const nombre = String(req.body?.nombre ?? "").trim();
@@ -324,6 +373,7 @@ catalogoRouter.post("/monitoreo", async (req, res) => {
   res.status(201).json(await empresasMonitoreo.findByNit(nit));
 });
 
+/** PUT /api/catalogo/monitoreo/:id: cambia NIT y/o nombre de una empresa de monitoreo. */
 catalogoRouter.put("/monitoreo/:id", async (req, res) => {
   const datos: { nit?: string; nombre?: string } = {};
   if (req.body?.nit !== undefined) datos.nit = String(req.body.nit).replace(/\D/g, "");
@@ -337,6 +387,7 @@ catalogoRouter.put("/monitoreo/:id", async (req, res) => {
   await responderEdicion(res, () => empresasMonitoreo.update(Number(req.params.id), datos));
 });
 
+/** DELETE /api/catalogo/monitoreo/:id: desactiva la empresa de monitoreo (204). */
 catalogoRouter.delete("/monitoreo/:id", async (req, res) => {
   const ok = await empresasMonitoreo.desactivar(Number(req.params.id));
   if (!ok) return res.status(404).json({ error: "Empresa de monitoreo no encontrada" });
@@ -472,6 +523,10 @@ catalogoRouter.get("/vias/sicetac", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/catalogo/vias?origen=&destino=: vias guardadas de un par de
+ * municipios (codigos DIVIPOLA de 8 digitos), la estandar primero.
+ */
 catalogoRouter.get("/vias", async (req, res) => {
   const origen = String(req.query.origen ?? "");
   const destino = String(req.query.destino ?? "");
@@ -483,6 +538,10 @@ catalogoRouter.get("/vias", async (req, res) => {
   res.json(await vias.findByRuta(origen, destino));
 });
 
+/**
+ * POST /api/catalogo/vias: guarda o actualiza una via (CODVIA) de un par
+ * origen-destino con su descripcion y, si se conoce, su valor SICETAC.
+ */
 catalogoRouter.post("/vias", async (req, res) => {
   const b = req.body;
   if (!b.codVia || !b.codMunicipioOrigen || !b.codMunicipioDestino || !b.descripcion) {
@@ -581,11 +640,19 @@ function datosFijosEmpresa() {
   };
 }
 
+/**
+ * GET /api/catalogo/parametros: parametros de la empresa, sus datos fijos
+ * (nombre, NIT) y el aviso de vigencia de la poliza de carga.
+ */
 catalogoRouter.get("/parametros", async (_req, res) => {
   const p = await parametros.obtener();
   res.json({ ...p, ...datosFijosEmpresa(), avisoPoliza: await parametros.revisarVigenciaPoliza() });
 });
 
+/**
+ * PUT /api/catalogo/parametros: guarda los parametros de la empresa. Solo
+ * cambian los campos que llegan: un guardado parcial no borra la poliza.
+ */
 catalogoRouter.put("/parametros", async (req, res) => {
   const b = req.body;
   // Solo se tocan los campos que llegan: antes un campo ausente se guardaba
@@ -608,6 +675,7 @@ catalogoRouter.put("/parametros", async (req, res) => {
 });
 
 // ---------- PLANTILLAS DE VIAJE ----------
+/** GET /api/catalogo/plantillas: plantillas activas con sus terceros y ruta. */
 catalogoRouter.get("/plantillas", async (_req, res) => {
   res.json(await plantillas.findMany());
 });
@@ -736,6 +804,10 @@ async function plantillaDesdeCuerpo(
   };
 }
 
+/**
+ * POST /api/catalogo/plantillas: valida el cuerpo (plantillaDesdeCuerpo) y
+ * crea la plantilla. 422 con el problema si algo no es valido.
+ */
 catalogoRouter.post("/plantillas", async (req, res) => {
   const r = await plantillaDesdeCuerpo(req.body);
   if ("error" in r) return res.status(422).json({ error: r.error });

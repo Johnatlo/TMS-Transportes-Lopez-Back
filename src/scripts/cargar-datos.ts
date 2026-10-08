@@ -27,6 +27,7 @@ interface ArchivoDatos {
   plantillas?: any[];
 }
 
+/** Texto de fecha del JSON -> Date; vacio -> null. */
 function fecha(valor: string | null | undefined): Date | null {
   return valor ? new Date(valor) : null;
 }
@@ -49,6 +50,11 @@ function buscarPendientes(objeto: any, ruta: string, encontrados: string[]): voi
   }
 }
 
+/**
+ * Punto de entrada: lee datos-empresa.json, se detiene si quedan valores
+ * "REEMPLAZAR" sin llenar, y carga en la base local (sin duplicar) los datos
+ * reales de la empresa. No crea nada en el RNDC.
+ */
 async function main() {
   if (!fs.existsSync(RUTA_ARCHIVO)) {
     console.error(

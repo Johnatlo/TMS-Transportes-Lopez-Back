@@ -76,6 +76,7 @@ export interface FiltrosSicetac {
   nombreUnidadTransporte?: string;
 }
 
+/** Escapa los caracteres especiales del XML (&, <, >, comillas y apostrofo). */
 function escapeXml(v: string): string {
   return v
     .replace(/&/g, "&amp;")
@@ -123,6 +124,12 @@ export function periodoAnterior(periodo: string, meses = 1): string {
   return `${anio}${String(mes).padStart(2, "0")}`;
 }
 
+/**
+ * XML de la consulta de SICETAC (tipo 6, proceso 26): periodo, configuracion,
+ * condicion de carga, origen, destino y unidad de transporte. Los valores van
+ * entre comillas sencillas dentro de la etiqueta, como en los ejemplos
+ * oficiales; los filtros vacios no se envian.
+ */
 export function construirXmlSicetac(
   credenciales: CredencialesRndc,
   filtros: FiltrosSicetac
@@ -153,6 +160,7 @@ export function construirXmlSicetac(
 </root>`;
 }
 
+/** Texto -> number; null si viene vacio o no es un numero valido. */
 function aNumero(valor: string | null): number | null {
   if (valor === null) return null;
   const n = Number(valor);
@@ -244,6 +252,17 @@ export interface ResultadoConsultaSicetac {
 const CACHE_SICETAC = new Map<string, { hasta: number; resultado: ResultadoConsultaSicetac }>();
 const VIGENCIA_CACHE_SICETAC_MS = 6 * 3_600_000;
 
+/**
+ * Consulta SICETAC con cache, para no chocar con el limite de consultas.
+ *
+ * Como funciona:
+ * 1. Si la misma consulta respondio hace menos de 6 horas (en memoria), la reusa.
+ * 2. Si no, consulta en vivo (consultarSicetacSinCache).
+ * 3. Si SICETAC falla (casi siempre RNDC13 por el limite), usa la ultima
+ *    respuesta buena guardada en la tabla sicetac_respuestas, marcando
+ *    guardadoEn; si no hay ninguna, propaga el error.
+ * 4. Cada respuesta con vias se guarda en memoria y en la tabla.
+ */
 export async function consultarSicetac(
   cliente: RndcClient,
   credenciales: CredencialesRndc,
@@ -279,6 +298,14 @@ export async function consultarSicetac(
   return resultado;
 }
 
+/**
+ * Consulta SICETAC en vivo, retrocediendo de periodo si hace falta.
+ *
+ * La guia advierte que un mes puede no tener registros porque siguen
+ * aplicando los del anterior: si responde "documento no encontrado" (RNDC11)
+ * prueba el mes previo, hasta 'mesesHaciaAtras'. Cualquier otro error (por
+ * ejemplo RNDC13) se lanza: no es un mes vacio.
+ */
 async function consultarSicetacSinCache(
   cliente: RndcClient,
   credenciales: CredencialesRndc,

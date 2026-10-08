@@ -10,6 +10,7 @@
  * 3. Prueba primero con RNDC_SIMULAR=true para validar que el XML se arma bien.
  */
 
+/** Falla de comunicacion con el RNDC o envio bloqueado (no es un rechazo del documento). */
 export class RndcError extends Error {}
 
 export interface ResultadoRndc {
@@ -126,6 +127,10 @@ const ENTIDADES: Record<string, string> = {
   "&apos;": "'",
 };
 
+/**
+ * Limpia el texto de una etiqueta de la respuesta: quita CDATA, decodifica
+ * las entidades XML (&amp;, &lt;, &#233;...) y recorta espacios.
+ */
 function decodificar(texto: string): string {
   return texto
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
@@ -180,13 +185,37 @@ function esConsulta(xmlMensaje: string): boolean {
   return /<tipo>\s*[36]\s*<\/tipo>/i.test(xmlMensaje);
 }
 
+/** Pausa de 'ms' milisegundos (entre reintentos). */
 function esperar(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Cliente SOAP del web service del RNDC.
+ *
+ * Un solo metodo publico, enviar(xml): manda el mensaje y devuelve el
+ * resultado ya interpretado (radicado o error). Tres protecciones:
+ * - soloConsultas: rechaza antes de salir cualquier mensaje que no sea
+ *   consulta (tipo 3 o 6), para clientes que apuntan a produccion.
+ * - simular: no envia nada y responde un radicado SIMULADO (desarrollo).
+ * - Reintentos solo ante fallas de red, nunca ante un rechazo del RNDC.
+ */
 export class RndcClient {
+  /** Recibe la URL del WSDL, credenciales, modo simulacion, reintentos y soloConsultas. */
   constructor(private config: RndcClientConfig) {}
 
+  /**
+   * Envia un mensaje XML al RNDC y devuelve el resultado interpretado.
+   *
+   * Como funciona:
+   * 1. Bloquea el envio si el cliente es solo de consultas y el mensaje no lo es.
+   * 2. En simulacion responde un radicado ficticio sin conectarse.
+   * 3. Crea el cliente SOAP desde el WSDL y llama AtenderMensajeRNDC con la
+   *    parte "Request"; la respuesta viene en "return".
+   * 4. Si falla la red, reintenta con espera creciente (2 s, 4 s...).
+   * 5. Interpreta la respuesta con parsearRespuesta.
+   * Si todos los intentos fallan por red, lanza RndcError.
+   */
   async enviar(xmlMensaje: string, procesoId?: string): Promise<ResultadoRndc> {
     if (this.config.soloConsultas && !esConsulta(xmlMensaje)) {
       throw new RndcError(
@@ -241,6 +270,18 @@ export class RndcClient {
     );
   }
 
+  /**
+   * Convierte el XML de respuesta en un ResultadoRndc.
+   *
+   * - Busca errores en ErrorMSG, ErrorMessage o error (las guias no documentan
+   *   la etiqueta; se prueban las conocidas).
+   * - Consulta (tipo 3/6) sin error y con <documento>: exito sin radicado.
+   * - Sin radicado y sin error: se trata como FALLO ("no se pudo interpretar"),
+   *   para no dar por expedido algo que quiza no lo esta.
+   * - Con error: extrae el codigo (MAN045, CRE111...) y una explicacion en
+   *   espanol (explicarError).
+   * - Con radicado: exito, con MEC y codigo de seguridad QR si vienen.
+   */
   private parsearRespuesta(xml: string, procesoId?: string, consulta = false): ResultadoRndc {
     // Los nombres de etiqueta de error NO estan documentados en las guias
     // oficiales; se prueban las variantes conocidas. Si aparece otra en

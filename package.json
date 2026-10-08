@@ -18,7 +18,8 @@
     "borrar-viaje": "ts-node src/scripts/borrar-viaje.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:tipos": "tsc -p tsconfig.test.json"
+    "test:tipos": "tsc -p tsconfig.test.json",
+    "docs": "node herramientas/generar-referencia.cjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -77,6 +77,7 @@ export interface FilaCuadro {
   todoPagado: boolean;
 }
 
+/** Numero de MySQL (DECIMAL llega como texto) a number; null se conserva. */
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 /**
  * DATE de MySQL como "AAAA-MM-DD". El pool trabaja en UTC (timezone "Z"): un
@@ -89,6 +90,11 @@ const dia = (v: unknown): string | null => {
 };
 /** Fecha de hoy en Colombia (el servidor corre en UTC: de noche ya seria manana). */
 const hoyColombia = () => new Date(Date.now() - 5 * 3_600_000).toISOString().slice(0, 10);
+/**
+ * Suma dias a una fecha "AAAA-MM-DD" y devuelve otra "AAAA-MM-DD".
+ * Trabaja a mediodia UTC para que ningun cambio de zona la corra de dia.
+ * Se usa para el vencimiento del saldo de terceros (descargue + 15 dias).
+ */
 export const sumarDias = (fecha: string, dias: number) => {
   const d = new Date(`${fecha}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + dias);
@@ -123,6 +129,13 @@ const SELECT_CUADRO = `
     LEFT JOIN (SELECT cuadroViajeId, COUNT(*) AS cuantas FROM cuadro_notas GROUP BY cuadroViajeId) n
            ON n.cuadroViajeId = c.id`;
 
+/**
+ * Fila de SELECT_CUADRO -> FilaCuadro.
+ *
+ * Normaliza tipos (fechas a texto, numeros, booleanos), calcula el valor del
+ * flete (kilos x tarifa, o el fijo), el vencimiento del saldo si es tercero, y
+ * el estado con estadoDe.
+ */
 function mapear(r: RowDataPacket): FilaCuadro {
   const base = {
     id: r.id,
@@ -194,8 +207,15 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   fechaPagoSaldo: "fecha",
 };
 
+/** Error de validacion del cuadro: la ruta lo responde como 422 con su mensaje. */
 export class ErrorCuadro extends Error {}
 
+/**
+ * Convierte un valor del formulario al tipo de su columna.
+ *
+ * booleano -> 1/0; vacio -> null; numero -> number >= 0 (si no, ErrorCuadro);
+ * fecha -> "AAAA-MM-DD" valida; texto -> recortado.
+ */
 function valorCampo(campo: string, tipo: string, crudo: unknown): unknown {
   const vacio = crudo === null || crudo === undefined || String(crudo).trim() === "";
   if (tipo === "booleano") return crudo ? 1 : 0;
@@ -213,6 +233,11 @@ function valorCampo(campo: string, tipo: string, crudo: unknown): unknown {
   return String(crudo).trim();
 }
 
+/**
+ * Revisa y normaliza los datos antes de guardar: tipo de flete KILO/FIJO,
+ * estado de papeles valido, placa en mayuscula sin guiones ni espacios, y
+ * empresa en mayuscula. Lanza ErrorCuadro si algo no es valido.
+ */
 function validar(datos: Record<string, unknown>) {
   if ("tipoFlete" in datos && !["KILO", "FIJO"].includes(String(datos.tipoFlete))) {
     throw new ErrorCuadro("El flete es por kilo (KILO) o fijo (FIJO).");
@@ -224,6 +249,7 @@ function validar(datos: Record<string, unknown>) {
   if ("empresa" in datos) datos.empresa = String(datos.empresa ?? "").trim().toUpperCase();
 }
 
+/** Repositorio del cuadro pagos: viajes, notas y anticipos de bomba. */
 export const cuadro = {
   /**
    * Trae al cuadro los viajes con manifiesto expedido (una fila por remesa) y
@@ -256,12 +282,20 @@ export const cuadro = {
     return res.affectedRows;
   },
 
+  /**
+   * Todos los viajes del cuadro, del mas reciente al mas antiguo. Antes de
+   * listar sincroniza los manifiestos expedidos, para que siempre esten todos.
+   */
   async listar(): Promise<FilaCuadro[]> {
     await this.sincronizarManifiestos();
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} ORDER BY c.fecha DESC, c.id DESC`);
     return rows.map(mapear);
   },
 
+  /**
+   * Un viaje con sus anticipos (con nombre de la bomba y quien los registro) y
+   * sus notas (con autor), la mas reciente primero. null si no existe.
+   */
   async obtener(id: number) {
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} WHERE c.id = ?`, [id]);
     if (!rows[0]) return null;
@@ -314,6 +348,13 @@ export const cuadro = {
     return res.insertId;
   },
 
+  /**
+   * Guarda solo los campos que vienen en 'datos' (validados).
+   *
+   * Ademas: al pasar los papeles a RADICADO sin fecha, se pone la de hoy en
+   * Colombia; al devolverlos a otro estado, se borra. Si cambia la placa, se
+   * vuelve a enlazar el vehiculo del catalogo.
+   */
   async actualizar(id: number, datos: Record<string, unknown>): Promise<boolean> {
     validar(datos);
     const sets: string[] = [];
@@ -372,6 +413,7 @@ export const cuadro = {
     return res.affectedRows;
   },
 
+  /** Agrega una nota (maximo 1000 caracteres) con su autor. Una nota vacia es un error. */
   async agregarNota(id: number, texto: string, usuarioId: number | null) {
     const limpio = texto.trim();
     if (!limpio) throw new ErrorCuadro("La nota esta vacia.");
@@ -382,10 +424,16 @@ export const cuadro = {
     ]);
   },
 
+  /** Borra una nota de ese viaje. */
   async borrarNota(id: number, notaId: number) {
     await pool.query("DELETE FROM cuadro_notas WHERE id = ? AND cuadroViajeId = ?", [notaId, id]);
   },
 
+  /**
+   * Registra un anticipo entregado por una bomba aliada: bomba, valor, fecha,
+   * fecha de pago a la bomba (opcional) y nota. Bomba, valor y fecha son
+   * obligatorios.
+   */
   async agregarAnticipo(id: number, d: Record<string, unknown>, usuarioId: number | null) {
     const valor = valorCampo("valor", "numero", d.valor);
     const fecha = valorCampo("fecha", "fecha", d.fecha);
@@ -419,16 +467,20 @@ export const cuadro = {
     ]);
   },
 
+  /** Quita un anticipo de ese viaje. */
   async borrarAnticipo(id: number, anticipoId: number) {
     await pool.query("DELETE FROM cuadro_anticipos WHERE id = ? AND cuadroViajeId = ?", [anticipoId, id]);
   },
 };
 
+/** Catalogo de bombas aliadas que entregan anticipos a los conductores. */
 export const bombas = {
+  /** Todas las bombas, las activas primero. */
   async listar() {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM bombas ORDER BY activa DESC, nombre, ciudad");
     return rows.map((b) => ({ ...b, activa: !!b.activa }));
   },
+  /** Crea una bomba (nombre y ciudad en mayuscula). Nombre + ciudad no se repiten. */
   async crear(d: Record<string, unknown>) {
     const nombre = String(d.nombre ?? "").trim().toUpperCase();
     if (!nombre) throw new ErrorCuadro("Escribe el nombre de la bomba.");
@@ -441,6 +493,10 @@ export const bombas = {
       throw exc;
     }
   },
+  /**
+   * Cambia nombre, ciudad y/o si esta activa. Una bomba inactiva ya no se
+   * ofrece al registrar anticipos, pero sus anticipos viejos se conservan.
+   */
   async actualizar(id: number, d: Record<string, unknown>) {
     const sets: string[] = [];
     const valores: unknown[] = [];

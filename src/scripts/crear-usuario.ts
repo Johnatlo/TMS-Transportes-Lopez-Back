@@ -10,6 +10,11 @@
 import { initSchema, pool } from "../db";
 import { claveTemporal, emailValido, normalizarEmail, sesiones, usuarios } from "../auth";
 
+/**
+ * Punto de entrada: valida correo y nombre, crea el usuario con una clave
+ * temporal (o, si ya existe, se la restablece, lo reactiva y cierra sus
+ * sesiones) y muestra la clave una sola vez.
+ */
 async function main() {
   const email = normalizarEmail(process.argv[2]);
   const nombre = (process.argv[3] ?? "").trim();

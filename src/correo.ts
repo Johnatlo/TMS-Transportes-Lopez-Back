@@ -30,10 +30,18 @@ const remitente = process.env.SMTP_REMITENTE || (usuario ? `${config.empresa.nom
 
 let transporte: Transporter | null = null;
 
+/**
+ * true si hay usuario y clave SMTP en el .env. Si es false, quien envia
+ * correos debe tener un plan B (mostrar la clave temporal en pantalla).
+ */
 export function correoConfigurado(): boolean {
   return !!(usuario && clave);
 }
 
+/**
+ * Conexion SMTP de nodemailer, creada una sola vez y reutilizada. Puerto 465
+ * = TLS directo (Gmail); cualquier otro exige STARTTLS.
+ */
 function obtenerTransporte(): Transporter {
   if (!transporte) {
     transporte = nodemailer.createTransport({
@@ -48,6 +56,10 @@ function obtenerTransporte(): Transporter {
   return transporte;
 }
 
+/**
+ * Envia un correo en texto y HTML desde el remitente configurado. Lanza error
+ * si el correo no esta configurado o el servidor lo rechaza.
+ */
 export async function enviarCorreo(para: string, asunto: string, texto: string, html: string): Promise<void> {
   if (!correoConfigurado()) throw new Error("El envio de correo no esta configurado (SMTP_USUARIO / SMTP_CLAVE).");
   await obtenerTransporte().sendMail({ from: remitente, to: para, subject: asunto, text: texto, html });
@@ -63,9 +75,14 @@ export async function verificarCorreo(): Promise<void> {
 // Plantillas
 // ---------------------------------------------------------------------------
 
+/** Escapa &, <, > y comillas para meter texto en el HTML del correo. */
 const escapar = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/**
+ * Plantilla HTML comun de los correos: tarjeta blanca con el nombre de la
+ * empresa, el titulo, el cuerpo y el pie de "correo automatico".
+ */
 function envoltura(titulo: string, cuerpo: string): string {
   return `<!DOCTYPE html><html><body style="margin:0;background:#f4f6fa;font-family:Arial,Helvetica,sans-serif;color:#111827">
 <div style="max-width:520px;margin:24px auto;background:#ffffff;border:1px solid #e8ebf1;border-radius:14px;padding:28px">
@@ -76,9 +93,14 @@ ${cuerpo}
 </div></body></html>`;
 }
 
+/** Recuadro destacado para un codigo o clave temporal dentro del correo. */
 const bloqueCodigo = (codigo: string) =>
   `<div style="font-size:26px;letter-spacing:4px;font-weight:bold;background:#f3f5f9;border:1px dashed #c9d1de;border-radius:10px;padding:12px 16px;display:inline-block;margin:6px 0 14px">${escapar(codigo)}</div>`;
 
+/**
+ * Correo con usuario y clave temporal, para una cuenta nueva o una clave
+ * restablecida. Devuelve asunto, texto plano y HTML.
+ */
 export function correoClaveTemporal(nombre: string, email: string, claveTemp: string, motivo: "nueva" | "restablecida") {
   const asunto = motivo === "nueva" ? "Tu cuenta en el sistema de despacho" : "Tu contrasena fue restablecida";
   const intro =
@@ -93,6 +115,10 @@ export function correoClaveTemporal(nombre: string, email: string, claveTemp: st
   return { asunto, texto, html };
 }
 
+/**
+ * Correo con el codigo de 6 digitos para recuperar la contrasena y los
+ * minutos de vigencia. Devuelve asunto, texto plano y HTML.
+ */
 export function correoCodigoRecuperacion(nombre: string, codigo: string, minutos: number) {
   const asunto = "Codigo para recuperar tu contrasena";
   const texto = `Hola ${nombre}, tu codigo para crear una contrasena nueva es: ${codigo}\n\nVence en ${minutos} minutos. Si no lo pediste, ignora este correo: tu contrasena no cambia.`;

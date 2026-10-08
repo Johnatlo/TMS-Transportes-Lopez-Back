@@ -1,3 +1,16 @@
+/**
+ * Rutas del despacho (/api/despacho): todo lo que se hace con el RNDC.
+ *
+ * - Despachar: valida, expide las remesas (proceso 3) y el manifiesto (4).
+ * - Reintentar un viaje fallido y adoptar documentos que ya existian
+ *   (DUPLICADO o expedidos en el portal).
+ * - Anular: cumplido inicial (54), manifiesto (32) y remesas (9).
+ * - Cumplir remesas (5) con los tiempos del GPS (45), anular su cumplido (28)
+ *   y cumplir el manifiesto (6) con el piso SICETAC del cumplido.
+ * - Consultas: historial, consecutivos, detalle, datos enviados, FOPAT.
+ * - Documentos: PDF del manifiesto y remesa imprimible.
+ * Requieren sesion.
+ */
 import { Router } from "express";
 import {
   vehiculos,
@@ -277,10 +290,15 @@ async function armarDatosRndc(
   };
 }
 
+/** Mensajes de los problemas de validacion de una gravedad (ERROR o AVISO). */
 function mensajesDe(problemas: ProblemaValidacion[], gravedad: "ERROR" | "AVISO"): string[] {
   return problemas.filter((p) => p.gravedad === gravedad).map((p) => p.mensaje);
 }
 
+/**
+ * Tercero de la plantilla -> los datos que necesita el RNDC (tipo y numero de
+ * identificacion, sede, nombre, municipio y coordenadas).
+ */
 function aTerceroRndc(t: PlantillaViajeConRelaciones["contratante"]): TerceroRndc {
   return {
     codTipoId: t.codTipoId,
@@ -930,6 +948,13 @@ despachoRouter.post("/remesas/:remesaId/usar-existente", async (req, res) => {
   res.json({ ...actualizado, remesas: await viajeRemesas.findByViaje(viaje.id) });
 });
 
+/**
+ * POST /api/despacho/:id/usar-manifiesto-existente: adopta un manifiesto que
+ * el RNDC reporto como existente ("DUPLICADO:<radicado>").
+ *
+ * Solo para viajes en MANIFIESTO_ERROR con ese radicado en el error: el viaje
+ * queda CONFIRMADO con el radicado y un aviso de que se tomo del RNDC.
+ */
 despachoRouter.post("/:id/usar-manifiesto-existente", async (req, res) => {
   const viaje = await viajes.findById(Number(req.params.id));
   if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
@@ -1357,6 +1382,7 @@ function planDeAnulacion(viaje: Viaje, remesas: ViajeRemesa[]) {
   };
 }
 
+/** Mes "AAAA-MM" de una fecha (para el tope mensual de anulaciones). */
 function mesDe(fecha: Date): string {
   return new Date(fecha).toISOString().slice(0, 7);
 }
@@ -1749,12 +1775,6 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
   }
 });
 
-/**
- * Cumplido del manifiesto (proceso 6). Exige todas las remesas cumplidas
- * [Guia Cumplido 3.9]. Sin ajustes de valor: el valor a pagar y el FOPAT son
- * los del manifiesto expedido. Con adicionales, descuentos o suspension, se
- * hace en el portal.
- */
 /**
  * Cumplido inicial (GPS) de una remesa. undefined = no se pudo consultar;
  * null = no hay cumplido inicial (sin GPS).
@@ -2150,6 +2170,11 @@ async function sincronizarCumplidos(viajeId: number): Promise<string[]> {
   return adoptados;
 }
 
+/**
+ * POST /api/despacho/:id/cumplir/sincronizar: adopta lo cumplido en el portal
+ * (sincronizarCumplidos) y devuelve lo adoptado, el viaje y sus remesas. Si el
+ * RNDC no responde, devuelve el error sin fallar: la ventana sigue con lo local.
+ */
 despachoRouter.post("/:id/cumplir/sincronizar", async (req, res) => {
   const viajeId = Number(req.params.id);
   try {
@@ -2161,6 +2186,12 @@ despachoRouter.post("/:id/cumplir/sincronizar", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/despacho/:id/cumplir/previa: datos para el formulario del cumplido
+ * del manifiesto: flete, anticipo, vacios, retencion y FOPAT calculados,
+ * tiempos logisticos con el piso SICETAC del cumplido, y los motivos
+ * permitidos de adicional y descuento.
+ */
 despachoRouter.get("/:id/cumplir/previa", async (req, res) => {
   const viaje = await viajes.findById(Number(req.params.id));
   if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
@@ -2179,6 +2210,20 @@ despachoRouter.get("/:id/cumplir/previa", async (req, res) => {
   });
 });
 
+/**
+ * POST /api/despacho/:id/cumplir: cumple el manifiesto en el RNDC (proceso 6).
+ *
+ * Como funciona:
+ * 1. Solo viajes CONFIRMADO. Antes de enviar adopta lo cumplido en el portal;
+ *    si el manifiesto ya estaba cumplido, no lo reenvia.
+ * 2. No bloquea por remesas pendientes: el RNDC exige todas cumplidas y lo
+ *    dira con su error si falta alguna.
+ * 3. Calcula el valor final (flete + adicionales - descuento) y, si no se
+ *    escribieron a mano, la retencion en la fuente y el FOPAT sobre ese valor.
+ * 4. Toma el viaje (estado CUMPLIENDO) para evitar dos envios a la vez.
+ * 5. Envia fecha de entrega, via, valores y retenciones. Con radicado (o
+ *    DUPLICADO) queda CUMPLIDO; con rechazo vuelve a CONFIRMADO con el error.
+ */
 despachoRouter.post("/:id/cumplir", async (req, res) => {
   const viajeId = Number(req.params.id);
   const viaje = await viajes.findById(viajeId);
@@ -2505,6 +2550,11 @@ despachoRouter.get("/:id/detalle", async (req, res) => {
   });
 });
 
+/**
+ * GET /api/despacho/historial: todos los viajes (la tabla pagina de a 50 en
+ * el navegador). A los manifiestos vigentes sin cumplir cuya cita de descargue
+ * ya paso les agrega el plazo del cumplido (5 dias habiles).
+ */
 despachoRouter.get("/historial", async (_req, res) => {
   const ahora = new Date();
   // Todos: la tabla de Viajes pagina de a 50 en el navegador.

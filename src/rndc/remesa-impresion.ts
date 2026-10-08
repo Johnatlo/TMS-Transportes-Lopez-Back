@@ -29,6 +29,10 @@ import {
 } from "../repo";
 import { TIPOS_EMPAQUE } from "./builders";
 
+/**
+ * Texto seguro para el HTML de la remesa: vacio para null/undefined/"" y
+ * caracteres especiales escapados.
+ */
 function escapar(valor: unknown): string {
   if (valor === null || valor === undefined || valor === "") return "";
   return String(valor)
@@ -63,11 +67,13 @@ function dia(valor: Date | null | undefined): string {
   return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
+/** Numero con separador de miles colombiano (34.000); vacio si no hay valor. */
 function numero(valor: number | null | undefined): string {
   if (valor === null || valor === undefined) return "";
   return new Intl.NumberFormat("es-CO").format(valor);
 }
 
+/** "Latitud: x  Longitud: y" de una sede, o vacio si no tiene coordenadas. */
 function coordenadas(t: Tercero): string {
   if (t.latitud === null || t.longitud === null) return "";
   return `Latitud: ${t.latitud}  Longitud: ${t.longitud}`;
@@ -94,6 +100,10 @@ const UNIDAD: Record<string, string> = {
 };
 const EMPAQUE = TIPOS_EMPAQUE;
 
+/**
+ * Nombre de un codigo segun su tabla; si no esta, "Codigo N" (nunca se
+ * inventa un nombre). Vacio si no hay codigo.
+ */
 const texto = (tabla: Record<string, string>, codigo: string | null | undefined) =>
   codigo ? (tabla[codigo] ?? `Codigo ${codigo}`) : "";
 
@@ -121,6 +131,13 @@ export interface DatosImpresionRemesa {
   logoDataUri?: string | null;
 }
 
+/**
+ * HTML imprimible de una remesa con el formato de la remesa oficial del RNDC:
+ * empresa y logo, numeros y radicado, remitente y destinatario con citas y
+ * tiempos pactados, mercancia (cantidad, peso, empaque, naturaleza),
+ * vehiculo y conductor, y poliza de carga. Si la unidad comercial es kilos y
+ * no hay cantidad, la cantidad es el peso (igual que al enviarla).
+ */
 export function construirHtmlRemesa(d: DatosImpresionRemesa): string {
   const { remesa, plantilla, viaje, vehiculo, conductor, empresa, poliza } = d;
   const rem = plantilla.remitente;

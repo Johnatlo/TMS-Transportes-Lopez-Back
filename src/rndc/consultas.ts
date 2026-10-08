@@ -24,6 +24,7 @@ export const TIPO_SOLICITUD_CONSULTA = "6";
  */
 export const PROCESO_ID_RNA_PLACA = "48";
 
+/** Escapa los caracteres especiales del XML (&, <, >, comillas). */
 function escapeXml(valor: string): string {
   return valor
     .replace(/&/g, "&amp;")
@@ -243,6 +244,11 @@ export function valoresDe(xml: string, etiqueta: string): string[] {
 
 export const TIPO_SOLICITUD_DOCUMENTOS_PROPIOS = "3";
 
+/**
+ * XML de una consulta tipo 3 (documentos propios): pide las 'variables' del
+ * proceso indicado, filtrando por el NIT de la empresa y por un campo, con el
+ * valor entre comillas sencillas como exige el RNDC (sin ellas, RNDC027).
+ */
 function xmlDocumentoPropio(
   credenciales: CredencialesRndc,
   procesoId: string,
@@ -296,6 +302,7 @@ export interface ManifiestoEnRndc {
   codVia: string | null;
 }
 
+/** Texto numerico de la respuesta -> number; vacio o ausente -> null. */
 const numeroDe = (v: string | null) => (v === null || v.trim() === "" ? null : Number(v));
 
 /** El manifiesto con ese numero, si ya esta radicado en el RNDC para la empresa. */
@@ -368,6 +375,12 @@ function fechaHoraRndc(fecha: string | null, hora: string | null): Date | null {
   return new Date(Date.UTC(+f[3], +f[2] - 1, +f[1], +h[1] + 5, +h[2]));
 }
 
+/**
+ * Lee del RNDC el cumplido de una remesa (tipo 3, proceso 5): radicado, fecha
+ * de registro, kilos entregados y los seis tiempos (llegada, entrada y salida
+ * del cargue y del descargue), convertidos de "DD/MM/AAAA" + "HH:MM" (hora de
+ * Colombia) a Date. null si la remesa no esta cumplida.
+ */
 export async function leerTiemposCumplidoRemesa(
   cliente: RndcClient,
   credenciales: CredencialesRndc,
@@ -421,6 +434,12 @@ export interface TiemposGps {
   salidaDescargue: Date | null;
 }
 
+/**
+ * Lee el cumplido inicial del GPS de una remesa (tipo 3, proceso 45): llegada
+ * y salida del cargue y del descargue. Puede haber varios registros (cargue y
+ * descargue por separado): toma el primer valor no vacio de cada tiempo.
+ * null si el GPS no reporto nada.
+ */
 export async function leerCumplidoInicial(
   cliente: RndcClient,
   credenciales: CredencialesRndc,
@@ -467,6 +486,11 @@ export interface CumplidoManifiestoEnRndc {
   retencionFopat: number | null;
 }
 
+/**
+ * Lee del RNDC el cumplido de un manifiesto (tipo 3, proceso 6): radicado,
+ * fecha de registro, retencion en la fuente y FOPAT. null si no esta cumplido
+ * (RNDC11). Se usa para adoptar cumplidos hechos en el portal.
+ */
 export async function leerCumplidoManifiesto(
   cliente: RndcClient,
   credenciales: CredencialesRndc,

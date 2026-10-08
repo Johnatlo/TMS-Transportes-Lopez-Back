@@ -18,20 +18,29 @@ import { CONFIGURACIONES_SICETAC } from "../rndc/sicetac";
 
 const LINEA = "-".repeat(72);
 
+/** Imprime un titulo de seccion entre lineas. */
 function titulo(texto: string): void {
   console.log(`\n${LINEA}\n${texto}\n${LINEA}`);
 }
 
+/** Imprime un paso correcto: [OK]. */
 function ok(texto: string): void {
   console.log(`  [OK]    ${texto}`);
 }
+/** Imprime un paso fallido: [FALLA]. */
 function falla(texto: string): void {
   console.log(`  [FALLA] ${texto}`);
 }
+/** Imprime una linea de explicacion debajo de un paso. */
 function nota(texto: string): void {
   console.log(`          ${texto}`);
 }
 
+/**
+ * Punto de entrada: verifica en orden (1) la configuracion local y las
+ * credenciales, (2) los vehiculos de la base, (3) la conexion con el RNDC y
+ * (4) el estado de las placas en el RNA, y muestra un resumen. Solo lectura.
+ */
 async function main() {
   titulo("1. Configuracion local");
 

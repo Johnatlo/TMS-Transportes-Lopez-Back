@@ -53,6 +53,10 @@ export const PROCESO_ID_CUMPLIR_MANIFIESTO = "6"; // Cumplir Manifiesto de Carga
 // cumplido responde ACR070 ("no ha sido cumplido").
 export const PROCESO_ID_ANULAR_CUMPLIDO_REMESA = "28";
 
+/**
+ * Datos del proceso 28 (anular el cumplido de una remesa): consecutivo de la
+ * remesa, motivo (D u O) y observaciones (maximo 200 caracteres).
+ */
 export function construirDatosAnularCumplidoRemesa(
   consecutivoRemesa: string,
   motivo: string,
@@ -165,6 +169,7 @@ export const MAX_MANIFIESTOS_POR_PLACA_DIA = 10;
 // Utilidades de XML
 // ---------------------------------------------------------------------------
 
+/** Escapa los caracteres especiales del XML (&, <, >, comillas y apostrofo). */
 function escapeXml(valor: string): string {
   return valor
     .replace(/&/g, "&amp;")
@@ -213,6 +218,10 @@ interface PartesFecha {
   minuto: string;
 }
 
+/**
+ * Dia, mes, anio, hora y minuto de una fecha en hora de Colombia, en texto
+ * de dos digitos. Base de formatearFecha, formatearHora y diaBogota.
+ */
 function partesBogota(fecha: Date): PartesFecha {
   const p: Record<string, string> = {};
   for (const parte of FORMATO_BOGOTA.formatToParts(fecha)) {
@@ -254,6 +263,7 @@ function diaBogota(fecha: Date): Date {
   return new Date(`${p.anio}-${p.mes}-${p.dia}T00:00:00Z`);
 }
 
+/** Dias calendario (en Colombia) entre dos fechas: positivo si a es posterior a b. */
 function diferenciaEnDias(a: Date, b: Date): number {
   return Math.round((diaBogota(a).getTime() - diaBogota(b).getTime()) / 86_400_000);
 }
@@ -338,6 +348,7 @@ export function fopatEfectivo(v: {
   return calcularFopat(valorAPagar, v.vehiculo.aplicaFopat);
 }
 
+/** Retencion de ICA en pesos: base x factor por mil / 1000, redondeado al peso. */
 export function calcularIca(base: number, factorPorMil: number): number {
   return Math.round((base * factorPorMil) / 1000);
 }
@@ -500,6 +511,15 @@ export interface CredencialesRndc {
   nitEmpresa: string;
 }
 
+/**
+ * Arma el XML que se envia al RNDC (metodo AtenderMensajeRNDC).
+ *
+ * Estructura: <acceso> con usuario y clave, <solicitud> con el tipo (1 =
+ * registrar, por defecto) y el procesoid, y <variables> con el NIT de la
+ * empresa mas cada dato de 'datos' como <ETIQUETA>valor</ETIQUETA> (los
+ * vacios no se emiten, ver tag). xmlCrudoAdicional permite agregar bloques ya
+ * armados, como la lista de remesas del manifiesto.
+ */
 export function construirXmlMensaje(
   credenciales: CredencialesRndc,
   procesoId: string,

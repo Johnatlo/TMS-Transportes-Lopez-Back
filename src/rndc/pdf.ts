@@ -25,6 +25,7 @@
  * responsabilidad. Es decir, ese lo tenemos que componer nosotros.
  */
 
+/** Falla al descargar el PDF del manifiesto desde el RNDC. */
 export class RndcPdfError extends Error {}
 
 export interface ConfigPdf {

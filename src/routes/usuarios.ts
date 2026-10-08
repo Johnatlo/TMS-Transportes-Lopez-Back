@@ -39,10 +39,18 @@ async function entregarClave(
  */
 export const usuariosRouter = Router();
 
+/** GET /api/usuarios: lista de usuarios del sistema. */
 usuariosRouter.get("/", async (_req, res) => {
   res.json(await usuarios.listar());
 });
 
+/**
+ * POST /api/usuarios: crea un usuario con una clave temporal.
+ *
+ * Valida correo y nombre, rechaza correos repetidos (409), genera la clave
+ * temporal (debe cambiarla al entrar) y la entrega por correo, o en la
+ * respuesta si el correo no esta configurado (entregarClave).
+ */
 usuariosRouter.post("/", async (req, res) => {
   const email = normalizarEmail(req.body?.email);
   const nombre = String(req.body?.nombre ?? "").trim();
@@ -56,6 +64,12 @@ usuariosRouter.post("/", async (req, res) => {
   res.status(201).json({ ...creado, ...(await entregarClave(nombre, email, temporal, "nueva")) });
 });
 
+/**
+ * PUT /api/usuarios/:id: cambia nombre y/o estado activo.
+ *
+ * No deja desactivar la propia cuenta ni al ultimo usuario activo. Al
+ * desactivar a alguien se cierran sus sesiones.
+ */
 usuariosRouter.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const objetivo = await usuarios.porId(id);

@@ -1,3 +1,11 @@
+/**
+ * Conexion a MySQL y esquema de la base.
+ *
+ * - `pool`: conexiones compartidas (mysql2, en UTC: timezone "Z").
+ * - `conCandado`: ejecuta una funcion con un candado de MySQL (GET_LOCK), por
+ *   ejemplo para que dos despachos no tomen el mismo consecutivo.
+ * - `initSchema`: crea las tablas y agrega las columnas que falten al arrancar.
+ */
 import mysql from "mysql2/promise";
 import "dotenv/config";
 
@@ -47,6 +55,17 @@ export async function conCandado<T>(nombre: string, fn: () => Promise<T>, segund
   }
 }
 
+/**
+ * Crea o actualiza el esquema de la base al arrancar el servidor.
+ *
+ * Como funciona:
+ * 1. CREATE TABLE IF NOT EXISTS de cada tabla (no toca las que ya existen).
+ * 2. Lista 'columnas': agrega las columnas nuevas que falten, consultando
+ *    information_schema (MySQL no tiene ADD COLUMN IF NOT EXISTS).
+ * 3. Indices y ajustes de datos idempotentes (se pueden correr en cada
+ *    arranque sin pisar lo que ya esta).
+ * Asi un despliegue nuevo actualiza la base solo, sin migraciones manuales.
+ */
 export async function initSchema(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS remolques (

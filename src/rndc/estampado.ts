@@ -48,6 +48,10 @@ export function rutaLogo(): string {
 }
 
 let logoCache: Buffer | null | undefined;
+/**
+ * Lee el logo de la empresa una sola vez y lo guarda en memoria. Si no existe,
+ * lo avisa en consola y devuelve null (los PDF salen sin logo).
+ */
 function leerLogo(): Buffer | null {
   if (logoCache !== undefined) return logoCache;
   const ruta = rutaLogo();

@@ -28,6 +28,10 @@ const LARGO_MINIMO_CLAVE = 8;
 
 const PARAMETROS_SCRYPT = { N: 16384, r: 8, p: 1 };
 
+/**
+ * Version con promesa de crypto.scrypt: deriva una llave de 'largo' bytes a
+ * partir de la contrasena y la sal, con los parametros de PARAMETROS_SCRYPT.
+ */
 function scryptAsync(clave: string, sal: Buffer, largo: number): Promise<Buffer> {
   return new Promise((ok, falla) =>
     scrypt(clave, sal, largo, PARAMETROS_SCRYPT, (err, llave) => (err ? falla(err) : ok(llave)))
@@ -41,6 +45,13 @@ export async function hashClave(clave: string): Promise<string> {
   return `scrypt$${sal.toString("base64")}$${llave.toString("base64")}`;
 }
 
+/**
+ * Comprueba una contrasena contra el hash guardado ("scrypt$sal$hash").
+ *
+ * Vuelve a derivar la llave con la misma sal y la compara en tiempo constante
+ * (timingSafeEqual), para no revelar por el tiempo de respuesta cuantos bytes
+ * coincidieron. Un formato desconocido devuelve false.
+ */
 export async function verificarClave(clave: string, guardado: string): Promise<boolean> {
   const [algoritmo, salB64, hashB64] = guardado.split("$");
   if (algoritmo !== "scrypt" || !salB64 || !hashB64) return false;
@@ -50,6 +61,10 @@ export async function verificarClave(clave: string, guardado: string): Promise<b
   return llave.length === esperado.length && timingSafeEqual(llave, esperado);
 }
 
+/**
+ * Reglas de una contrasena nueva: minimo LARGO_MINIMO_CLAVE caracteres, con
+ * letras y numeros. Devuelve el mensaje del problema o null si sirve.
+ */
 export function problemaConClave(clave: string): string | null {
   if (clave.length < LARGO_MINIMO_CLAVE) return `La contrasena debe tener al menos ${LARGO_MINIMO_CLAVE} caracteres.`;
   if (!/[A-Za-z]/.test(clave) || !/\d/.test(clave)) return "La contrasena debe tener letras y numeros.";
@@ -81,6 +96,10 @@ export interface Usuario {
   creadoEn: Date;
 }
 
+/**
+ * Fila de la tabla usuarios -> objeto Usuario (sin el hash de la clave, que
+ * solo sale de este modulo en conClavePorEmail).
+ */
 function mapUsuario(r: any): Usuario {
   return {
     id: r.id,
@@ -93,22 +112,32 @@ function mapUsuario(r: any): Usuario {
   };
 }
 
+/** Correo sin espacios y en minuscula: asi se guarda y asi se busca. */
 export const normalizarEmail = (e: unknown) => String(e ?? "").trim().toLowerCase();
+/** Validacion basica de formato de correo (algo@dominio.ext). */
 export const emailValido = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
+/** Repositorio de usuarios del sistema (tabla usuarios). */
 export const usuarios = {
+  /** Todos los usuarios, ordenados por nombre. */
   async listar(): Promise<Usuario[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM usuarios ORDER BY nombre");
     return rows.map(mapUsuario);
   },
+  /** Un usuario por id, o null. */
   async porId(id: number): Promise<Usuario | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM usuarios WHERE id = ?", [id]);
     return rows[0] ? mapUsuario(rows[0]) : null;
   },
+  /** Usuario con su hash de clave, para verificar el login. Solo lo usa la ruta de login. */
   async conClavePorEmail(email: string): Promise<(Usuario & { claveHash: string }) | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM usuarios WHERE email = ?", [email]);
     return rows[0] ? { ...mapUsuario(rows[0]), claveHash: rows[0].claveHash } : null;
   },
+  /**
+   * Crea un usuario guardando el hash de la clave (nunca la clave).
+   * debeCambiar=true obliga a cambiarla al primer ingreso (clave temporal).
+   */
   async crear(email: string, nombre: string, clave: string, debeCambiar: boolean): Promise<Usuario> {
     const [res] = await pool.query<ResultSetHeader>(
       "INSERT INTO usuarios (email, nombre, claveHash, debeCambiarClave) VALUES (?, ?, ?, ?)",
@@ -116,6 +145,10 @@ export const usuarios = {
     );
     return (await this.porId(res.insertId))!;
   },
+  /**
+   * Reemplaza la clave de un usuario (guarda el hash nuevo) y fija si debe
+   * cambiarla en el proximo ingreso.
+   */
   async cambiarClave(id: number, clave: string, debeCambiar: boolean): Promise<void> {
     await pool.query("UPDATE usuarios SET claveHash = ?, debeCambiarClave = ? WHERE id = ?", [
       await hashClave(clave),
@@ -123,10 +156,12 @@ export const usuarios = {
       id,
     ]);
   },
+  /** Cambia nombre y/o estado activo. Los campos ausentes no se tocan. */
   async actualizar(id: number, datos: { nombre?: string; activo?: boolean }): Promise<void> {
     if (datos.nombre !== undefined) await pool.query("UPDATE usuarios SET nombre = ? WHERE id = ?", [datos.nombre, id]);
     if (datos.activo !== undefined) await pool.query("UPDATE usuarios SET activo = ? WHERE id = ?", [datos.activo ? 1 : 0, id]);
   },
+  /** Cuantos usuarios activos hay (para no desactivar al ultimo). */
   async contarActivos(): Promise<number> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) n FROM usuarios WHERE activo = 1");
     return Number(rows[0].n);
@@ -137,9 +172,19 @@ export const usuarios = {
 // Sesiones
 // ---------------------------------------------------------------------------
 
+/** SHA-256 en hexadecimal del token de sesion: es lo que se guarda en la base. */
 const hashToken = (t: string) => createHash("sha256").update(t).digest("hex");
 
+/**
+ * Sesiones abiertas (tabla sesiones). Se guarda el HASH SHA-256 del token,
+ * nunca el token: quien lea la tabla no puede suplantar a nadie.
+ */
 export const sesiones = {
+  /**
+   * Abre una sesion: genera un token aleatorio de 32 bytes, guarda su hash con
+   * vencimiento por inactividad, anota el ultimo acceso del usuario y devuelve
+   * el token (que viaja en la cookie).
+   */
   async crear(usuarioId: number): Promise<string> {
     const token = randomBytes(32).toString("base64url");
     await pool.query(
@@ -165,6 +210,7 @@ export const sesiones = {
     return mapUsuario(rows[0]);
   },
 
+  /** Cierra la sesion de ese token (logout). */
   async cerrar(token: string): Promise<void> {
     await pool.query("DELETE FROM sesiones WHERE tokenHash = ?", [hashToken(token)]);
   },
@@ -178,6 +224,7 @@ export const sesiones = {
     }
   },
 
+  /** Borra las sesiones vencidas (mantenimiento). */
   async limpiarVencidas(): Promise<void> {
     await pool.query("DELETE FROM sesiones WHERE expiraEn <= UTC_TIMESTAMP()");
   },
@@ -187,6 +234,7 @@ export const sesiones = {
 // Cookie y filtro de la API
 // ---------------------------------------------------------------------------
 
+/** Saca el token de sesion de la cabecera Cookie de la peticion, o null si no viene. */
 export function leerToken(req: Request): string | null {
   const cabecera = req.headers.cookie ?? "";
   for (const parte of cabecera.split(";")) {
@@ -196,6 +244,10 @@ export function leerToken(req: Request): string | null {
   return null;
 }
 
+/**
+ * Pone la cookie de sesion: HttpOnly (el JavaScript de la pagina no la lee),
+ * SameSite=Lax, y Secure cuando la peticion llego por HTTPS.
+ */
 export function ponerCookie(res: Response, token: string, req: Request): void {
   res.cookie(COOKIE_SESION, token, {
     httpOnly: true,
@@ -206,6 +258,7 @@ export function ponerCookie(res: Response, token: string, req: Request): void {
   });
 }
 
+/** Borra la cookie de sesion del navegador (logout). */
 export function borrarCookie(res: Response): void {
   res.clearCookie(COOKIE_SESION, { path: "/" });
 }
@@ -246,12 +299,17 @@ export function minutosBloqueado(clave: string): number {
   }
   return Math.ceil(falta / 60000);
 }
+/**
+ * Suma un intento fallido de login para esa clave (correo o IP). Al llegar a
+ * MAX_INTENTOS bloquea durante BLOQUEO_MS (10 minutos).
+ */
 export function registrarFallo(clave: string): void {
   const r = intentos.get(clave) ?? { fallos: 0, hasta: 0 };
   r.fallos++;
   if (r.fallos >= MAX_INTENTOS) r.hasta = Date.now() + BLOQUEO_MS;
   intentos.set(clave, r);
 }
+/** Olvida los fallos de esa clave (tras un login correcto). */
 export function limpiarFallos(clave: string): void {
   intentos.delete(clave);
 }
@@ -267,6 +325,10 @@ const MAX_INTENTOS_CODIGO = 5;
 const hashCodigo = (usuarioId: number, codigo: string) =>
   createHash("sha256").update(`${usuarioId}:${codigo}`).digest("hex");
 
+/**
+ * Codigos de recuperacion de contrasena por correo (tabla recuperaciones).
+ * Se guarda el hash del codigo, su vencimiento y los intentos fallidos.
+ */
 export const recuperaciones = {
   /** Genera un codigo nuevo de 6 digitos; anula los anteriores del usuario. */
   async crear(usuarioId: number): Promise<string> {
@@ -302,6 +364,7 @@ export const recuperaciones = {
     return false;
   },
 
+  /** Anula los codigos pendientes de un usuario (tras usarlos). */
   async borrarDe(usuarioId: number): Promise<void> {
     await pool.query("DELETE FROM recuperaciones WHERE usuarioId = ?", [usuarioId]);
   },

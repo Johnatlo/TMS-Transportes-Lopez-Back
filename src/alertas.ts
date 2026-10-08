@@ -45,6 +45,12 @@ export interface OrigenAlerta {
   campo: "fechaVencSoat" | "fechaVencTecnomecanica" | "fechaVencLicencia" | "fechaVencimientoPolizaCarga";
 }
 
+/**
+ * Dias calendario que faltan para una fecha (negativo si ya paso; null sin fecha).
+ *
+ * Compara solo el dia (en UTC, como se guardan las columnas DATE), no la hora:
+ * un documento que vence hoy sigue siendo valido hoy.
+ */
 function diasHasta(fecha: Date | null): number | null {
   if (!fecha) return null;
   const hoy = new Date();
@@ -55,6 +61,13 @@ function diasHasta(fecha: Date | null): number | null {
   return Math.round((a - b) / 86_400_000);
 }
 
+/**
+ * Clasifica una alerta segun los dias que faltan.
+ *
+ * VENCIDO si ya paso la fecha, POR_VENCER si cae dentro del umbral de aviso,
+ * VIGENTE en otro caso. Sin fecha cuenta como VIGENTE aqui; las alertas sin
+ * fecha se reportan aparte en revisarDocumentos.
+ */
 function severidadDe(dias: number | null, diasAviso: number): Severidad {
   if (dias === null) return "VIGENTE";
   if (dias < 0) return "VENCIDO";
@@ -62,6 +75,10 @@ function severidadDe(dias: number | null, diasAviso: number): Severidad {
   return "VIGENTE";
 }
 
+/**
+ * Frase para mostrar en pantalla: "SOAT de SKN250 vence en 3 dia(s)", "vence hoy",
+ * "vencio hace 2 dia(s)" o "sin fecha registrada".
+ */
 function describir(tipo: string, sujeto: string, dias: number | null): string {
   if (dias === null) return `${tipo} de ${sujeto}: sin fecha registrada`;
   if (dias < 0) return `${tipo} de ${sujeto} vencio hace ${Math.abs(dias)} dia(s)`;
@@ -69,6 +86,11 @@ function describir(tipo: string, sujeto: string, dias: number | null): string {
   return `${tipo} de ${sujeto} vence en ${dias} dia(s)`;
 }
 
+/**
+ * Arma una alerta completa de un documento: calcula los dias restantes, la
+ * severidad y el mensaje, y guarda de que registro y campo sale la fecha para
+ * poder corregirla desde la alerta.
+ */
 function alerta(
   tipo: AlertaDocumento["tipo"],
   sujeto: string,

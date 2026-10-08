@@ -1,6 +1,13 @@
+/**
+ * Datos de ejemplo para desarrollo (npm run seed). No crea nada en el RNDC.
+ */
 import { initSchema } from "./db";
 import { vehiculos, conductores, terceros, rutas, plantillas, remolques } from "./repo";
 
+/**
+ * Carga datos de EJEMPLO para desarrollo (vehiculo ABC123, conductor,
+ * cliente, plantilla...). Si ya se cargaron, no los duplica.
+ */
 async function main() {
   await initSchema();
 

@@ -1,3 +1,7 @@
+/**
+ * Rutas de sesion (/api/auth): login con limite de intentos, logout,
+ * "quien soy", cambio de clave y recuperacion de clave por codigo al correo.
+ */
 import { Router } from "express";
 import {
   borrarCookie,
@@ -50,6 +54,10 @@ authRouter.post("/login", async (req, res) => {
   res.json(publico);
 });
 
+/**
+ * POST /api/auth/logout: cierra la sesion del token de la cookie (si hay) y
+ * borra la cookie. Responde 204 sin cuerpo.
+ */
 authRouter.post("/logout", async (req, res) => {
   const token = leerToken(req);
   if (token) await sesiones.cerrar(token);

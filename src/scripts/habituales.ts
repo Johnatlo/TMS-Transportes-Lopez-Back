@@ -26,10 +26,16 @@ const aplicar = process.argv.includes("--aplicar");
 const iMeses = process.argv.indexOf("--meses");
 const meses = iMeses > 0 ? Number(process.argv[iMeses + 1]) || 6 : 6;
 
+/** Escapa &, < y > para el XML de la consulta. */
 function escapar(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * XML de la consulta tipo 3 del proceso 4 (manifiestos propios) entre dos
+ * fechas (AAAA/MM/DD): placa, remolque, conductor y empresa de monitoreo de
+ * cada manifiesto. Solo lectura.
+ */
 function xmlConsultaMes(ini: string, fin: string): string {
   // Formato del ejemplo de la guia: NIT sin comillas, fechas 'AAAA/MM/DD'.
   return `<?xml version='1.0' encoding='ISO-8859-1' ?>
@@ -45,6 +51,7 @@ function xmlConsultaMes(ini: string, fin: string): string {
 </root>`;
 }
 
+/** Date -> "AAAA/MM/DD", el formato del rango de fechas de la consulta. */
 const fechaRndc = (d: Date) =>
   `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
 
@@ -56,6 +63,7 @@ interface Manifiesto {
   gps: string;
 }
 
+/** Valor de una etiqueta dentro de un bloque <documento>, en mayuscula; "" si no esta. */
 function leer(bloque: string, etiqueta: string): string {
   return (bloque.match(new RegExp(`<${etiqueta}>([^<]*)</${etiqueta}>`, "i"))?.[1] ?? "").trim().toUpperCase();
 }
@@ -69,6 +77,12 @@ function masFrecuente(valores: string[]): { valor: string; veces: number } | nul
   return mejor;
 }
 
+/**
+ * Punto de entrada: consulta mes a mes los manifiestos de los ultimos N meses,
+ * calcula por placa el remolque, conductor y GPS mas frecuentes, y (con
+ * --aplicar) llena solo los campos vacios del catalogo con los que existan
+ * localmente. Sin --aplicar solo muestra lo que haria.
+ */
 async function main() {
   console.log(describirAmbiente());
   console.log(`Ventana: ultimos ${meses} meses. Modo: ${aplicar ? "APLICAR (guarda)" : "solo mostrar"}\n`);

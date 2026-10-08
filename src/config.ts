@@ -1,3 +1,13 @@
+/**
+ * Configuracion del backend, leida del .env al arrancar.
+ *
+ * Agrupa en el objeto `config` la base de datos, los datos de la empresa, el
+ * ambiente del RNDC (pruebas o produccion, con su URL, credenciales, modo
+ * simulacion y reintentos), la numeracion de consecutivos y los filtros de
+ * SICETAC. Tiene frenos de seguridad: no arranca si el ambiente dice
+ * "pruebas" pero la URL apunta a produccion, ni expide en produccion sin la
+ * frase de confirmacion RNDC_CONFIRMO_PRODUCCION.
+ */
 import "dotenv/config";
 
 /**
@@ -45,6 +55,11 @@ export const AMBIENTES_RNDC = {
 
 export type NombreAmbiente = keyof typeof AMBIENTES_RNDC;
 
+/**
+ * Lee RNDC_AMBIENTE del .env ("pruebas" por defecto) y falla al arrancar si
+ * no es "pruebas" ni "produccion": un error de escritura no debe caer en
+ * produccion por accidente.
+ */
 function leerAmbiente(): NombreAmbiente {
   const valor = (process.env.RNDC_AMBIENTE ?? "pruebas").toLowerCase();
   if (valor !== "pruebas" && valor !== "produccion") {
@@ -75,6 +90,10 @@ const wsdlUrl = process.env.RNDC_WSDL_URL || AMBIENTES_RNDC[ambiente].wsdlUrl;
  * produccion, en vez de enumerar los de produccion y dejar pasar el resto.
  */
 const HOST_PRUEBAS = "rndcpruebas.mintransporte.gov.co";
+/**
+ * Nombre del servidor de una URL en minuscula, o "" si la URL no es valida.
+ * Sirve para comparar contra el host de pruebas (lista blanca).
+ */
 function hostDe(url: string): string {
   try {
     return new URL(url).hostname.toLowerCase();

@@ -39,6 +39,11 @@ const RADICADO_MINIMO_PRUEBAS = 900_000_000;
 
 type Tipo = "simulado" | "pruebas" | "produccion";
 
+/**
+ * De donde sale un radicado: "SIMULADO-..." = simulado; un numero desde
+ * RADICADO_MINIMO_PRUEBAS = ambiente de pruebas; cualquier otro = produccion
+ * (real: ese viaje no se puede borrar).
+ */
 function tipoDeRadicado(radicado: string): Tipo {
   if (/^SIMULADO-/i.test(radicado)) return "simulado";
   const n = Number(radicado);
@@ -65,6 +70,10 @@ function radicadosDe(v: Viaje, remesas: ViajeRemesa[]): Array<{ campo: string; v
     .map(([campo, valor]) => ({ campo, valor: String(valor), tipo: tipoDeRadicado(String(valor)) }));
 }
 
+/**
+ * Siguiente numero de manifiesto que propondria el despacho (para mostrar el
+ * efecto de borrar un viaje de prueba).
+ */
 async function siguienteNumero(): Promise<string> {
   return siguienteBase(
     mayorConsecutivo(await viajes.ultimoConsecutivo(), config.consecutivos.ultimoExterno),
@@ -73,6 +82,10 @@ async function siguienteNumero(): Promise<string> {
   );
 }
 
+/**
+ * Busca el viaje por numero de manifiesto (como lo conoce la gente) o por id
+ * ("#36" o "36"). null si no existe.
+ */
 async function buscar(texto: string): Promise<Viaje | null> {
   const limpio = texto.trim();
   // Primero por numero de manifiesto, que es como lo conoce la gente.
@@ -102,6 +115,13 @@ async function listar() {
   }
 }
 
+/**
+ * Punto de entrada: --listar muestra los viajes de prueba borrables; con un
+ * numero o id muestra el viaje, sus remesas y radicados, y solo con
+ * --confirmar lo borra. Se niega si tiene algun radicado de produccion.
+ * Un viaje sin ningun radicado exige ademas --sin-radicado: no se sabe si su
+ * numero llego al RNDC por otro lado (el portal).
+ */
 async function main() {
   const args = process.argv.slice(2);
   const confirmar = args.includes("--confirmar");
