@@ -86,7 +86,7 @@ import {
   leerCumplidoManifiesto,
 } from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
-import { aCabeceraMunicipal, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
+import { aCabeceraMunicipal, calcularPisoSicetac, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
 import { estamparLogo, logoComoDataUri } from "../rndc/estampado";
 import { construirHtmlRemesa } from "../rndc/remesa-impresion";
@@ -2051,7 +2051,8 @@ export async function tiemposLogisticos(viaje: Viaje) {
     conEsperaCargue !== null && conEsperaDescargue !== null ? (conEsperaCargue + conEsperaDescargue) / 60 : null;
   const piso = vivo
     ? {
-        valor: Math.ceil(vivo.valorMoviliza + (vivo.valorHora ?? 0) * (horasEjecutadas ?? horasPactadas)),
+        // Misma formula que el piso de despacho, con otras horas (ver sicetac.test.ts).
+        valor: calcularPisoSicetac(vivo, horasEjecutadas ?? horasPactadas) ?? vivo.piso,
         conHorasEjecutadas: horasEjecutadas !== null,
         horas: horasEjecutadas ?? horasPactadas,
         valorDespacho: vivo.piso,

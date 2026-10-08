@@ -89,13 +89,14 @@ const dia = (v: unknown): string | null => {
 };
 /** Fecha de hoy en Colombia (el servidor corre en UTC: de noche ya seria manana). */
 const hoyColombia = () => new Date(Date.now() - 5 * 3_600_000).toISOString().slice(0, 10);
-const sumarDias = (fecha: string, dias: number) => {
+export const sumarDias = (fecha: string, dias: number) => {
   const d = new Date(`${fecha}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + dias);
   return d.toISOString().slice(0, 10);
 };
 
-function estadoDe(f: Omit<FilaCuadro, "estado" | "todoPagado">): { estado: EstadoCuadro; todoPagado: boolean } {
+/** Estado de una fila a partir de sus datos (exportado para las pruebas). */
+export function estadoDe(f: Omit<FilaCuadro, "estado" | "todoPagado">): { estado: EstadoCuadro; todoPagado: boolean } {
   const saldoPagado = f.flota !== "TERCERO" || !!f.fechaPagoSaldo;
   const todoPagado = !!f.facturaFechaPago && saldoPagado && f.anticiposSinPagar === 0;
   if (f.anulado) return { estado: "ANULADO", todoPagado: false };
