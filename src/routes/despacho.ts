@@ -353,9 +353,9 @@ function aDatosRemesa(
 despachoRouter.post("/", async (req, res) => {
   const b = req.body;
 
-  if (!b.remolqueId) {
-    return res.status(422).json({ error: "Debes indicar el remolque usado en este viaje" });
-  }
+  // El remolque es opcional: los vehiculos rigidos (camion de 2 o 3 ejes,
+  // volquetas) no llevan. La pantalla lo exige para tractocamiones (config con
+  // "S", semirremolque); si aun asi falta, responde el RNDC.
 
   // Compatibilidad: si llega el formato viejo de una sola remesa, se convierte.
   const remesasEntrada: any[] = Array.isArray(b.remesas) && b.remesas.length > 0
@@ -396,10 +396,10 @@ despachoRouter.post("/", async (req, res) => {
     vehiculos.findById(Number(b.vehiculoId)),
     conductores.findById(Number(b.conductorId)),
     b.conductor2Id ? conductores.findById(Number(b.conductor2Id)) : Promise.resolve(null),
-    remolques.findById(Number(b.remolqueId)),
+    b.remolqueId ? remolques.findById(Number(b.remolqueId)) : Promise.resolve(null),
   ]);
 
-  if (!plantillaPrincipal || !vehiculo || !conductor || !remolque) {
+  if (!plantillaPrincipal || !vehiculo || !conductor || (b.remolqueId && !remolque)) {
     return res
       .status(404)
       .json({ error: "Plantilla, vehiculo, conductor o remolque no encontrado" });
@@ -494,7 +494,7 @@ despachoRouter.post("/", async (req, res) => {
         null,
       fechaPagoSaldo: b.fechaPagoSaldo ? new Date(b.fechaPagoSaldo) : null,
       conductor2Id: conductor2 ? conductor2.id : null,
-      remolqueId: remolque.id,
+      remolqueId: remolque?.id ?? null,
       viajesDia: b.viajesDia ? Number(b.viajesDia) : null,
       ordenServicioGenerador: null,
       vacio1Origen: b.vacio1Origen ?? null,
@@ -567,7 +567,7 @@ async function procesarViaje(
     viaje.conductor2Id ? conductores.findById(viaje.conductor2Id) : Promise.resolve(null),
     viaje.remolqueId ? remolques.findById(viaje.remolqueId) : Promise.resolve(null),
   ]);
-  if (!plantillaPrincipal || !vehiculo || !conductor || !remolque) {
+  if (!plantillaPrincipal || !vehiculo || !conductor || (viaje.remolqueId && !remolque)) {
     if (opciones.soloDatos) {
       return { status: 404, cuerpo: { error: "Plantilla, vehiculo, conductor o remolque del viaje ya no existe." } };
     }
@@ -640,7 +640,8 @@ async function procesarViaje(
       capacidadKg: vehiculo.capacidadKg,
       pesoVehiculoVacio: vehiculo.pesoVehiculoVacio,
     },
-    remolque: { placa: remolque.placa, capacidadKg: remolque.capacidadKg },
+    // Sin remolque (vehiculo rigido): NUMPLACAREMOLQUE no se envia.
+    remolque: { placa: remolque?.placa ?? null, capacidadKg: remolque?.capacidadKg ?? null },
     conductor: { codTipoId: conductor.codTipoId, cedula: conductor.cedula },
     conductor2: conductor2
       ? { codTipoId: conductor2.codTipoId, cedula: conductor2.cedula }
@@ -1163,10 +1164,15 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
   }
   if (b.conductor2Id !== undefined) cambios.conductor2Id = num(b.conductor2Id);
   if (b.remolqueId !== undefined) {
-    if (!(await remolques.findById(Number(b.remolqueId)))) {
-      return res.status(404).json({ error: "Remolque no encontrado" });
+    // null o vacio = sin remolque (vehiculo rigido).
+    if (b.remolqueId === null || b.remolqueId === "") {
+      cambios.remolqueId = null;
+    } else {
+      if (!(await remolques.findById(Number(b.remolqueId)))) {
+        return res.status(404).json({ error: "Remolque no encontrado" });
+      }
+      cambios.remolqueId = Number(b.remolqueId);
     }
-    cambios.remolqueId = Number(b.remolqueId);
   }
   if (b.valorFleteReal !== undefined) cambios.valorFleteReal = num(b.valorFleteReal);
   if (b.valorAnticipoManifiesto !== undefined) {

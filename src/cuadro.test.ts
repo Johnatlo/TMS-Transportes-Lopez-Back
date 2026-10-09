@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 // El cuadro importa la conexion a MySQL; estas pruebas no tocan la base.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { CLIENTE_FLUJO_LARGO, estadoDe, sumarDias } from "./cuadro";
+import { CLIENTE_FLUJO_LARGO, datosAHeredar, estadoDe, sumarDias } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 
 type Base = Omit<FilaCuadro, "estado" | "todoPagado">;
@@ -116,5 +116,30 @@ describe("pago a terceros y flujo de papeles", () => {
     expect(CLIENTE_FLUJO_LARGO.test("CORAME URBANO")).toBe(true);
     expect(CLIENTE_FLUJO_LARGO.test("corame")).toBe(true);
     expect(CLIENTE_FLUJO_LARGO.test("TP FORMULADOS")).toBe(false);
+  });
+});
+
+describe("manifiesto anulado y vuelto a expedir: que hereda la fila nueva", () => {
+  const nueva = { estadoPapeles: "EN_RUTA", tipoFlete: "KILO", tarifaKilo: null, valorFijo: null, remision: null, facturado: 0 };
+
+  test("pasa lo diligenciado en la anulada a los campos vacios de la nueva", () => {
+    const anulada = {
+      remision: "1300", tipoFlete: "FIJO", valorFijo: 945_900, tarifaKilo: null, estadoPapeles: "OFICINA",
+      facturado: 1, facturaNumero: "7400", facturaFecha: "2026-10-07",
+    };
+    expect(datosAHeredar(anulada, nueva)).toEqual({
+      remision: "1300", valorFijo: 945_900, tipoFlete: "FIJO", estadoPapeles: "OFICINA",
+      facturado: 1, facturaNumero: "7400", facturaFecha: "2026-10-07",
+    });
+  });
+
+  test("nunca pisa lo que la nueva ya tiene", () => {
+    const yaDiligenciada = { ...nueva, remision: "2000", tarifaKilo: 122.25, estadoPapeles: "RADICADO" };
+    const anulada = { remision: "1300", tipoFlete: "FIJO", valorFijo: 945_900, estadoPapeles: "OFICINA" };
+    expect(datosAHeredar(anulada, yaDiligenciada)).toEqual({});
+  });
+
+  test("una anulada sin nada diligenciado no cambia nada", () => {
+    expect(datosAHeredar({ ...nueva }, nueva)).toEqual({});
   });
 });

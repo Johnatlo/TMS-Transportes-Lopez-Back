@@ -28,6 +28,58 @@ export const FLOTAS: Flota[] = ["LOPEZ", "MYC", "TERCERO"];
 /** Dias para pagarle el saldo a un tercero despues de entregar el viaje. */
 export const DIAS_PAGO_TERCEROS = 15;
 
+/**
+ * Dias dentro de los cuales un manifiesto nuevo de la misma placa y empresa se
+ * toma como el reemplazo de uno anulado (el viaje se re-expide casi siempre el
+ * mismo dia).
+ */
+export const DIAS_REEXPEDICION = 3;
+
+/** Fila cruda de cuadro_viajes con lo que puede heredarse de un viaje anulado. */
+export type FilaHeredable = Record<string, unknown> & {
+  estadoPapeles?: unknown;
+  tarifaKilo?: unknown;
+  valorFijo?: unknown;
+  facturado?: unknown;
+};
+
+/** Campos que se copian del anulado si en la fila nueva estan vacios. */
+const CAMPOS_HEREDABLES = [
+  "remision", "fechaRadicado", "facturaNumero", "facturaFecha",
+  "facturaFechaPago", "fechaPagoSaldo", "revisadoContabilidadPorId", "revisadoContabilidadEn",
+  "revisadoGerenciaPorId", "revisadoGerenciaEn",
+] as const;
+
+/**
+ * Que hereda la fila del manifiesto nuevo de la del manifiesto anulado al que
+ * reemplaza: solo lo que en la nueva esta vacio (nunca pisa lo que ya tiene).
+ *
+ * - Los campos de CAMPOS_HEREDABLES (remision, flete, factura, pagos,
+ *   revisiones) si en la nueva son null o vacios.
+ * - El flete completo (tipo, tarifa y valor fijo) como un bloque, solo si la
+ *   nueva no tiene ni tarifa ni valor fijo: asi no se mezclan dos fletes.
+ * - Los papeles, si la nueva sigue EN_RUTA y la anulada ya habia avanzado.
+ * - "Facturado", si la anulada ya estaba facturada.
+ * Lo que sale del manifiesto (placa, conductor, peso, fecha) es el de la nueva.
+ */
+export function datosAHeredar(anulada: FilaHeredable, nueva: FilaHeredable): Record<string, unknown> {
+  const vacio = (v: unknown) => v === null || v === undefined || v === "";
+  const cambios: Record<string, unknown> = {};
+  for (const campo of CAMPOS_HEREDABLES) {
+    if (vacio(nueva[campo]) && !vacio(anulada[campo])) cambios[campo] = anulada[campo];
+  }
+  if (vacio(nueva.tarifaKilo) && vacio(nueva.valorFijo) && (!vacio(anulada.tarifaKilo) || !vacio(anulada.valorFijo))) {
+    cambios.tipoFlete = anulada.tipoFlete;
+    if (!vacio(anulada.tarifaKilo)) cambios.tarifaKilo = anulada.tarifaKilo;
+    if (!vacio(anulada.valorFijo)) cambios.valorFijo = anulada.valorFijo;
+  }
+  if (nueva.estadoPapeles === "EN_RUTA" && !vacio(anulada.estadoPapeles) && anulada.estadoPapeles !== "EN_RUTA") {
+    cambios.estadoPapeles = anulada.estadoPapeles;
+  }
+  if (!Number(nueva.facturado) && Number(anulada.facturado)) cambios.facturado = 1;
+  return cambios;
+}
+
 /** El flujo largo de papeles (parqueadero, Don Alexander) es solo de este cliente. */
 export const CLIENTE_FLUJO_LARGO = /CORAME|CARTONES\s+AMERICA/i;
 
@@ -279,7 +331,74 @@ export const cuadro = {
           SET cv.anulado = (v.estado = 'ANULADO')
         WHERE cv.anulado <> (v.estado = 'ANULADO')`
     );
+    await this.reemplazarAnulados();
     return res.affectedRows;
+  },
+
+  /**
+   * Un manifiesto anulado y vuelto a expedir es el MISMO viaje: en el cuadro
+   * debe quedar una sola fila, la del manifiesto nuevo.
+   *
+   * Como funciona: para cada fila anulada busca la de un manifiesto vigente de
+   * la misma placa y empresa expedido despues, dentro de DIAS_REEXPEDICION
+   * dias (el mas cercano). Si la hay, en una transaccion le pasa lo que se
+   * habia diligenciado (datosAHeredar), le mueve los anticipos y las notas,
+   * deja una nota de que reemplaza al anulado y borra la fila anulada. Si no
+   * la hay (se anulo y no se volvio a expedir), la fila sigue como anulada.
+   */
+  async reemplazarAnulados(): Promise<number> {
+    const [anuladas] = await pool.query<RowDataPacket[]>(
+      `SELECT cv.*, v.fechaCreacion AS creadoViaje, vr.orden AS ordenRemesa
+         FROM cuadro_viajes cv
+         JOIN viajes v ON v.id = cv.viajeId
+         LEFT JOIN viaje_remesas vr ON vr.id = cv.viajeRemesaId
+        WHERE cv.anulado = 1`
+    );
+    let reemplazadas = 0;
+    for (const anulada of anuladas) {
+      const [candidatas] = await pool.query<RowDataPacket[]>(
+        // Con varias remesas de la misma empresa se empareja por el orden de la
+        // remesa (la 1 con la 1, la 2 con la 2).
+        `SELECT cv.* FROM cuadro_viajes cv
+           JOIN viajes v ON v.id = cv.viajeId
+           LEFT JOIN viaje_remesas vr ON vr.id = cv.viajeRemesaId
+          WHERE cv.anulado = 0 AND cv.placa = ? AND cv.empresa = ?
+            AND v.fechaCreacion > ? AND v.fechaCreacion <= DATE_ADD(?, INTERVAL ? DAY)
+          ORDER BY (vr.orden <=> ?) DESC, v.fechaCreacion, cv.id
+          LIMIT 1`,
+        [anulada.placa, anulada.empresa, anulada.creadoViaje, anulada.creadoViaje, DIAS_REEXPEDICION, anulada.ordenRemesa]
+      );
+      const nueva = candidatas[0];
+      if (!nueva) continue;
+
+      const conexion = await pool.getConnection();
+      try {
+        await conexion.beginTransaction();
+        const cambios = datosAHeredar(anulada, nueva);
+        const campos = Object.keys(cambios);
+        if (campos.length) {
+          await conexion.query(
+            `UPDATE cuadro_viajes SET ${campos.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`,
+            [...campos.map((c) => cambios[c]), nueva.id]
+          );
+        }
+        await conexion.query("UPDATE cuadro_anticipos SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
+        await conexion.query("UPDATE cuadro_notas SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
+        await conexion.query("INSERT INTO cuadro_notas (cuadroViajeId, texto) VALUES (?, ?)", [
+          nueva.id,
+          `Reemplaza al manifiesto anulado ${anulada.manifiesto ?? ""}${anulada.remesa && anulada.remesa !== anulada.manifiesto ? ` (remesa ${anulada.remesa})` : ""}: se trajo lo que se habia registrado alla.`,
+        ]);
+        await conexion.query("DELETE FROM cuadro_viajes WHERE id = ?", [anulada.id]);
+        await conexion.commit();
+        reemplazadas++;
+      } catch (exc) {
+        await conexion.rollback();
+        console.warn(`Cuadro: no se pudo reemplazar la fila anulada ${anulada.id}:`, (exc as Error).message);
+      } finally {
+        conexion.release();
+      }
+    }
+    return reemplazadas;
   },
 
   /**
