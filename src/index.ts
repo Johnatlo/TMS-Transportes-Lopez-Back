@@ -19,6 +19,7 @@ import { authRouter } from "./routes/auth";
 import { usuariosRouter } from "./routes/usuarios";
 import { cuadroRouter } from "./routes/cuadro";
 import { exigirSesion } from "./auth";
+import { iniciarSincronizacionAutomatica } from "./rndc/sincronizacion";
 
 /**
  * Arranque del servidor:
@@ -115,6 +116,9 @@ async function main() {
   process.on("unhandledRejection", (motivo) => {
     console.error("Promesa rechazada sin capturar:", motivo);
   });
+
+  // Trae del RNDC lo hecho en el portal y los cambios de estado (cada 10 min).
+  iniciarSincronizacionAutomatica();
 
   app.listen(config.port, () => {
     console.log(`Backend RNDC escuchando en http://localhost:${config.port}`);

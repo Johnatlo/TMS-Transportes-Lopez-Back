@@ -664,12 +664,54 @@ export async function initSchema(): Promise<void> {
     // manejan como una; solo Lopez planilla) o vehiculo de un tercero, que se
     // paga aparte y a los 15 dias de entregar el viaje.
     ["vehiculos", "flota", "VARCHAR(10) NOT NULL DEFAULT 'TERCERO'"],
+
+    // Viajes expedidos en el PORTAL del RNDC y traidos por la sincronizacion
+    // (src/rndc/sincronizacion.ts). No tienen plantilla y su vehiculo,
+    // conductor o remolque pueden no estar en el catalogo: se guardan tal
+    // como los reporta el RNDC.
+    ["viajes", "origen", "VARCHAR(10) NOT NULL DEFAULT 'TMS'"],
+    ["viajes", "placaRndc", "VARCHAR(15)"],
+    ["viajes", "conductorRndc", "VARCHAR(20)"],
+    ["viajes", "remolqueRndc", "VARCHAR(15)"],
+    ["viajes", "origenRndc", "VARCHAR(8)"],
+    ["viajes", "destinoRndc", "VARCHAR(8)"],
+    // Partes y mercancia de las remesas del portal (las del TMS salen de la plantilla).
+    ["viaje_remesas", "propietarioTipoId", "VARCHAR(2)"],
+    ["viaje_remesas", "propietarioNit", "VARCHAR(20)"],
+    ["viaje_remesas", "propietarioSede", "VARCHAR(10)"],
+    ["viaje_remesas", "remitenteTipoId", "VARCHAR(2)"],
+    ["viaje_remesas", "remitenteNit", "VARCHAR(20)"],
+    ["viaje_remesas", "remitenteSede", "VARCHAR(10)"],
+    ["viaje_remesas", "destinatarioTipoId", "VARCHAR(2)"],
+    ["viaje_remesas", "destinatarioNit", "VARCHAR(20)"],
+    ["viaje_remesas", "destinatarioSede", "VARCHAR(10)"],
+    ["viaje_remesas", "producto", "VARCHAR(120)"],
+    ["viaje_remesas", "codMercancia", "VARCHAR(10)"],
+    // Radicado del cumplido inicial (proceso 45, lo genera el GPS): hay que
+    // anularlo (proceso 54) antes de anular el manifiesto.
+    ["viaje_remesas", "radicadoCumplidoInicial", "VARCHAR(30)"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
   // rutaId dejo de ser obligatorio cuando el origen y el destino pasaron a
   // deducirse de los terceros.
   await pool.query("ALTER TABLE plantillas_viaje MODIFY rutaId INT NULL").catch(() => undefined);
+  // Un viaje expedido en el portal del RNDC no tiene plantilla, y su vehiculo
+  // o conductor pueden no estar en el catalogo.
+  await pool
+    .query("ALTER TABLE viajes MODIFY plantillaId INT NULL, MODIFY vehiculoId INT NULL, MODIFY conductorId INT NULL")
+    .catch(() => undefined);
+  await pool.query("ALTER TABLE viaje_remesas MODIFY plantillaId INT NULL").catch(() => undefined);
+  // Estado de la sincronizacion con el RNDC (una fila).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sincronizacion_rndc (
+      id INT PRIMARY KEY,
+      ultimaEjecucion DATETIME,
+      ultimoBarridoCompleto DATETIME,
+      resumen TEXT,
+      error TEXT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
 
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(

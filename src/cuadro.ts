@@ -313,18 +313,22 @@ export const cuadro = {
       `INSERT IGNORE INTO cuadro_viajes
          (fecha, vehiculoId, placa, conductor, empresa, viajeId, viajeRemesaId,
           manifiesto, remesa, pesoKg, fechaDescargue, flujoCorame, creadoPorId)
-       SELECT DATE(DATE_SUB(v.fechaCreacion, INTERVAL 5 HOUR)), v.vehiculoId, ve.placa, c.nombre,
-              UPPER(COALESCE(con.nombre, 'SIN CLIENTE')), v.id, vr.id,
+       SELECT DATE(DATE_SUB(v.fechaCreacion, INTERVAL 5 HOUR)), v.vehiculoId, COALESCE(ve.placa, v.placaRndc), COALESCE(c.nombre, v.conductorRndc),
+              UPPER(COALESCE(con.nombre, prop.nombre, vr.propietarioNit, 'SIN CLIENTE')), v.id, vr.id,
               v.consecutivoManifiesto, vr.consecutivoRemesa, vr.pesoReal,
               DATE(DATE_SUB(vr.fechaHoraDescargue, INTERVAL 5 HOUR)),
-              COALESCE(con.nombre, '') REGEXP 'CORAME|CARTONES[[:space:]]+AMERICA', v.creadoPorId
+              COALESCE(con.nombre, prop.nombre, '') REGEXP 'CORAME|CARTONES[[:space:]]+AMERICA', v.creadoPorId
          FROM viaje_remesas vr
          JOIN viajes v ON v.id = vr.viajeId
-         JOIN vehiculos ve ON ve.id = v.vehiculoId
+         LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId
          LEFT JOIN conductores c ON c.id = v.conductorId
          LEFT JOIN plantillas_viaje p ON p.id = vr.plantillaId
          LEFT JOIN terceros con ON con.id = p.contratanteId
-        WHERE v.estado IN ('CONFIRMADO', 'CUMPLIDO') AND vr.estado <> 'ANULADA'`
+         -- Remesas del portal: el cliente sale del propietario de la carga (por NIT).
+         LEFT JOIN (SELECT nit, MIN(nombre) AS nombre FROM terceros GROUP BY nit) prop
+                ON p.id IS NULL AND prop.nit = vr.propietarioNit
+        WHERE v.estado IN ('CONFIRMADO', 'CUMPLIDO') AND vr.estado <> 'ANULADA'
+          AND COALESCE(ve.placa, v.placaRndc) IS NOT NULL`
     );
     await pool.query(
       `UPDATE cuadro_viajes cv JOIN viajes v ON v.id = cv.viajeId

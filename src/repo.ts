@@ -180,9 +180,21 @@ export interface PlantillaViajeConRelaciones extends PlantillaViaje {
 
 export interface Viaje {
   id: number;
-  plantillaId: number;
-  vehiculoId: number;
-  conductorId: number;
+  /** null en los viajes expedidos en el portal del RNDC (origen PORTAL). */
+  plantillaId: number | null;
+  /** null si el vehiculo del viaje del portal no esta en el catalogo (ver placaRndc). */
+  vehiculoId: number | null;
+  /** null si el conductor del viaje del portal no esta en el catalogo (ver conductorRndc). */
+  conductorId: number | null;
+  /** TMS: despachado desde el sistema. PORTAL: traido del RNDC por la sincronizacion. */
+  origen?: "TMS" | "PORTAL";
+  /** Placa, cedula del conductor y remolque como los reporta el RNDC (viajes del portal). */
+  placaRndc?: string | null;
+  conductorRndc?: string | null;
+  remolqueRndc?: string | null;
+  /** Origen y destino (DIVIPOLA) del manifiesto, en los viajes del portal. */
+  origenRndc?: string | null;
+  destinoRndc?: string | null;
   fechaHoraCargue: Date;
   pesoReal: number | null;
   cantidadReal: number | null;
@@ -368,7 +380,9 @@ export const remolques = {
     return (rows as unknown as Remolque[]).map(mapBool);
   },
   /** Un remolque por id, o null. */
-  async findById(id: number): Promise<Remolque | null> {
+  async findById(id: number | null | undefined): Promise<Remolque | null> {
+    // Los viajes del portal del RNDC pueden no tener este registro (id null).
+    if (!id) return null;
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM remolques WHERE id = ?", [id]);
     const row = rows[0] as unknown as Remolque | undefined;
     return row ? mapBool(row) : null;
@@ -484,7 +498,9 @@ export const vehiculos = {
     await pool.query("UPDATE vehiculos SET eliminado = 0, activo = 1 WHERE id = ?", [id]);
   },
   /** Un vehiculo por id, o null. */
-  async findById(id: number): Promise<Vehiculo | null> {
+  async findById(id: number | null | undefined): Promise<Vehiculo | null> {
+    // Los viajes del portal del RNDC pueden no tener este registro (id null).
+    if (!id) return null;
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM vehiculos WHERE id = ?", [id]);
     const row = rows[0] as Vehiculo | undefined;
     return row ? mapVehiculo(row) : null;
@@ -629,7 +645,9 @@ export const conductores = {
     return (rows as Conductor[]).map(mapBool);
   },
   /** Un conductor por id, o null. */
-  async findById(id: number): Promise<Conductor | null> {
+  async findById(id: number | null | undefined): Promise<Conductor | null> {
+    // Los viajes del portal del RNDC pueden no tener este registro (id null).
+    if (!id) return null;
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM conductores WHERE id = ?", [id]);
     const row = rows[0] as Conductor | undefined;
     return row ? mapBool(row) : null;
@@ -1168,7 +1186,9 @@ export const plantillas = {
     return Promise.all((rows as PlantillaViaje[]).map((p) => this.conRelaciones(p)));
   },
   /** Una plantilla (activa o no) con sus relaciones, o null. */
-  async findById(id: number): Promise<PlantillaViajeConRelaciones | null> {
+  async findById(id: number | null | undefined): Promise<PlantillaViajeConRelaciones | null> {
+    // Los viajes del portal del RNDC pueden no tener este registro (id null).
+    if (!id) return null;
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE id = ?", [id]);
     const row = rows[0] as PlantillaViaje | undefined;
     return row ? this.conRelaciones(row) : null;
@@ -1379,7 +1399,22 @@ export const plantillas = {
 export interface ViajeRemesa {
   id: number;
   viajeId: number;
-  plantillaId: number;
+  /** null en las remesas expedidas en el portal del RNDC. */
+  plantillaId: number | null;
+  /** Partes y mercancia de una remesa del portal (las del TMS salen de la plantilla). */
+  propietarioTipoId?: string | null;
+  propietarioNit?: string | null;
+  propietarioSede?: string | null;
+  remitenteTipoId?: string | null;
+  remitenteNit?: string | null;
+  remitenteSede?: string | null;
+  destinatarioTipoId?: string | null;
+  destinatarioNit?: string | null;
+  destinatarioSede?: string | null;
+  producto?: string | null;
+  codMercancia?: string | null;
+  /** Radicado del cumplido inicial del GPS (proceso 45), si existe. */
+  radicadoCumplidoInicial?: string | null;
   orden: number;
   consecutivoRemesa: string | null;
   numeroRemesaRndc: string | null;
@@ -1853,8 +1888,8 @@ export const consecutivos = {
   async listar(limite = 10000): Promise<FilaConsecutivo[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT v.id AS viajeId, vr.id AS remesaId, vr.orden,
-              v.fechaCreacion AS fechaPlanillada, ve.placa,
-              con.nombre AS cliente, vr.pesoReal,
+              v.fechaCreacion AS fechaPlanillada, COALESCE(ve.placa, v.placaRndc) AS placa,
+              COALESCE(con.nombre, tpro.nombre, vr.propietarioNit) AS cliente, vr.pesoReal,
               CASE WHEN vr.orden = 1 THEN v.valorFleteReal ELSE NULL END AS valorManifiesto,
               CASE WHEN vr.orden = 1 THEN v.retencionFopat ELSE NULL END AS retencionFopat,
               CASE WHEN vr.orden = 1 THEN v.valorAnticipoManifiesto ELSE NULL END AS valorAnticipo,
@@ -1863,19 +1898,27 @@ export const consecutivos = {
               vr.consecutivoRemesa, vr.numeroRemesaRndc AS radicadoRemesa,
               v.estado AS estadoViaje, vr.estado AS estadoRemesa,
               rem.codMunicipioRndc AS codMunicipioCargue, COALESCE(mc.nombre, rem.ciudad) AS municipioCargue,
-              p.tipoMercancia AS producto, p.codMercancia,
-              rem.codTipoId AS remitenteTipoId, rem.nit AS remitenteNit, rem.nombre AS remitenteNombre,
+              COALESCE(p.tipoMercancia, vr.producto) AS producto, COALESCE(p.codMercancia, vr.codMercancia) AS codMercancia,
+              COALESCE(rem.codTipoId, vr.remitenteTipoId) AS remitenteTipoId, COALESCE(rem.nit, vr.remitenteNit) AS remitenteNit,
+              rem.nombre AS remitenteNombre,
               des.codMunicipioRndc AS codMunicipioDescargue, COALESCE(md.nombre, des.ciudad) AS municipioDescargue,
-              des.codTipoId AS destinatarioTipoId, des.nit AS destinatarioNit, des.nombre AS destinatarioNombre,
-              c.nombre AS conductor, u.nombre AS creadoPor
+              COALESCE(des.codTipoId, vr.destinatarioTipoId) AS destinatarioTipoId,
+              COALESCE(des.nit, vr.destinatarioNit) AS destinatarioNit, des.nombre AS destinatarioNombre,
+              COALESCE(c.nombre, v.conductorRndc) AS conductor,
+              CASE WHEN v.origen = 'PORTAL' THEN 'Portal RNDC' ELSE u.nombre END AS creadoPor
          FROM viaje_remesas vr
          JOIN viajes v ON v.id = vr.viajeId
          LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId
          LEFT JOIN conductores c ON c.id = v.conductorId
          LEFT JOIN plantillas_viaje p ON p.id = vr.plantillaId
          LEFT JOIN terceros con ON con.id = p.contratanteId
-         LEFT JOIN terceros rem ON rem.id = p.remitenteId
-         LEFT JOIN terceros des ON des.id = p.destinatarioId
+         -- Remesas del portal (sin plantilla): las partes se buscan por NIT y sede.
+         LEFT JOIN terceros rem ON rem.id = COALESCE(p.remitenteId,
+                (SELECT t.id FROM terceros t WHERE t.nit = vr.remitenteNit ORDER BY t.codSede = vr.remitenteSede DESC LIMIT 1))
+         LEFT JOIN terceros des ON des.id = COALESCE(p.destinatarioId,
+                (SELECT t.id FROM terceros t WHERE t.nit = vr.destinatarioNit ORDER BY t.codSede = vr.destinatarioSede DESC LIMIT 1))
+         LEFT JOIN (SELECT nit, MIN(nombre) AS nombre FROM terceros GROUP BY nit) tpro
+                ON p.id IS NULL AND tpro.nit = vr.propietarioNit
          LEFT JOIN municipios mc ON mc.codigo = rem.codMunicipioRndc
          LEFT JOIN municipios md ON md.codigo = des.codMunicipioRndc
          LEFT JOIN usuarios u ON u.id = v.creadoPorId

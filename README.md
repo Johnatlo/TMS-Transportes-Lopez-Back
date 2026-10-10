@@ -454,6 +454,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/despacho/siguiente-consecutivo` | Siguiente numero disponible, para precargar el campo del despacho. Se puede cambiar: lo devuelto es una sugerencia, no una reserva. |
 | `GET` | `/api/despacho/consecutivos` | Libro de consecutivos: una fila por remesa (la hoja de control de la empresa). |
 | `GET` | `/api/despacho/:id/detalle` | Todo lo que se registro al despachar un viaje, para leerlo en una sola ventana: documentos y radicados, vehiculo y conductores, cada remesa con sus partes y su mercancia, valores, tiempos pactados, y quien hizo que. |
+| `GET` | `/api/despacho/sincronizacion` | Estado de la sincronizacion automatica con el RNDC. |
+| `POST` | `/api/despacho/sincronizacion` | Sincroniza ya con el RNDC (los ultimos dias, o todo desde septiembre con { completa: true }) y devuelve lo que cambio. |
 | `GET` | `/api/despacho/historial` | Todos los viajes (la tabla pagina de a 50 en el navegador). A los manifiestos vigentes sin cumplir cuya cita de descargue ya paso les agrega el plazo del cumplido (5 dias habiles). |
 | `GET` | `/api/despacho/fopat` | FOPAT causado por mes, con lo que falta pagar a la DIAN. |
 | `POST` | `/api/despacho/fopat/pagar` | Marca un lote de manifiestos como incluidos en un pago de FOPAT. |
@@ -473,29 +475,30 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_426 funciones, componentes, métodos y rutas en 31 archivos._
+_458 funciones, componentes, métodos y rutas en 32 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/auth.ts`](#srcauthts) (35)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (27)
+- [`src/cuadro.ts`](#srccuadrots) (29)
 - [`src/db.ts`](#srcdbts) (2)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/repo.ts`](#srcrepots) (92)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (43)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
-- [`src/rndc/consultas.ts`](#srcrndcconsultasts) (15)
+- [`src/rndc/consultas.ts`](#srcrndcconsultasts) (19)
 - [`src/rndc/estampado.ts`](#srcrndcestampadots) (4)
 - [`src/rndc/pdf.ts`](#srcrndcpdfts) (5)
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (15)
+- [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (23)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (40)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (16)
-- [`src/routes/despacho.ts`](#srcroutesdespachots) (42)
+- [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -817,6 +820,18 @@ _426 funciones, componentes, métodos y rutas en 31 archivos._
 > - naranja: revisado por contabilidad, falta la gerente
 > - amarillo: todo pagado
 
+- **`datosAHeredar(anulada, nueva)`** · _función_
+  Que hereda la fila del manifiesto nuevo de la del manifiesto anulado al que
+  reemplaza: solo lo que en la nueva esta vacio (nunca pisa lo que ya tiene).
+
+  - Los campos de CAMPOS_HEREDABLES (remision, flete, factura, pagos,
+    revisiones) si en la nueva son null o vacios.
+  - El flete completo (tipo, tarifa y valor fijo) como un bloque, solo si la
+    nueva no tiene ni tarifa ni valor fijo: asi no se mezclan dos fletes.
+  - Los papeles, si la nueva sigue EN_RUTA y la anulada ya habia avanzado.
+  - "Facturado", si la anulada ya estaba facturada.
+  Lo que sale del manifiesto (placa, conductor, peso, fecha) es el de la nueva.
+
 - **`num(v)`** · _función_
   Numero de MySQL (DECIMAL llega como texto) a number; null se conserva.
 
@@ -863,6 +878,17 @@ _426 funciones, componentes, métodos y rutas en 31 archivos._
     Trae al cuadro los viajes con manifiesto expedido (una fila por remesa) y
     marca como anulados los que se anularon. Es idempotente: la llave unica
     de viajeRemesaId impide repetirlos, y no toca lo que ya se diligencio.
+
+  - **`cuadro.reemplazarAnulados()`** · _método_
+    Un manifiesto anulado y vuelto a expedir es el MISMO viaje: en el cuadro
+    debe quedar una sola fila, la del manifiesto nuevo.
+
+    Como funciona: para cada fila anulada busca la de un manifiesto vigente de
+    la misma placa y empresa expedido despues, dentro de DIAS_REEXPEDICION
+    dias (el mas cercano). Si la hay, en una transaccion le pasa lo que se
+    habia diligenciado (datosAHeredar), le mueve los anticipos y las notas,
+    deja una nota de que reemplaza al anulado y borra la fila anulada. Si no
+    la hay (se anulo y no se volvio a expedir), la fila sigue como anulada.
 
   - **`cuadro.listar()`** · _método_
     Todos los viajes del cuadro, del mas reciente al mas antiguo. Antes de
@@ -1798,6 +1824,19 @@ _426 funciones, componentes, métodos y rutas en 31 archivos._
   fecha de registro, retencion en la fuente y FOPAT. null si no esta cumplido
   (RNDC11). Se usa para adoptar cumplidos hechos en el portal.
 
+- **`leerAnulacion(cliente, credenciales, procesoId, variables, filtro, valor, etiquetaMotivo)`** · _función_
+  Consulta una anulacion por numero (tipo 3) y devuelve su radicado, fecha,
+  motivo y observaciones; null si no existe (RNDC11).
+
+- **`leerAnulacionManifiesto(cliente, credenciales, numero)`** · _función_
+  Anulacion del manifiesto (proceso 32), si existe.
+
+- **`leerAnulacionRemesa(cliente, credenciales, consecutivo)`** · _función_
+  Anulacion de la remesa (proceso 9), si existe.
+
+- **`leerAnulacionCumplidoInicial(cliente, credenciales, consecutivo)`** · _función_
+  Anulacion del cumplido inicial de la remesa (proceso 54), si existe.
+
 ### `src/rndc/estampado.ts`
 
 > Logo de la empresa sobre los PDF oficiales del RNDC.
@@ -2034,6 +2073,109 @@ _426 funciones, componentes, métodos y rutas en 31 archivos._
 
   Devuelve null si la via no aparece entre las de la ruta. Lanza si SICETAC
   no responde.
+
+### `src/rndc/sincronizacion.ts`
+
+> Sincronizacion automatica con el RNDC: el TMS refleja lo que de verdad hay
+> en el RNDC, aunque se haya hecho en el portal.
+>
+> Que hace, con consultas de SOLO LECTURA (tipo 3) por rango de fechas:
+> - Manifiestos (proceso 4) y remesas (3) expedidos en el portal: se crean como
+>   viajes de origen PORTAL, para no perder el control de los consecutivos ni
+>   el cuadro pagos. Si el numero ya existe en el TMS se completa su radicado.
+> - Cumplidos de manifiesto (6) y de remesa (5): el viaje o la remesa pasa a
+>   cumplido.
+> - Anulaciones de manifiesto (32) y de remesa (9): pasa a anulado.
+> - Cumplido inicial del GPS (45) y su anulacion (54): se guarda en la remesa,
+>   para saber que hay que anularlo antes que el manifiesto.
+>
+> Todas las consultas, sus variables y el formato del rango (iniFECHAING /
+> finFECHAING 'AAAA/MM/DD', fin no incluido) se verificaron en produccion el
+> 2026-10-10 con manifiestos reales de la empresa.
+>
+> Cuando corre: al arrancar el servidor y cada 10 minutos sobre los ultimos
+> dias; una vez al dia recorre todo desde RNDC_SINCRONIZAR_DESDE (por defecto
+> 2026-09-01), mes por mes. Nunca toca un viaje que se esta enviando en ese
+> momento (estados PENDIENTE, REINTENTANDO, ANULANDO o CUMPLIENDO).
+
+- **`fechaIngresoRndc(texto)`** · _función_
+  FECHAING del RNDC ("09/10/2026 10:08:12 p. m." o "1/10/2026 5:48:55 a. m.",
+  hora de Colombia) -> Date. null si no tiene ese formato.
+
+- **`fechaHoraCitaRndc(fecha, hora)`** · _función_
+  "DD/MM/AAAA" y "HH:MM" en hora de Colombia -> Date. Sin hora: mediodia.
+
+- **`fechaConsulta(d)`** · _función_
+  Date -> "AAAA/MM/DD" (dia de Colombia), el formato del rango de las consultas.
+
+- **`tramosMensuales(desde, hasta)`** · _función_
+  Tramos de hasta un mes entre dos fechas: una consulta por tramo, para no pesar al RNDC.
+
+- **`partesConsecutivoRemesa(consecutivo)`** · _función_
+  "00006692B" -> { base: "00006692", orden: 3 }: la remesa A es la 2, la B la 3.
+
+- **`escapar(v)`** · _función_
+  Escapa &, < y > para el XML de la consulta.
+
+- **`leerDocumentos(xml)`** · _función_
+  Parte la respuesta en documentos: cada uno, sus etiquetas en minuscula -> valor.
+
+- **`consultarRango(cliente, cred, procesoId, variables, desde, hasta)`** · _función_
+  Documentos de un proceso registrados entre dos fechas (tipo 3, filtrado por
+  el NIT de la empresa). "Documento no encontrado" (RNDC11) = ninguno.
+
+- **`consultarTramos(cliente, cred, procesoId, variables, desde, hasta)`** · _función_
+  Lo mismo por tramos mensuales, con una pausa corta entre consultas.
+
+- **`num(v)`** · _función_
+  Texto numerico del RNDC -> number; vacio o ausente -> null.
+
+- **`q(sql, params)`** · _función_
+  Ejecuta una consulta SQL y devuelve solo las filas (o el resultado del INSERT/UPDATE).
+
+- **`idPor(tabla, campo, valor)`** · _función_
+  Id del catalogo por un campo (placa, cedula) o null si no esta.
+
+- **`crearViajePortal(m, remesas, resumen)`** · _función_
+  Crea en el TMS un viaje expedido en el portal, con sus remesas.
+
+- **`crearRemesaPortal(viajeId, r, resumen)`** · _función_
+  Crea una remesa del portal ligada a su viaje (si su consecutivo no existe ya).
+
+- **`viajePorManifiesto(numero)`** · _función_
+  Viaje del TMS por numero de manifiesto, con la placa con que se expidio.
+
+- **`remesaPorConsecutivo(consecutivo)`** · _función_
+  Remesa del TMS por consecutivo, con el estado de su viaje.
+
+- **`sincronizarRango(cliente, cred, desde, hasta)`** · _función_
+  Trae del RNDC todo lo registrado entre dos fechas y lo refleja en el TMS.
+  Ver la cabecera del modulo. Devuelve lo que cambio.
+
+- **`crearViajeAnulado(a)`** · _función_
+  Viaje anulado en el RNDC que el TMS no conocia. Solo se sabe lo que guarda
+  la anulacion (numero, radicado, motivo, observacion y fecha): el RNDC ya no
+  entrega los datos del manifiesto anulado.
+
+- **`crearRemesaAnulada(viajeId, a)`** · _función_
+  Remesa anulada en el RNDC que el TMS no conocia, ligada a su viaje.
+
+- **`desdeCompleto()`** · _función_
+  Fecha desde la que se recorre todo (RNDC_SINCRONIZAR_DESDE, por defecto 2026-09-01).
+
+- **`sincronizarConRndc(opciones)`** · _función_
+  Una sincronizacion: los ultimos DIAS_VENTANA_CORTA dias, o todo desde
+  RNDC_SINCRONIZAR_DESDE si `completa` (o si hace mas de 24 h del ultimo
+  barrido completo). No corre dos a la vez. Guarda el resultado en
+  sincronizacion_rndc.
+
+- **`estadoSincronizacion()`** · _función_
+  Estado de la ultima sincronizacion, para mostrarlo en pantalla.
+
+- **`iniciarSincronizacionAutomatica()`** · _función_
+  Arranca la sincronizacion automatica: una al minuto de iniciar el servidor y
+  luego cada MINUTOS_ENTRE_SINCRONIZACIONES. Los errores (por ejemplo, el RNDC
+  caido) se registran y se reintenta en la siguiente vuelta.
 
 ### `src/routes/auth.ts`
 
@@ -2417,8 +2559,19 @@ _426 funciones, componentes, métodos y rutas en 31 archivos._
   Es lo que usa "Despachar" cuando el RNDC rechaza: reintenta el mismo viaje
   en vez de crear otro con el mismo numero.
 
-- **`planDeAnulacion(viaje, remesas)`** · _función_
+- **`consultarEstadoParaAnular(viaje, remesas)`** · _función_
   Lo que falta anular de un viaje, en el orden en que se hara.
+  Antes de anular, pregunta al RNDC (solo lectura) que existe de verdad y lo
+  guarda en el viaje y sus remesas:
+  - el cumplido inicial del GPS de cada remesa (45) y si ya se anulo (54);
+  - si la remesa (9) o el manifiesto (32) ya se anularon, por ejemplo en el portal.
+  Asi la anulacion solo envia lo que falta y en el orden correcto. Devuelve
+  false si el RNDC no respondio (entonces se anula como antes, a ciegas).
+
+- **`planDeAnulacion(viaje, remesas, consultado)`** · _función_
+  Lo que falta anular de un viaje. Con `consultado` (se sabe del RNDC que
+  existe), solo se anulan los cumplidos iniciales que existen y siguen
+  vigentes; sin consulta, se intenta en todas las remesas (como antes).
 
 - **`mesDe(fecha)`** · _función_
   Mes "AAAA-MM" de una fecha (para el tope mensual de anulaciones).
@@ -2557,6 +2710,13 @@ _426 funciones, componentes, métodos y rutas en 31 archivos._
   Todo lo que se registro al despachar un viaje, para leerlo en una sola
   ventana: documentos y radicados, vehiculo y conductores, cada remesa con sus
   partes y su mercancia, valores, tiempos pactados, y quien hizo que.
+
+- **`GET /sincronizacion`** · _ruta HTTP_
+  GET /api/despacho/sincronizacion: estado de la sincronizacion automatica con el RNDC.
+
+- **`POST /sincronizacion`** · _ruta HTTP_
+  POST /api/despacho/sincronizacion: sincroniza ya con el RNDC (los ultimos
+  dias, o todo desde septiembre con { completa: true }) y devuelve lo que cambio.
 
 - **`GET /historial`** · _ruta HTTP_
   GET /api/despacho/historial: todos los viajes (la tabla pagina de a 50 en

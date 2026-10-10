@@ -275,7 +275,7 @@ function xmlDocumentoPropio(
 }
 
 /** null = el RNDC dice que no existe (RNDC11). Cualquier otro error se lanza. */
-async function consultarDocumentoPropio(
+export async function consultarDocumentoPropio(
   cliente: RndcClient,
   credenciales: CredencialesRndc,
   procesoId: string,
@@ -513,3 +513,54 @@ export async function leerCumplidoManifiesto(
     retencionFopat: numeroDe(leerEtiqueta(xml, "retencionfopat")),
   };
 }
+
+/**
+ * Anulaciones registradas en el RNDC, consultadas por numero (tipo 3).
+ * Verificado en produccion (2026-10-10, solo lectura) con el viaje 00006805,
+ * anulado en el RNDC: proceso 32 por NUMMANIFIESTOCARGA, 9 y 54 por
+ * CONSECUTIVOREMESA. Sin anulacion el RNDC responde RNDC11: devuelven null.
+ */
+export interface AnulacionEnRndc {
+  radicado: string;
+  fechaRegistro: string | null;
+  motivo: string | null;
+  observaciones: string | null;
+}
+
+/**
+ * Consulta una anulacion por numero (tipo 3) y devuelve su radicado, fecha,
+ * motivo y observaciones; null si no existe (RNDC11).
+ */
+async function leerAnulacion(
+  cliente: RndcClient,
+  credenciales: CredencialesRndc,
+  procesoId: string,
+  variables: string[],
+  filtro: string,
+  valor: string,
+  etiquetaMotivo: string | null
+): Promise<AnulacionEnRndc | null> {
+  const xml = await consultarDocumentoPropio(cliente, credenciales, procesoId, variables, filtro, valor);
+  const radicado = xml === null ? null : leerEtiqueta(xml, "ingresoid");
+  if (!xml || !radicado) return null;
+  return {
+    radicado,
+    fechaRegistro: leerEtiqueta(xml, "fechaing"),
+    motivo: etiquetaMotivo ? leerEtiqueta(xml, etiquetaMotivo) : null,
+    observaciones: etiquetaMotivo ? leerEtiqueta(xml, "observaciones") : null,
+  };
+}
+
+/** Anulacion del manifiesto (proceso 32), si existe. */
+export const leerAnulacionManifiesto = (cliente: RndcClient, credenciales: CredencialesRndc, numero: string) =>
+  leerAnulacion(cliente, credenciales, "32",
+    ["INGRESOID", "FECHAING", "NUMMANIFIESTOCARGA", "MOTIVOANULACIONMANIFIESTO", "OBSERVACIONES"],
+    "NUMMANIFIESTOCARGA", numero, "motivoanulacionmanifiesto");
+
+/** Anulacion de la remesa (proceso 9), si existe. */
+export const leerAnulacionRemesa = (cliente: RndcClient, credenciales: CredencialesRndc, consecutivo: string) =>
+  leerAnulacion(cliente, credenciales, "9", ["INGRESOID", "FECHAING", "CONSECUTIVOREMESA"], "CONSECUTIVOREMESA", consecutivo, null);
+
+/** Anulacion del cumplido inicial de la remesa (proceso 54), si existe. */
+export const leerAnulacionCumplidoInicial = (cliente: RndcClient, credenciales: CredencialesRndc, consecutivo: string) =>
+  leerAnulacion(cliente, credenciales, "54", ["INGRESOID", "FECHAING", "CONSECUTIVOREMESA"], "CONSECUTIVOREMESA", consecutivo, null);

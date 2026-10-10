@@ -15,6 +15,7 @@ import { Router } from "express";
 import {
   vehiculos,
   conductores,
+  terceros,
   plantillas,
   viajes,
   viajeRemesas,
@@ -97,8 +98,12 @@ import {
   leerTiemposCumplidoRemesa,
   leerCumplidoInicial,
   leerCumplidoManifiesto,
+  leerAnulacionManifiesto,
+  leerAnulacionRemesa,
+  leerAnulacionCumplidoInicial,
 } from "../rndc/consultas";
 import { RndcClient, RndcError } from "../rndc/client";
+import { estadoSincronizacion, sincronizarConRndc } from "../rndc/sincronizacion";
 import { aCabeceraMunicipal, calcularPisoSicetac, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
 import { estamparLogo, logoComoDataUri } from "../rndc/estampado";
@@ -559,6 +564,11 @@ async function procesarViaje(
 ): Promise<{ status: number; cuerpo: unknown }> {
   const viaje = (await viajes.findById(viajeId))!;
   const filasRemesa = await viajeRemesas.findByViaje(viajeId);
+  // Un viaje expedido en el portal del RNDC no tiene plantilla: no se arma ni
+  // se reenvia desde aqui (ya existe alla).
+  if (viaje.origen === "PORTAL") {
+    return { status: 409, cuerpo: { error: "Este viaje se expidio en el portal del RNDC: no se reenvia desde el TMS." } };
+  }
 
   const [plantillaPrincipal, vehiculo, conductor, conductor2, remolque] = await Promise.all([
     plantillas.findById(viaje.plantillaId),
@@ -580,7 +590,7 @@ async function procesarViaje(
 
   const plantillasRemesa = new Map<number, PlantillaViajeConRelaciones>();
   for (const fila of filasRemesa) {
-    if (!plantillasRemesa.has(fila.plantillaId)) {
+    if (!plantillasRemesa.has(fila.plantillaId!)) {
       const p = await plantillas.findById(fila.plantillaId);
       if (!p) {
         if (opciones.soloDatos) {
@@ -592,7 +602,7 @@ async function procesarViaje(
         });
         return { status: 404, cuerpo: { ...actualizado, remesas: filasRemesa } };
       }
-      plantillasRemesa.set(fila.plantillaId, p);
+      plantillasRemesa.set(fila.plantillaId!, p);
     }
   }
 
@@ -601,7 +611,7 @@ async function procesarViaje(
   const primerCargue = new Date(viaje.fechaHoraCargue);
 
   const datosRemesas: DatosRemesaParaRndc[] = filasRemesa.map((fila) =>
-    aDatosRemesa(fila, plantillasRemesa.get(fila.plantillaId)!)
+    aDatosRemesa(fila, plantillasRemesa.get(fila.plantillaId!)!)
   );
 
   // Los trayectos en vacio se arman antes porque determinan el origen y el
@@ -623,7 +633,7 @@ async function procesarViaje(
 
   // Ruta del viaje segun las plantillas, antes de ajustar por vacios. Es el
   // mismo par con el que el despacho consulto las vias a SICETAC.
-  const plantillaUltima = plantillasRemesa.get(filasRemesa[filasRemesa.length - 1].plantillaId)!;
+  const plantillaUltima = plantillasRemesa.get(filasRemesa[filasRemesa.length - 1].plantillaId!)!;
   const rutaBase = {
     origen: plantillaPrincipal.municipioOrigen,
     destino: plantillaUltima.municipioDestino,
@@ -1282,7 +1292,7 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
     // Cambio de numero sin tocar las cargas: las remesas se renumeran igual,
     // porque ninguna existe aun en el RNDC.
     reemplazarRemesas = filasActuales.map((f) => ({
-      plantillaId: f.plantillaId,
+      plantillaId: f.plantillaId!,
       orden: f.orden,
       pesoReal: f.pesoReal,
       cantidadReal: f.cantidadReal,
@@ -1372,16 +1382,73 @@ const ESTADOS_ANULABLES = [
 ];
 
 /** Lo que falta anular de un viaje, en el orden en que se hara. */
-function planDeAnulacion(viaje: Viaje, remesas: ViajeRemesa[]) {
+/**
+ * Antes de anular, pregunta al RNDC (solo lectura) que existe de verdad y lo
+ * guarda en el viaje y sus remesas:
+ * - el cumplido inicial del GPS de cada remesa (45) y si ya se anulo (54);
+ * - si la remesa (9) o el manifiesto (32) ya se anularon, por ejemplo en el portal.
+ * Asi la anulacion solo envia lo que falta y en el orden correcto. Devuelve
+ * false si el RNDC no respondio (entonces se anula como antes, a ciegas).
+ */
+async function consultarEstadoParaAnular(viaje: Viaje, remesas: ViajeRemesa[]): Promise<boolean> {
+  if (config.rndc.simular) return false;
+  const lector = new RndcClient({
+    wsdlUrl: config.rndc.wsdlUrl,
+    usuario: config.rndc.usuario,
+    password: config.rndc.password,
+    simular: false,
+    reintentos: config.rndc.reintentos,
+    soloConsultas: true,
+  });
+  const cred = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
+  try {
+    if (viaje.numeroManifiestoRndc && !viaje.radicadoAnulacion && viaje.consecutivoManifiesto) {
+      const a = await leerAnulacionManifiesto(lector, cred, viaje.consecutivoManifiesto);
+      if (a) {
+        await viajes.update(viaje.id, { radicadoAnulacion: a.radicado, motivoAnulacion: a.motivo, observacionesAnulacion: a.observaciones });
+        viaje.radicadoAnulacion = a.radicado;
+      }
+    }
+    for (const r of remesas.filter((x) => x.estado === "CREADA" && x.consecutivoRemesa)) {
+      const [ci, aci, ar] = await Promise.all([
+        r.radicadoCumplidoInicial ? Promise.resolve(null) : leerCumplidoInicial(lector, cred, r.consecutivoRemesa!),
+        r.radicadoAnulacionCumplido ? Promise.resolve(null) : leerAnulacionCumplidoInicial(lector, cred, r.consecutivoRemesa!),
+        leerAnulacionRemesa(lector, cred, r.consecutivoRemesa!),
+      ]);
+      const cambios: Partial<ViajeRemesa> = {};
+      if (ci?.radicado) cambios.radicadoCumplidoInicial = ci.radicado;
+      if (aci) cambios.radicadoAnulacionCumplido = aci.radicado;
+      if (ar) Object.assign(cambios, { estado: "ANULADA", radicadoAnulacion: ar.radicado });
+      if (Object.keys(cambios).length) {
+        await viajeRemesas.update(r.id, cambios);
+        Object.assign(r, cambios);
+      }
+    }
+    return true;
+  } catch (exc) {
+    console.warn(`No se pudo consultar el estado del viaje ${viaje.id} en el RNDC antes de anular:`, (exc as Error).message);
+    return false;
+  }
+}
+
+/**
+ * Lo que falta anular de un viaje. Con `consultado` (se sabe del RNDC que
+ * existe), solo se anulan los cumplidos iniciales que existen y siguen
+ * vigentes; sin consulta, se intenta en todas las remesas (como antes).
+ */
+function planDeAnulacion(viaje: Viaje, remesas: ViajeRemesa[], consultado = false) {
   const manifiestoVigente = !!viaje.numeroManifiestoRndc && !viaje.radicadoAnulacion;
   const remesasVigentes = remesas.filter((r) => r.estado === "CREADA");
   return {
     manifiestoVigente,
     remesasVigentes,
+    consultado,
     // El cumplido inicial solo existe si hubo manifiesto (lo genera el
     // monitoreo del manifiesto), y el proceso 54 pide su numero.
     cumplidosPorAnular: manifiestoVigente
-      ? remesasVigentes.filter((r) => !r.radicadoAnulacionCumplido)
+      ? remesasVigentes.filter((r) =>
+          consultado ? !!r.radicadoCumplidoInicial && !r.radicadoAnulacionCumplido : !r.radicadoAnulacionCumplido
+        )
       : [],
     // Nada creado en el RNDC: la "anulacion" es solo local (descartar).
     soloLocal: !manifiestoVigente && remesasVigentes.length === 0,
@@ -1401,7 +1468,8 @@ despachoRouter.get("/:id/anulacion", async (req, res) => {
   const viaje = await viajes.findById(Number(req.params.id));
   if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
   const remesas = await viajeRemesas.findByViaje(viaje.id);
-  const plan = planDeAnulacion(viaje, remesas);
+  const consultado = ESTADOS_ANULABLES.includes(viaje.estado) ? await consultarEstadoParaAnular(viaje, remesas) : false;
+  const plan = planDeAnulacion(viaje, remesas, consultado);
 
   let tope = null;
   if (plan.manifiestoVigente) {
@@ -1484,7 +1552,8 @@ despachoRouter.post("/:id/anular", async (req, res) => {
     return res.status(422).json({ error: "Explica en las observaciones por que se anula (obligatorio)." });
   }
   const remesas = await viajeRemesas.findByViaje(viajeId);
-  const plan = planDeAnulacion(viaje, remesas);
+  const consultado = await consultarEstadoParaAnular(viaje, remesas);
+  const plan = planDeAnulacion(viaje, remesas, consultado);
   if (plan.manifiestoVigente && !(motivoManifiesto in MOTIVOS_ANULACION_MANIFIESTO)) {
     return res.status(422).json({ error: "Elige el motivo de anulacion del manifiesto." });
   }
@@ -1552,6 +1621,14 @@ despachoRouter.post("/:id/anular", async (req, res) => {
       const resultado = await cliente.enviar(xml, PROCESO_ID_ANULAR_CUMPLIDO_INICIAL);
       if (resultado.ok) {
         await viajeRemesas.update(r.id, { radicadoAnulacionCumplido: resultado.radicado });
+      } else if (plan.consultado) {
+        // Se sabe que el cumplido inicial existe: sin anularlo, el RNDC tampoco
+        // deja anular el manifiesto. Se detiene aqui con el error claro.
+        return await fallar(
+          `No se pudo anular el cumplido inicial (GPS) de la remesa ${r.consecutivoRemesa}: ${resultado.error}. ` +
+            "Mientras exista, el RNDC no deja anular el manifiesto. Nada mas se anulo.",
+          resultado
+        );
       } else {
         avisos.push(
           `Cumplido inicial de la remesa ${r.consecutivoRemesa}: ${resultado.errorCrudo ?? resultado.error}`
@@ -1948,7 +2025,8 @@ async function baseCumplidoManifiesto(viaje: Viaje) {
     tarifaRetencionFuente: plantilla?.tarifaRetencionFuente ?? TARIFA_RETENCION_FUENTE_DEFECTO,
     titularEsRegimenSimple: !!plantilla?.titularEsRegimenSimple,
     // Si al expedir se reporto FOPAT 0, el vehiculo no lo causa.
-    aplicaFopat: !!vehiculo?.aplicaFopat && viaje.retencionFopat !== 0,
+    // Sin el vehiculo en el catalogo (viaje del portal), manda lo que reporto el manifiesto.
+    aplicaFopat: (vehiculo ? !!vehiculo.aplicaFopat : (viaje.retencionFopat ?? 0) > 0) && viaje.retencionFopat !== 0,
   };
 }
 
@@ -2522,38 +2600,75 @@ despachoRouter.get("/:id/detalle", async (req, res) => {
   ]);
   const tercero = (t: { nombre: string; nit: string; codTipoId: string; codSede: string; ciudad: string | null; codMunicipioRndc?: string | null; direccion?: string | null } | null | undefined) =>
     t ? { nombre: t.nombre, nit: t.nit, tipoId: t.codTipoId, sede: t.codSede, ciudad: t.ciudad, codMunicipio: t.codMunicipioRndc ?? null, direccion: t.direccion ?? null } : null;
+  // Remesas del portal (sin plantilla): las partes se buscan por NIT y sede.
+  const catalogoTerceros = filas.some((r) => !r.plantillaId) ? await terceros.findMany() : [];
+  const porNit = (nit: string | null | undefined, sede: string | null | undefined, tipoId: string | null | undefined) => {
+    if (!nit) return null;
+    const t = catalogoTerceros.find((x) => x.nit === nit && x.codSede === sede) ?? catalogoTerceros.find((x) => x.nit === nit);
+    return t ? tercero(t) : { nombre: "(no esta en el catalogo)", nit, tipoId: tipoId ?? "", sede: sede ?? "", ciudad: null, codMunicipio: null, direccion: null };
+  };
   const remesas = [];
   for (const r of filas) {
     const p = await plantillas.findById(r.plantillaId);
     remesas.push({
       ...r,
-      plantilla: p?.nombre ?? null,
-      producto: p?.tipoMercancia ?? null,
-      codMercancia: p?.codMercancia ?? null,
+      plantilla: p?.nombre ?? (r.plantillaId ? null : "Expedida en el portal del RNDC"),
+      producto: p?.tipoMercancia ?? r.producto ?? null,
+      codMercancia: p?.codMercancia ?? r.codMercancia ?? null,
       codTipoEmpaque: p?.codTipoEmpaque ?? null,
       unidadMedidaProducto: p?.unidadMedidaProducto ?? null,
       pactoCargue: p ? `${p.horasPactoCargue} h ${p.minutosPactoCargue} min` : null,
       pactoDescargue: p ? `${p.horasPactoDescargue} h ${p.minutosPactoDescargue} min` : null,
-      contratante: tercero(p?.contratante),
-      remitente: tercero(p?.remitente),
-      destinatario: tercero(p?.destinatario),
+      contratante: p ? tercero(p.contratante) : porNit(r.propietarioNit, r.propietarioSede, r.propietarioTipoId),
+      remitente: p ? tercero(p.remitente) : porNit(r.remitenteNit, r.remitenteSede, r.remitenteTipoId),
+      destinatario: p ? tercero(p.destinatario) : porNit(r.destinatarioNit, r.destinatarioSede, r.destinatarioTipoId),
     });
   }
   res.json({
     viaje,
     tipoManifiesto: principal?.tipoManifiesto ?? null,
-    origen: principal?.municipioOrigen ?? null,
-    destino: remesas.length ? (await plantillas.findById(filas[filas.length - 1].plantillaId))?.municipioDestino ?? null : null,
-    vehiculo: vehiculo && {
-      placa: vehiculo.placa, marca: vehiculo.marca, configuracion: vehiculo.configuracion,
-      titular: vehiculo.nombreTenedor, titularId: vehiculo.numIdTenedor, titularTipoId: vehiculo.codTipoIdTenedor,
-    },
-    remolque: remolque && { placa: remolque.placa },
-    conductor: conductor && { nombre: conductor.nombre, cedula: conductor.cedula, licencia: conductor.licencia },
+    origen: principal?.municipioOrigen ?? viaje.origenRndc ?? null,
+    destino: remesas.length
+      ? (await plantillas.findById(filas[filas.length - 1].plantillaId))?.municipioDestino ?? viaje.destinoRndc ?? null
+      : viaje.destinoRndc ?? null,
+    // En los viajes del portal el vehiculo, el remolque o el conductor pueden no
+    // estar en el catalogo: se muestra lo que reporto el RNDC.
+    vehiculo: vehiculo
+      ? {
+          placa: vehiculo.placa, marca: vehiculo.marca, configuracion: vehiculo.configuracion,
+          titular: vehiculo.nombreTenedor, titularId: vehiculo.numIdTenedor, titularTipoId: vehiculo.codTipoIdTenedor,
+        }
+      : viaje.placaRndc
+        ? { placa: viaje.placaRndc, marca: null, configuracion: null, titular: null, titularId: null, titularTipoId: null }
+        : null,
+    remolque: remolque ? { placa: remolque.placa } : viaje.remolqueRndc ? { placa: viaje.remolqueRndc } : null,
+    conductor: conductor
+      ? { nombre: conductor.nombre, cedula: conductor.cedula, licencia: conductor.licencia }
+      : viaje.conductorRndc
+        ? { nombre: "(no esta en el catalogo)", cedula: viaje.conductorRndc, licencia: null }
+        : null,
     conductor2: conductor2 && { nombre: conductor2.nombre, cedula: conductor2.cedula },
     monitoreo: monitoreo ? { nombre: monitoreo.nombre, nit: monitoreo.nit } : viaje.nitMonitoreoFlota ? { nombre: null, nit: viaje.nitMonitoreoFlota } : null,
     remesas,
   });
+});
+
+/** GET /api/despacho/sincronizacion: estado de la sincronizacion automatica con el RNDC. */
+despachoRouter.get("/sincronizacion", async (_req, res) => {
+  res.json(await estadoSincronizacion());
+});
+
+/**
+ * POST /api/despacho/sincronizacion: sincroniza ya con el RNDC (los ultimos
+ * dias, o todo desde septiembre con { completa: true }) y devuelve lo que cambio.
+ */
+despachoRouter.post("/sincronizacion", async (req, res) => {
+  try {
+    const resumen = await sincronizarConRndc({ completa: !!req.body?.completa });
+    res.json({ resumen, estado: await estadoSincronizacion() });
+  } catch (exc) {
+    res.status(502).json({ error: `No se pudo sincronizar con el RNDC: ${(exc as Error).message}` });
+  }
 });
 
 /**
