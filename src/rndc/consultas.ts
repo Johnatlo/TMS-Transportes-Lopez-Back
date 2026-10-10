@@ -296,6 +296,9 @@ export interface ManifiestoEnRndc {
   radicado: string;
   fecha: string | null;
   placa: string | null;
+  /** Placa del remolque y cedula del conductor con que quedo expedido. */
+  remolque: string | null;
+  conductor: string | null;
   valorFlete: number | null;
   retencionFopat: number | null;
   valorAnticipo: number | null;
@@ -315,7 +318,8 @@ export async function buscarManifiestoRadicado(
     cliente,
     credenciales,
     "4",
-    ["INGRESOID", "FECHAING", "NUMMANIFIESTOCARGA", "NUMPLACA", "VALORFLETEPACTADOVIAJE", "RETENCIONFOPAT", "VALORANTICIPOMANIFIESTO", "CODVIA"],
+    // NUMPLACAREMOLQUE y NUMIDCONDUCTOR verificados en produccion (2026-10-10).
+    ["INGRESOID", "FECHAING", "NUMMANIFIESTOCARGA", "NUMPLACA", "NUMPLACAREMOLQUE", "NUMIDCONDUCTOR", "VALORFLETEPACTADOVIAJE", "RETENCIONFOPAT", "VALORANTICIPOMANIFIESTO", "CODVIA"],
     "NUMMANIFIESTOCARGA",
     numero
   );
@@ -325,6 +329,8 @@ export async function buscarManifiestoRadicado(
     radicado,
     fecha: leerEtiqueta(xml, "fechaing"),
     placa: leerEtiqueta(xml, "numplaca"),
+    remolque: leerEtiqueta(xml, "numplacaremolque"),
+    conductor: leerEtiqueta(xml, "numidconductor"),
     valorFlete: numeroDe(leerEtiqueta(xml, "valorfletepactadoviaje")),
     retencionFopat: numeroDe(leerEtiqueta(xml, "retencionfopat")),
     valorAnticipo: numeroDe(leerEtiqueta(xml, "valoranticipomanifiesto")),

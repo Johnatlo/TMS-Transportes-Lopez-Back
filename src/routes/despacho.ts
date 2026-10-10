@@ -1030,17 +1030,28 @@ export async function tomarSiYaExpedido(
   }
   if (!m) return null;
 
+  // El manifiesto puede haberse expedido en el portal con OTRO vehiculo (por
+  // ejemplo, salio otro carro). Lo que manda es lo que quedo en el RNDC: el
+  // viaje toma su vehiculo, conductor y remolque. Si no estan en el catalogo,
+  // se guardan como los reporta el RNDC (placaRndc, conductorRndc, remolqueRndc).
   const vehiculo = await vehiculos.findById(viaje.vehiculoId);
-  if (m.placa && vehiculo && m.placa.toUpperCase() !== vehiculo.placa.toUpperCase()) {
-    const actualizado = await viajes.update(viaje.id, {
-      mensajeError:
-        `El manifiesto ${numero} YA EXISTE en el RNDC (radicado ${m.radicado}), pero ` +
-        `con la placa ${m.placa} y no ${vehiculo.placa}: ese numero lo uso otro despacho. Cambia el ` +
-        "numero de este viaje y reintenta.",
-      codigoError: null,
-      errorCrudo: null,
+  const cambioDeVehiculo: Partial<Viaje> = {};
+  let avisoVehiculo = "";
+  if (m.placa && (!vehiculo || m.placa.toUpperCase() !== vehiculo.placa.toUpperCase())) {
+    const enCatalogo = await vehiculos.findByPlacaConEliminados(m.placa.toUpperCase());
+    const conductor = m.conductor ? (await conductores.findMany()).find((c) => c.cedula === m.conductor) : null;
+    const remolque = m.remolque ? (await remolques.findMany()).find((r) => r.placa.toUpperCase() === m.remolque!.toUpperCase()) : null;
+    Object.assign(cambioDeVehiculo, {
+      vehiculoId: enCatalogo && !enCatalogo.eliminado ? enCatalogo.id : null,
+      placaRndc: m.placa.toUpperCase(),
+      conductorId: conductor?.id ?? null,
+      conductorRndc: m.conductor,
+      remolqueId: remolque?.id ?? null,
+      remolqueRndc: m.remolque,
     });
-    return { status: 409, cuerpo: { ...actualizado, remesas: await viajeRemesas.findByViaje(viaje.id) } };
+    avisoVehiculo =
+      ` | En el RNDC quedo con la placa ${m.placa}${vehiculo ? ` y no ${vehiculo.placa}` : ""}` +
+      `${m.conductor ? ` (conductor ${conductor?.nombre ?? m.conductor})` : ""}: el viaje se actualizo con esos datos.`;
   }
 
   // Las remesas que aqui no figuran como creadas: el manifiesto del RNDC las
@@ -1079,6 +1090,7 @@ export async function tomarSiYaExpedido(
   }
 
   const final = await viajes.update(viaje.id, {
+    ...cambioDeVehiculo,
     estado: "CONFIRMADO",
     numeroManifiestoRndc: m.radicado,
     // Los valores con que quedo expedido mandan sobre los del intento fallido.
@@ -1092,6 +1104,7 @@ export async function tomarSiYaExpedido(
     avisos:
       `Manifiesto encontrado en el RNDC: ya estaba expedido (radicado ${m.radicado}` +
       `${m.fecha ? `, ${m.fecha}` : ""}). Se tomaron sus valores: flete, FOPAT, anticipo y via.` +
+      avisoVehiculo +
       (faltantes.length > 0 ? ` | OJO: no se encontraron en el RNDC las remesas ${faltantes.join(", ")}.` : ""),
   });
   return {

@@ -321,8 +321,10 @@ export async function sincronizarRango(cliente: RndcClient, cred: CredencialesRn
     }
     if (ESTADOS_EN_CURSO.includes(local.estado)) continue;
     if (local.placa && m.numplaca && local.placa.toUpperCase() !== m.numplaca.toUpperCase()) {
+      // No se cambia el vehiculo solo: lo hace el usuario con "Corregir y reintentar".
       resumen.conflictos.push(
-        `El manifiesto ${m.nummanifiestocarga} esta en el RNDC con la placa ${m.numplaca}, pero en el TMS es de ${local.placa}.`
+        `El manifiesto ${m.nummanifiestocarga} esta en el RNDC con la placa ${m.numplaca}, pero en el TMS es de ${local.placa}.` +
+          (ESTADOS_ERROR.includes(local.estado) ? " Usa \"Corregir y reintentar\" en ese viaje para tomar el del RNDC." : "")
       );
       continue;
     }
