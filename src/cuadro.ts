@@ -17,10 +17,14 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
 
-export type EstadoPapeles = "EN_RUTA" | "CONDUCTOR" | "PARQUEADERO" | "OFICINA" | "RADICADO";
-export const ESTADOS_PAPELES: EstadoPapeles[] = ["EN_RUTA", "CONDUCTOR", "PARQUEADERO", "OFICINA", "RADICADO"];
+/**
+ * Donde van los papeles: en ruta, ya descargo, con el conductor, parqueadero,
+ * oficina (Don Alexander) y radicados (listo para facturar).
+ */
+export type EstadoPapeles = "EN_RUTA" | "DESCARGADO" | "CONDUCTOR" | "PARQUEADERO" | "OFICINA" | "RADICADO";
+export const ESTADOS_PAPELES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDUCTOR", "PARQUEADERO", "OFICINA", "RADICADO"];
 /** Fuera del flujo de CORAME no hay parqueadero ni oficina: del conductor se pasa a radicado. */
-export const ESTADOS_PAPELES_OTROS_CLIENTES: EstadoPapeles[] = ["EN_RUTA", "CONDUCTOR", "RADICADO"];
+export const ESTADOS_PAPELES_OTROS_CLIENTES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDUCTOR", "RADICADO"];
 
 export type Flota = "LOPEZ" | "MYC" | "TERCERO";
 export const FLOTAS: Flota[] = ["LOPEZ", "MYC", "TERCERO"];
@@ -133,7 +137,7 @@ export interface FilaCuadro {
   papelesRevisadoEn: string | null;
   papelesRevisadoPor: string | null;
   estado: EstadoCuadro;
-  /** Factura cobrada, saldo del tercero pagado y anticipos pagados a la bomba (amarillo). */
+  /** El cliente ya le pago la factura a la empresa (fecha de pago a la empresa). Amarillo. */
   todoPagado: boolean;
 }
 
@@ -161,14 +165,22 @@ export const sumarDias = (fecha: string, dias: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-/** Estado de una fila a partir de sus datos (exportado para las pruebas). */
+/**
+ * Estado de una fila a partir de sus datos (exportado para las pruebas).
+ *
+ * - Todo pagado: solo cuando el cliente le pago la factura a la empresa
+ *   (facturaFechaPago, "fecha de pago a la empresa"). El saldo del tercero y
+ *   los anticipos de bomba se siguen aparte (columnas y "Saldos vencidos").
+ * - Facturado: cuando la factura tiene numero Y fecha, escritos a mano o con
+ *   "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
+ *   "facturado sin datos".
+ */
 export function estadoDe(f: Omit<FilaCuadro, "estado" | "todoPagado">): { estado: EstadoCuadro; todoPagado: boolean } {
-  const saldoPagado = f.flota !== "TERCERO" || !!f.fechaPagoSaldo;
-  const todoPagado = !!f.facturaFechaPago && saldoPagado && f.anticiposSinPagar === 0;
+  const todoPagado = !f.anulado && !!f.facturaFechaPago;
   if (f.anulado) return { estado: "ANULADO", todoPagado: false };
   if (f.facturaFechaPago) return { estado: "PAGADO", todoPagado };
-  if (f.facturaNumero) return { estado: "FACTURADO", todoPagado };
-  if (f.facturado) return { estado: "FACTURADO_SIN_DATOS", todoPagado };
+  if (f.facturaNumero && f.facturaFecha) return { estado: "FACTURADO", todoPagado };
+  if (f.facturado || f.facturaNumero || f.facturaFecha) return { estado: "FACTURADO_SIN_DATOS", todoPagado };
   if (f.estadoPapeles === "RADICADO") return { estado: "RADICADO", todoPagado };
   if (f.estadoPapeles !== "EN_RUTA") return { estado: "SIN_RADICAR", todoPagado };
   return { estado: "EN_RUTA", todoPagado };

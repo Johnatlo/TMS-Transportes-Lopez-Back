@@ -62,7 +62,7 @@ describe("estado del viaje en el cuadro (los colores del Excel)", () => {
   });
 
   test("descargo y los papeles no estan radicados: sin radicar (morado)", () => {
-    for (const papeles of ["CONDUCTOR", "PARQUEADERO", "OFICINA"] as const) {
+    for (const papeles of ["DESCARGADO", "CONDUCTOR", "PARQUEADERO", "OFICINA"] as const) {
       expect(estadoDe(viaje({ estadoPapeles: papeles })).estado).toBe("SIN_RADICAR");
     }
   });
@@ -75,8 +75,10 @@ describe("estado del viaje en el cuadro (los colores del Excel)", () => {
     expect(estadoDe(viaje({ estadoPapeles: "RADICADO", facturado: true })).estado).toBe("FACTURADO_SIN_DATOS");
   });
 
-  test("con numero de factura: facturado", () => {
-    expect(estadoDe(viaje({ facturado: true, facturaNumero: "7400" })).estado).toBe("FACTURADO");
+  test("facturado solo con numero Y fecha de factura, aunque no se haya marcado", () => {
+    expect(estadoDe(viaje({ facturaNumero: "7400", facturaFecha: "2026-10-12" })).estado).toBe("FACTURADO");
+    expect(estadoDe(viaje({ facturado: true, facturaNumero: "7400" })).estado).toBe("FACTURADO_SIN_DATOS");
+    expect(estadoDe(viaje({ facturaFecha: "2026-10-12" })).estado).toBe("FACTURADO_SIN_DATOS");
   });
 
   test("el cliente pago la factura", () => {
@@ -89,24 +91,15 @@ describe("estado del viaje en el cuadro (los colores del Excel)", () => {
 });
 
 describe("todo pagado (amarillo)", () => {
-  const cobrado = { facturaNumero: "7400", facturaFechaPago: "2026-11-05" };
-
-  test("tercero: falta pagarle el saldo al dueno del vehiculo", () => {
-    expect(estadoDe(viaje(cobrado)).todoPagado).toBe(false);
-    expect(estadoDe(viaje({ ...cobrado, fechaPagoSaldo: "2026-10-21" })).todoPagado).toBe(true);
+  test("solo cuando el cliente le pago la factura a la empresa", () => {
+    expect(estadoDe(viaje({ facturaNumero: "7400", facturaFecha: "2026-10-12" })).todoPagado).toBe(false);
+    expect(estadoDe(viaje({ facturaNumero: "7400", facturaFecha: "2026-10-12", facturaFechaPago: "2026-11-05" })).todoPagado).toBe(true);
   });
 
-  test("flota propia (Lopez o MYC): no hay saldo de tercero que pagar", () => {
-    expect(estadoDe(viaje({ ...cobrado, flota: "LOPEZ" })).todoPagado).toBe(true);
-    expect(estadoDe(viaje({ ...cobrado, flota: "MYC" })).todoPagado).toBe(true);
-  });
-
-  test("un anticipo sin pagar a la bomba impide el todo pagado", () => {
-    expect(estadoDe(viaje({ ...cobrado, flota: "LOPEZ", totalAnticipos: 2_200_000, anticiposSinPagar: 1 })).todoPagado).toBe(false);
-  });
-
-  test("sin pago de la factura nunca es todo pagado", () => {
-    expect(estadoDe(viaje({ flota: "LOPEZ", facturaNumero: "7400" })).todoPagado).toBe(false);
+  test("no depende del saldo del tercero ni de los anticipos de bomba", () => {
+    const pagada = { facturaFechaPago: "2026-11-05", flota: "TERCERO" as const, fechaPagoSaldo: null };
+    expect(estadoDe(viaje(pagada)).todoPagado).toBe(true);
+    expect(estadoDe(viaje({ ...pagada, totalAnticipos: 2_200_000, anticiposSinPagar: 1 })).todoPagado).toBe(true);
   });
 });
 

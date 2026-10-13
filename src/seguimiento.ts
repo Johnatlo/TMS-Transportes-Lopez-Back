@@ -59,7 +59,8 @@ export function diasEntre(desde: string, hasta: string): number {
 export const diaColombia = (iso: string) => new Date(Date.parse(iso) - 5 * 3_600_000).toISOString().slice(0, 10);
 
 /** Viaje que aun no tiene factura (ni marcada ni con numero) y no esta anulado. */
-const sinFactura = (f: FilaCuadro) => !f.anulado && !f.facturado && !f.facturaNumero && !f.facturaFechaPago;
+const sinFactura = (f: FilaCuadro) =>
+  !f.anulado && !f.facturado && !f.facturaNumero && !f.facturaFecha && !f.facturaFechaPago;
 
 /** El viaje ya descargo: paso la fecha de descargue o los papeles ya salieron de "en ruta". */
 export const descargo = (f: FilaCuadro, hoy: string) =>
@@ -113,7 +114,7 @@ export function alertaFacturacion(f: FilaCuadro, hoy: string, desde = ""): Alert
       comunicarse: false,
     };
   }
-  if ((f.facturado || f.facturaNumero) && (!f.facturaNumero || !f.facturaFecha)) {
+  if ((f.facturado || f.facturaNumero || f.facturaFecha) && (!f.facturaNumero || !f.facturaFecha)) {
     return {
       nivel: "atencion",
       motivos: [`Facturado sin ${!f.facturaNumero ? "numero" : "fecha"} de factura: no entra a cartera hasta tenerlo.`],
@@ -441,7 +442,7 @@ export const seguimiento = {
       hoy,
       facturas,
       clientes: resumirPorCliente(facturas),
-      sinDatos: filas.filter((f) => !f.anulado && !f.facturaFechaPago && (f.facturado || f.facturaNumero) && (!f.facturaNumero || !f.facturaFecha)),
+      sinDatos: filas.filter((f) => !f.anulado && !f.facturaFechaPago && (f.facturado || f.facturaNumero || f.facturaFecha) && (!f.facturaNumero || !f.facturaFecha)),
       plazos,
     };
   },
@@ -507,6 +508,7 @@ export const seguimiento = {
 /** Nombre de cada estado de papeles para las notas (igual que en pantalla). */
 const ETIQUETA_PAPELES: Record<EstadoPapeles, string> = {
   EN_RUTA: "en ruta",
+  DESCARGADO: "ya descargo",
   CONDUCTOR: "con el conductor",
   PARQUEADERO: "en el parqueadero",
   OFICINA: "donde Don Alexander",

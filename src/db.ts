@@ -369,7 +369,7 @@ export async function initSchema(): Promise<void> {
       tarifaKilo DOUBLE,
       valorFijo DOUBLE,
       fechaDescargue DATE,
-      -- EN_RUTA, CONDUCTOR, PARQUEADERO, OFICINA, RADICADO. Parqueadero y
+      -- EN_RUTA, DESCARGADO, CONDUCTOR, PARQUEADERO, OFICINA, RADICADO. Parqueadero y
       -- oficina (Don Alexander) solo en el flujo de CORAME / Cartones America.
       estadoPapeles VARCHAR(15) NOT NULL DEFAULT 'EN_RUTA',
       flujoCorame TINYINT(1) NOT NULL DEFAULT 0,

@@ -860,6 +860,13 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
 - **`estadoDe(f)`** · _función_
   Estado de una fila a partir de sus datos (exportado para las pruebas).
 
+  - Todo pagado: solo cuando el cliente le pago la factura a la empresa
+    (facturaFechaPago, "fecha de pago a la empresa"). El saldo del tercero y
+    los anticipos de bomba se siguen aparte (columnas y "Saldos vencidos").
+  - Facturado: cuando la factura tiene numero Y fecha, escritos a mano o con
+    "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
+    "facturado sin datos".
+
 - **`mapear(r)`** · _función_
   Fila de SELECT_CUADRO -> FilaCuadro.
 
@@ -3084,14 +3091,18 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
 > Toma las filas del cuadro pagos (src/cuadro.ts) y responde tres preguntas:
 >
 > 1. Papeles: ¿de que viajes ya descargados hay que perseguir los papeles?
->    En CORAME / Cartones America hay que comunicarse con el conductor todos
->    los dias hasta que los papeles queden listos para facturar; en los demas
->    clientes, despues de DIAS_AVISO_OTROS dias.
-> 2. Por facturar: viajes con los papeles listos que llevan dias sin factura,
->    o facturados sin numero o fecha (sin fecha no se sabe cuando vence).
+>    Desde el dia del descargue hay que comunicarse con el conductor todos
+>    los dias hasta que los papeles queden listos para facturar.
+> 2. Por facturar: viajes con los papeles listos y sin factura, o facturados
+>    sin numero o fecha (sin fecha no se sabe cuando vence).
 > 3. Cartera: facturas con numero y fecha que el cliente aun no paga, con su
 >    vencimiento (fecha de factura + dias de credito del cliente), las
 >    gestiones de cobro y la fecha en que el cliente prometio pagar.
+>
+> Todas las alertas se activan cada dia: lo pendiente avisa todos los dias
+> hasta que alguien lo atiende ese dia (registra el seguimiento de los
+> papeles o una gestion de cobro); al dia siguiente vuelve a avisar. Lo
+> pendiente de facturar avisa todos los dias hasta que se factura.
 >
 > Las alertas se calculan con funciones puras (alertaPapeles, agruparCartera,
 > alertasDe) para poder probarlas sin base de datos.
@@ -3112,20 +3123,21 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
   Alerta de papeles de un viaje descargado que aun no esta listo para
   facturar, o null si no hay nada que hacer.
 
-  - CORAME / Cartones America: si nadie ha preguntado hoy, hay que
-    comunicarse con el conductor (todos los dias).
-  - Otros clientes: lo mismo, pero desde DIAS_AVISO_OTROS dias despues del
-    descargue.
+  - Todos los clientes, desde el dia del descargue: si nadie ha preguntado
+    hoy, hay que comunicarse con el conductor. Registrar el seguimiento la
+    apaga hasta el dia siguiente.
   - Urgente si faltan papeles o si ya pasaron DIAS_PAPELES_DEMORADOS dias.
   - Sin alerta si el viaje cargo antes de `desde` (ver SEGUIMIENTO_DESDE).
 
 - **`alertaFacturacion(f, hoy, desde)`** · _función_
-  Alerta de facturacion: papeles listos hace DIAS_POR_FACTURAR dias o mas sin
-  factura, o facturado sin numero o sin fecha (no puede entrar a cartera).
+  Alerta de facturacion, todos los dias hasta que se factura: papeles listos
+  y sin factura (urgente desde DIAS_PAPELES_DEMORADOS dias), o facturado sin numero o sin fecha (no puede entrar a cartera).
   Sin alerta si el viaje cargo antes de `desde`.
 
-- **`alertaFactura(vence, compromisoPago, hoy)`** · _función_
-  Alerta de una factura: compromiso de pago cumplido, vencida o por vencer.
+- **`alertaFactura(vence, compromisoPago, hoy, gestionHoy)`** · _función_
+  Alerta de una factura por cobrar: todos los dias, hasta que se paga, salvo
+  el dia en que ya se anoto una gestion de cobro (`gestionHoy`). Urgente si
+  esta vencida o si ya llego la fecha en que el cliente prometio pagar.
 
 - **`agruparCartera(filas, plazos, gestiones, hoy)`** · _función_
   Agrupa por factura (numero + empresa) los viajes facturados con numero y
