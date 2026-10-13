@@ -460,6 +460,14 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/despacho/fopat` | FOPAT causado por mes, con lo que falta pagar a la DIAN. |
 | `POST` | `/api/despacho/fopat/pagar` | Marca un lote de manifiestos como incluidos en un pago de FOPAT. |
 | `GET` | `/api/despacho/:id` | Detalle de un viaje con sus remesas. |
+| `GET` | `/api/seguimiento/alertas` | Alertas de papeles, facturacion y cartera. |
+| `GET` | `/api/seguimiento/papeles` | Viajes sin factura con su alerta de papeles y de facturacion. |
+| `POST` | `/api/seguimiento/papeles/:id` | Registra lo que se supo de los papeles ({ estadoPapeles?, papelesTiene?, papelesCompletos?, papelesFaltan?, nota? }). Devuelve el viaje del cuadro actualizado (404 si no existe). |
+| `GET` | `/api/seguimiento/cartera` | Facturas por cobrar, totales por cliente y facturados sin datos. |
+| `PUT` | `/api/seguimiento/cartera/plazos` | Plazo y contacto de cobro de un cliente. |
+| `GET` | `/api/seguimiento/cartera/gestiones` | Gestiones de cobro de una factura. |
+| `POST` | `/api/seguimiento/cartera/gestiones` | Anota una gestion de cobro ({ facturaNumero, empresa, texto, compromisoPago? }). Devuelve las de esa factura. |
+| `POST` | `/api/seguimiento/cartera/pago` | Pago de una factura ({ facturaNumero, empresa, fecha }). |
 | `GET` | `/api/usuarios` | Lista de usuarios del sistema. |
 | `POST` | `/api/usuarios` | Crea un usuario con una clave temporal. |
 | `PUT` | `/api/usuarios/:id` | Cambia nombre y/o estado activo. |
@@ -475,7 +483,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_458 funciones, componentes, métodos y rutas en 32 archivos._
+_490 funciones, componentes, métodos y rutas en 34 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/auth.ts`](#srcauthts) (35)
@@ -499,6 +507,7 @@ _458 funciones, componentes, métodos y rutas en 32 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (40)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (16)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (9)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -509,6 +518,7 @@ _458 funciones, componentes, métodos y rutas en 32 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
+- [`src/seguimiento.ts`](#srcseguimientots) (23)
 
 ### `src/alertas.ts`
 
@@ -2736,6 +2746,38 @@ _458 funciones, componentes, métodos y rutas en 32 archivos._
 - **`GET /:id`** · _ruta HTTP_
   Detalle de un viaje con sus remesas.
 
+### `src/routes/seguimiento.ts`
+
+- **`responder(res, fn)`** · _función_
+  Errores de validacion como 422 con su mensaje; lo demas sigue al manejador general.
+
+- **`GET /alertas`** · _ruta HTTP_
+  GET /api/seguimiento/alertas: alertas de papeles, facturacion y cartera.
+
+- **`GET /papeles`** · _ruta HTTP_
+  GET /api/seguimiento/papeles: viajes sin factura con su alerta de papeles y de facturacion.
+
+- **`POST /papeles/:id`** · _ruta HTTP_
+  POST /api/seguimiento/papeles/:id: registra lo que se supo de los papeles
+  ({ estadoPapeles?, papelesTiene?, papelesCompletos?, papelesFaltan?, nota? }).
+  Devuelve el viaje del cuadro actualizado (404 si no existe).
+
+- **`GET /cartera`** · _ruta HTTP_
+  GET /api/seguimiento/cartera: facturas por cobrar, totales por cliente y facturados sin datos.
+
+- **`PUT /cartera/plazos`** · _ruta HTTP_
+  PUT /api/seguimiento/cartera/plazos: plazo y contacto de cobro de un cliente.
+
+- **`GET /cartera/gestiones`** · _ruta HTTP_
+  GET /api/seguimiento/cartera/gestiones?factura=&empresa=: gestiones de cobro de una factura.
+
+- **`POST /cartera/gestiones`** · _ruta HTTP_
+  POST /api/seguimiento/cartera/gestiones: anota una gestion de cobro
+  ({ facturaNumero, empresa, texto, compromisoPago? }). Devuelve las de esa factura.
+
+- **`POST /cartera/pago`** · _ruta HTTP_
+  POST /api/seguimiento/cartera/pago: pago de una factura ({ facturaNumero, empresa, fecha }).
+
 ### `src/routes/usuarios.ts`
 
 - **`entregarClave(nombre, email, clave, motivo)`** · _función_
@@ -3034,5 +3076,112 @@ _458 funciones, componentes, métodos y rutas en 32 archivos._
 - **`main()`** · _función_
   Carga datos de EJEMPLO para desarrollo (vehiculo ABC123, conductor,
   cliente, plantilla...). Si ya se cargaron, no los duplica.
+
+### `src/seguimiento.ts`
+
+> Seguimiento despues del descargue y cartera.
+>
+> Toma las filas del cuadro pagos (src/cuadro.ts) y responde tres preguntas:
+>
+> 1. Papeles: ¿de que viajes ya descargados hay que perseguir los papeles?
+>    En CORAME / Cartones America hay que comunicarse con el conductor todos
+>    los dias hasta que los papeles queden listos para facturar; en los demas
+>    clientes, despues de DIAS_AVISO_OTROS dias.
+> 2. Por facturar: viajes con los papeles listos que llevan dias sin factura,
+>    o facturados sin numero o fecha (sin fecha no se sabe cuando vence).
+> 3. Cartera: facturas con numero y fecha que el cliente aun no paga, con su
+>    vencimiento (fecha de factura + dias de credito del cliente), las
+>    gestiones de cobro y la fecha en que el cliente prometio pagar.
+>
+> Las alertas se calculan con funciones puras (alertaPapeles, agruparCartera,
+> alertasDe) para poder probarlas sin base de datos.
+
+- **`diasEntre(desde, hasta)`** · _función_
+  Dias de `desde` a `hasta` ("AAAA-MM-DD"); negativo si `hasta` es anterior.
+
+- **`diaColombia(iso)`** · _función_
+  Dia en Colombia ("AAAA-MM-DD") de un instante ISO.
+
+- **`sinFactura(f)`** · _función_
+  Viaje que aun no tiene factura (ni marcada ni con numero) y no esta anulado.
+
+- **`descargo(f, hoy)`** · _función_
+  El viaje ya descargo: paso la fecha de descargue o los papeles ya salieron de "en ruta".
+
+- **`alertaPapeles(f, hoy, desde)`** · _función_
+  Alerta de papeles de un viaje descargado que aun no esta listo para
+  facturar, o null si no hay nada que hacer.
+
+  - CORAME / Cartones America: si nadie ha preguntado hoy, hay que
+    comunicarse con el conductor (todos los dias).
+  - Otros clientes: lo mismo, pero desde DIAS_AVISO_OTROS dias despues del
+    descargue.
+  - Urgente si faltan papeles o si ya pasaron DIAS_PAPELES_DEMORADOS dias.
+  - Sin alerta si el viaje cargo antes de `desde` (ver SEGUIMIENTO_DESDE).
+
+- **`alertaFacturacion(f, hoy, desde)`** · _función_
+  Alerta de facturacion: papeles listos hace DIAS_POR_FACTURAR dias o mas sin
+  factura, o facturado sin numero o sin fecha (no puede entrar a cartera).
+  Sin alerta si el viaje cargo antes de `desde`.
+
+- **`alertaFactura(vence, compromisoPago, hoy)`** · _función_
+  Alerta de una factura: compromiso de pago cumplido, vencida o por vencer.
+
+- **`agruparCartera(filas, plazos, gestiones, hoy)`** · _función_
+  Agrupa por factura (numero + empresa) los viajes facturados con numero y
+  fecha que aun no se han cobrado, y calcula vencimiento y alerta de cada una.
+  Las facturas mas vencidas primero.
+
+- **`resumirPorCliente(facturas)`** · _función_
+  Totales por cliente con edades de vencimiento (0, 1-30, 31-60, 61-90, +90 dias).
+
+- **`alertasDe(filas, facturas, hoy, desde)`** · _función_
+  Todas las alertas: urgentes primero, luego papeles, facturacion y cartera.
+
+- **`llaveFactura(numero, empresa)`** · _función_
+  Llave de una factura en los mapas: "numero|empresa" (el mismo numero puede repetirse entre clientes).
+
+- **`seguimiento`** · _módulo_
+  Lectura y escritura del seguimiento de papeles y de la cartera.
+
+  - **`seguimiento.papeles()`** · _método_
+    Viajes sin factura (descargados o en ruta) con su alerta de papeles y de
+    facturacion: lo que se persigue antes de facturar.
+
+  - **`seguimiento.registrarPapeles(id, d, usuarioId)`** · _método_
+    Registra lo que se supo de los papeles (al llamar al conductor): donde
+    estan, quien los tiene, si estan completos y que falta. Marca la hora y el
+    usuario (asi la alerta de "comunicarse" se apaga por hoy) y deja una nota
+    en el viaje con lo registrado.
+
+  - **`seguimiento.plazos()`** · _método_
+    Plazos de credito y contactos de cobro de los clientes.
+
+  - **`seguimiento.guardarPlazo(d)`** · _método_
+    Crea o cambia el plazo y el contacto de cobro de un cliente.
+
+  - **`seguimiento.ultimasGestiones()`** · _método_
+    Ultima gestion de cobro de cada factura, por llave "numero|empresa".
+
+  - **`seguimiento.cartera()`** · _método_
+    Cartera completa: facturas por cobrar con vencimiento y alerta, totales
+    por cliente, y los viajes facturados que no tienen numero o fecha (no
+    pueden calcular su vencimiento).
+
+  - **`seguimiento.gestiones(facturaNumero, empresa)`** · _método_
+    Gestiones de cobro de una factura, la mas reciente primero.
+
+  - **`seguimiento.agregarGestion(d, usuarioId)`** · _método_
+    Anota una gestion de cobro (llamada, correo) y, si la hay, la fecha que prometio el cliente.
+
+  - **`seguimiento.registrarPago(d)`** · _método_
+    Registra el pago de una factura: pone la fecha de pago en todos sus
+    viajes que aun no la tenian. Devuelve cuantos viajes quedaron pagados.
+
+  - **`seguimiento.alertas()`** · _método_
+    Alertas de la campana de seguimiento: papeles, facturacion y cartera.
+
+- **`mapearGestion(r)`** · _función_
+  Fila de cartera_gestiones -> GestionCobro.
 
 <!-- REFERENCIA:FIN -->

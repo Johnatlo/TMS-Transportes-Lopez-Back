@@ -124,6 +124,14 @@ export interface FilaCuadro {
   anticiposSinPagar: number;
   notas: number;
   ultimaNota: string | null;
+  /** Seguimiento de papeles: quien los tiene (conductor, parqueadero, Don Alexander...). */
+  papelesTiene: string | null;
+  /** true = estan todos, false = falta algo, null = no se ha preguntado. */
+  papelesCompletos: boolean | null;
+  papelesFaltan: string | null;
+  /** Ultima vez que alguien pregunto por los papeles (llamada al conductor). */
+  papelesRevisadoEn: string | null;
+  papelesRevisadoPor: string | null;
   estado: EstadoCuadro;
   /** Factura cobrada, saldo del tercero pagado y anticipos pagados a la bomba (amarillo). */
   todoPagado: boolean;
@@ -135,13 +143,13 @@ const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
  * DATE de MySQL como "AAAA-MM-DD". El pool trabaja en UTC (timezone "Z"): un
  * DATE llega como medianoche UTC, asi que se lee en UTC para no correrse un dia.
  */
-const dia = (v: unknown): string | null => {
+export const dia = (v: unknown): string | null => {
   if (!v) return null;
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   return String(v).slice(0, 10);
 };
 /** Fecha de hoy en Colombia (el servidor corre en UTC: de noche ya seria manana). */
-const hoyColombia = () => new Date(Date.now() - 5 * 3_600_000).toISOString().slice(0, 10);
+export const hoyColombia = () => new Date(Date.now() - 5 * 3_600_000).toISOString().slice(0, 10);
 /**
  * Suma dias a una fecha "AAAA-MM-DD" y devuelve otra "AAAA-MM-DD".
  * Trabaja a mediodia UTC para que ningun cambio de zona la corra de dia.
@@ -166,9 +174,9 @@ export function estadoDe(f: Omit<FilaCuadro, "estado" | "todoPagado">): { estado
   return { estado: "EN_RUTA", todoPagado };
 }
 
-const SELECT_CUADRO = `
+export const SELECT_CUADRO = `
   SELECT c.*, COALESCE(ve.flota, 'TERCERO') AS flota,
-         uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor,
+         uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor, up.nombre AS papelesRevisadoPor,
          COALESCE(a.total, 0) AS totalAnticipos, COALESCE(a.sinPagar, 0) AS anticiposSinPagar,
          COALESCE(n.cuantas, 0) AS notas,
          (SELECT texto FROM cuadro_notas WHERE cuadroViajeId = c.id ORDER BY id DESC LIMIT 1) AS ultimaNota
@@ -176,6 +184,7 @@ const SELECT_CUADRO = `
     LEFT JOIN vehiculos ve ON ve.id = c.vehiculoId
     LEFT JOIN usuarios uc ON uc.id = c.revisadoContabilidadPorId
     LEFT JOIN usuarios ug ON ug.id = c.revisadoGerenciaPorId
+    LEFT JOIN usuarios up ON up.id = c.papelesRevisadoPorId
     LEFT JOIN (SELECT cuadroViajeId, SUM(valor) AS total, SUM(fechaPago IS NULL) AS sinPagar
                  FROM cuadro_anticipos GROUP BY cuadroViajeId) a ON a.cuadroViajeId = c.id
     LEFT JOIN (SELECT cuadroViajeId, COUNT(*) AS cuantas FROM cuadro_notas GROUP BY cuadroViajeId) n
@@ -188,7 +197,7 @@ const SELECT_CUADRO = `
  * flete (kilos x tarifa, o el fijo), el vencimiento del saldo si es tercero, y
  * el estado con estadoDe.
  */
-function mapear(r: RowDataPacket): FilaCuadro {
+export function mapear(r: RowDataPacket): FilaCuadro {
   const base = {
     id: r.id,
     fecha: dia(r.fecha)!,
@@ -231,6 +240,11 @@ function mapear(r: RowDataPacket): FilaCuadro {
     anticiposSinPagar: Number(r.anticiposSinPagar ?? 0),
     notas: Number(r.notas ?? 0),
     ultimaNota: r.ultimaNota ?? null,
+    papelesTiene: r.papelesTiene ?? null,
+    papelesCompletos: r.papelesCompletos === null || r.papelesCompletos === undefined ? null : !!r.papelesCompletos,
+    papelesFaltan: r.papelesFaltan ?? null,
+    papelesRevisadoEn: r.papelesRevisadoEn ? new Date(r.papelesRevisadoEn).toISOString() : null,
+    papelesRevisadoPor: r.papelesRevisadoPor ?? null,
   };
   if (base.flota === "TERCERO" && base.fechaDescargue) base.venceSaldo = sumarDias(base.fechaDescargue, DIAS_PAGO_TERCEROS);
   return { ...base, ...estadoDe(base) };

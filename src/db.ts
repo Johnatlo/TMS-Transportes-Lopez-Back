@@ -424,6 +424,32 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Cartera: plazo de pago y contacto de cobro de cada cliente del cuadro
+  // (la llave es el nombre de la empresa, como en cuadro_viajes.empresa).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cartera_clientes (
+      empresa VARCHAR(200) PRIMARY KEY,
+      diasCredito INT NOT NULL DEFAULT 30,
+      contacto VARCHAR(150),
+      telefono VARCHAR(30),
+      correo VARCHAR(150)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Gestiones de cobro de una factura (llamadas, correos) y la fecha en que
+  // el cliente prometio pagar.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cartera_gestiones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      facturaNumero VARCHAR(30) NOT NULL,
+      empresa VARCHAR(200) NOT NULL,
+      texto VARCHAR(1000) NOT NULL,
+      compromisoPago DATE,
+      usuarioId INT,
+      creadaEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_gestion_factura (facturaNumero, empresa)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Sesiones abiertas. Se guarda el HASH del token (no el token): quien lea
   // esta tabla no puede suplantar a nadie.
   await pool.query(`
@@ -690,6 +716,14 @@ export async function initSchema(): Promise<void> {
     // Radicado del cumplido inicial (proceso 45, lo genera el GPS): hay que
     // anularlo (proceso 54) antes de anular el manifiesto.
     ["viaje_remesas", "radicadoCumplidoInicial", "VARCHAR(30)"],
+    // Seguimiento de papeles despues del descargue (ver src/seguimiento.ts):
+    // quien los tiene, si estan completos, que falta y cuando se reviso.
+    ["cuadro_viajes", "papelesTiene", "VARCHAR(150)"],
+    // 1 = el conductor tiene todos los papeles, 0 = falta algo, NULL = no se sabe.
+    ["cuadro_viajes", "papelesCompletos", "TINYINT(1) NULL"],
+    ["cuadro_viajes", "papelesFaltan", "VARCHAR(300)"],
+    ["cuadro_viajes", "papelesRevisadoEn", "DATETIME"],
+    ["cuadro_viajes", "papelesRevisadoPorId", "INT"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).

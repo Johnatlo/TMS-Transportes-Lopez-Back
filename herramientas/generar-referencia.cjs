@@ -24,6 +24,7 @@ const PREFIJOS = {
   "src/routes/despacho.ts": "/api/despacho",
   "src/routes/usuarios.ts": "/api/usuarios",
   "src/routes/cuadro.ts": "/api/cuadro",
+  "src/routes/seguimiento.ts": "/api/seguimiento",
 };
 
 const ETIQUETA_TIPO = {

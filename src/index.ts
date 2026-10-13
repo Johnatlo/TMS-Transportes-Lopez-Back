@@ -18,6 +18,7 @@ import { despachoRouter } from "./routes/despacho";
 import { authRouter } from "./routes/auth";
 import { usuariosRouter } from "./routes/usuarios";
 import { cuadroRouter } from "./routes/cuadro";
+import { seguimientoRouter } from "./routes/seguimiento";
 import { exigirSesion } from "./auth";
 import { iniciarSincronizacionAutomatica } from "./rndc/sincronizacion";
 
@@ -60,6 +61,7 @@ async function main() {
   app.use("/api/despacho", exigirSesion, despachoRouter);
   app.use("/api/usuarios", exigirSesion, usuariosRouter);
   app.use("/api/cuadro", exigirSesion, cuadroRouter);
+  app.use("/api/seguimiento", exigirSesion, seguimientoRouter);
 
   /**
    * Frontend compilado (despliegue).

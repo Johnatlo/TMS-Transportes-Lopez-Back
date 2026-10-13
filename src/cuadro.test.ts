@@ -47,6 +47,11 @@ function viaje(cambios: Partial<Base> = {}): Base {
     anticiposSinPagar: 0,
     notas: 0,
     ultimaNota: null,
+    papelesTiene: null,
+    papelesCompletos: null,
+    papelesFaltan: null,
+    papelesRevisadoEn: null,
+    papelesRevisadoPor: null,
     ...cambios,
   };
 }
