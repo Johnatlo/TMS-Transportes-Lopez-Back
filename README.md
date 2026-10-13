@@ -397,6 +397,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/catalogo/terceros` | Clientes, remitentes y destinatarios. |
 | `POST` | `/api/catalogo/terceros` | Crea un cliente, remitente o destinatario. |
 | `PUT` | `/api/catalogo/terceros/:id` | Edita los campos enviados. NIT y nombre obligatorios; el municipio debe ser un codigo DIVIPOLA de 8 digitos. |
+| `POST` | `/api/catalogo/:maestro/:id/rndc` | Crea o actualiza en el RNDC el tercero, conductor, vehiculo o remolque con los datos que tiene hoy el catalogo (procesos 11 y 12, ver src/rndc/maestros.ts). Responde { ok, radicado, yaEstabaIgual, error } y deja el resultado guardado en la fila. |
 | `GET` | `/api/catalogo/rutas` | Rutas guardadas (tabla en desuso). |
 | `POST` | `/api/catalogo/rutas` | Crea una ruta origen-destino (tabla en desuso). |
 | `GET` | `/api/catalogo/municipios` | Para elegir la ruta de una plantilla por nombre y no por codigo. Puede venir vacio si aun no se importo el CSV de municipios. |
@@ -483,7 +484,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_490 funciones, componentes, métodos y rutas en 34 archivos._
+_500 funciones, componentes, métodos y rutas en 35 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/auth.ts`](#srcauthts) (35)
@@ -499,12 +500,13 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
 - [`src/rndc/consultas.ts`](#srcrndcconsultasts) (19)
 - [`src/rndc/estampado.ts`](#srcrndcestampadots) (4)
+- [`src/rndc/maestros.ts`](#srcrndcmaestrosts) (9)
 - [`src/rndc/pdf.ts`](#srcrndcpdfts) (5)
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (15)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (23)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
-- [`src/routes/catalogo.ts`](#srcroutescatalogots) (40)
+- [`src/routes/catalogo.ts`](#srcroutescatalogots) (41)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (16)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (9)
@@ -1884,6 +1886,78 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
 - **`logoComoDataUri()`** · _función_
   El logo como data URI, para incrustarlo en documentos HTML (la remesa).
 
+### `src/rndc/maestros.ts`
+
+> Registro de los maestros en el RNDC desde la aplicacion: terceros (clientes,
+> remitentes, destinatarios, propietarios y conductores) y vehiculos y
+> remolques. Asi no hay que entrar al portal del RNDC para crearlos o
+> actualizarlos.
+>
+> Procesos [Guia Uso del Web Service V5, pag. 9 y 12]:
+> - 11: Crear o actualizar datos de Tercero.
+> - 12: Crear o actualizar datos de Vehiculo (tambien remolques).
+>
+> Etiquetas: las del ejemplo de la guia (pag. 12) y SEGUNDOAPELLIDOIDTERCERO,
+> verificadas en rndcpruebas el 2026-10-13 (el RNDC rechaza con "Error 13"
+> cualquier etiqueta que no este en su diccionario, y estas las acepto).
+>
+> Lo que se vio en rndcpruebas ese dia:
+> - Persona natural: obligatorios tipo y numero de identificacion, nombre,
+>   direccion y municipio. El nombre lo toma el RNDC del registro oficial
+>   (se mando "PRUEBA DE TERCERO" y quedo "JAIRO VESGA MARTINEZ").
+> - NIT: ademas, codigo y nombre de sede (TER090, TER100). En personas
+>   naturales la sede va en 0.
+> - Vehiculo: obligatorio el peso vacio (VEH090: de 200 kg al peso bruto, de 3
+>   a 5 digitos). La configuracion y la carroceria las toma del RUNT (se
+>   mando 3S3/55 y 0 y quedo 54 y 7), por eso no se envian.
+> - Remolque: basta la placa.
+> - Telefono: es opcional, pero si se envia debe tener 10 digitos (fijo con
+>   indicativo 60X o celular). Con el formato viejo de 7 digitos rechaza todo
+>   el registro (TER190); por eso solo se envia si tiene 10 digitos.
+> - Si todo es igual a lo que ya tiene, responde con error
+>   "DUPLICADO:<radicado> ... VEH015 ... ya existe con todos los datos iguales":
+>   se toma como "ya estaba al dia", no como fallo.
+>
+> La guia pide registrar solo cuando algo cambio (cada envio guarda historia
+> en el RNDC): por eso el registro es una accion explicita del usuario.
+
+- **`texto(v)`** · _función_
+  Texto recortado; vacio, null o undefined -> undefined (la etiqueta no se envia).
+
+- **`telefonoRndc(v)`** · _función_
+  Telefono con solo digitos si tiene 10 (formato que acepta el RNDC); si no, undefined.
+
+- **`variablesTercero(t)`** · _función_
+  Variables del proceso 11 para un tercero del catalogo.
+
+  - Sede: la del catalogo ("0" por defecto). Con NIT el RNDC exige ademas el
+    nombre de la sede: el escrito, o el municipio, o el nombre del tercero.
+  - Coordenadas: solo si estan (el RNDC verifica el GPS del cargue contra ellas).
+
+- **`variablesConductor(c)`** · _función_
+  Variables del proceso 11 para un conductor: en el RNDC es un tercero mas
+  (persona natural, sede 0). La licencia la toma el RNDC del RUNT.
+
+- **`variablesVehiculo(v)`** · _función_
+  Variables del proceso 12 para un vehiculo: placa, peso vacio (en kg, sin
+  decimales) y tenedor si lo hay. Configuracion y carroceria no: el RNDC las
+  toma del RUNT.
+
+- **`variablesRemolque(r)`** · _función_
+  Variables del proceso 12 para un remolque: solo la placa.
+
+- **`interpretarRegistro(r)`** · _función_
+  Interpreta la respuesta del RNDC. "DUPLICADO:<radicado>" significa que ya
+  tiene exactamente esos datos: es exito (nada que actualizar).
+
+- **`MaestroNoEncontrado`** · _clase_
+  Error de uso (registro inexistente): la ruta lo responde como 404.
+
+- **`registrarMaestro(maestro, id)`** · _función_
+  Registra (crea o actualiza) en el RNDC el tercero, conductor, vehiculo o
+  remolque con ese id, con los datos que tiene hoy el catalogo. Guarda en la
+  fila el radicado y la fecha, o el error del RNDC.
+
 ### `src/rndc/pdf.ts`
 
 > Descarga del PDF del manifiesto.
@@ -2298,6 +2372,12 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
 - **`PUT /terceros/:id`** · _ruta HTTP_
   PUT /api/catalogo/terceros/:id: edita los campos enviados. NIT y nombre
   obligatorios; el municipio debe ser un codigo DIVIPOLA de 8 digitos.
+
+- **`POST /:maestro/:id/rndc`** · _ruta HTTP_
+  POST /api/catalogo/:maestro/:id/rndc: crea o actualiza en el RNDC el
+  tercero, conductor, vehiculo o remolque con los datos que tiene hoy el
+  catalogo (procesos 11 y 12, ver src/rndc/maestros.ts). Responde
+  { ok, radicado, yaEstabaIgual, error } y deja el resultado guardado en la fila.
 
 - **`GET /rutas`** · _ruta HTTP_
   GET /api/catalogo/rutas: rutas guardadas (tabla en desuso).

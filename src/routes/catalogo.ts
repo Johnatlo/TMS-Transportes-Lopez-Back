@@ -9,6 +9,8 @@ import { revisarCoordenadaSede, normalizarCodigoMercancia } from "../rndc/builde
 import { config } from "../config";
 import { revisarVencimientos } from "../alertas";
 import { RndcClient } from "../rndc/client";
+import { MAESTROS, MaestroNoEncontrado, registrarMaestro } from "../rndc/maestros";
+import type { Maestro } from "../rndc/maestros";
 import {
   consultarSicetac,
   filasDeLaOperacion,
@@ -221,6 +223,9 @@ catalogoRouter.post("/conductores", async (req, res) => {
     categoriaLicencia: b.categoriaLicencia ?? null,
     fechaVencLicencia: b.fechaVencLicencia ? new Date(b.fechaVencLicencia) : null,
     codTipoId: b.codTipoId ?? "C",
+    direccion: b.direccion ? String(b.direccion).trim() : null,
+    ciudad: b.ciudad ? String(b.ciudad).trim() : null,
+    codMunicipioRndc: b.codMunicipioRndc ? String(b.codMunicipioRndc).trim() : null,
   });
   res.status(201).json(creado);
 });
@@ -233,7 +238,11 @@ catalogoRouter.post("/conductores", async (req, res) => {
 catalogoRouter.put("/conductores/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
     "codTipoId", "cedula", "nombre", "licencia", "categoriaLicencia", "fechaVencLicencia", "activo",
+    "direccion", "ciudad", "codMunicipioRndc",
   ]);
+  if ("codMunicipioRndc" in datos && datos.codMunicipioRndc && !/^\d{8}$/.test(String(datos.codMunicipioRndc))) {
+    return res.status(422).json({ error: "El codigo de municipio debe ser DIVIPOLA de 8 digitos (ej. 11001000)." });
+  }
   if ("cedula" in datos) datos.cedula = soloDigitos(datos.cedula);
   if ("categoriaLicencia" in datos) datos.categoriaLicencia = mayusculas(datos.categoriaLicencia);
   if (("cedula" in datos && !datos.cedula) || ("nombre" in datos && !String(datos.nombre ?? "").trim())) {
@@ -289,6 +298,7 @@ catalogoRouter.post("/terceros", async (req, res) => {
     // origen y el destino del manifiesto coincidan con algun sitio de cargue y
     // de descargue de las remesas.
     codMunicipioRndc: b.codMunicipioRndc || null,
+    nombreSede: b.nombreSede ? String(b.nombreSede).trim() : null,
   });
   res.status(201).json({ ...creado, avisoCoordenada: revision.problema });
 });
@@ -300,7 +310,7 @@ catalogoRouter.post("/terceros", async (req, res) => {
 catalogoRouter.put("/terceros/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
     "codTipoId", "nit", "nombre", "codSede", "direccion", "ciudad", "telefono",
-    "codMunicipioRndc", "latitud", "longitud",
+    "codMunicipioRndc", "latitud", "longitud", "nombreSede",
   ]);
   if ("nit" in datos) datos.nit = soloDigitos(datos.nit);
   if (("nit" in datos && !datos.nit) || ("nombre" in datos && !String(datos.nombre ?? "").trim())) {
@@ -319,6 +329,24 @@ catalogoRouter.put("/terceros/:id", async (req, res) => {
   await responderEdicion(res, () => terceros.update(Number(req.params.id), datos), {
     avisoCoordenada: revision.problema,
   });
+});
+
+// ---------- REGISTRO EN EL RNDC ----------
+/**
+ * POST /api/catalogo/:maestro/:id/rndc: crea o actualiza en el RNDC el
+ * tercero, conductor, vehiculo o remolque con los datos que tiene hoy el
+ * catalogo (procesos 11 y 12, ver src/rndc/maestros.ts). Responde
+ * { ok, radicado, yaEstabaIgual, error } y deja el resultado guardado en la fila.
+ */
+catalogoRouter.post("/:maestro/:id/rndc", async (req, res) => {
+  const maestro = req.params.maestro as Maestro;
+  if (!MAESTROS.includes(maestro)) return res.status(404).json({ error: "Solo terceros, conductores, vehiculos y remolques." });
+  try {
+    res.json(await registrarMaestro(maestro, Number(req.params.id)));
+  } catch (exc) {
+    if (exc instanceof MaestroNoEncontrado) return res.status(404).json({ error: exc.message });
+    throw exc;
+  }
 });
 
 // ---------- RUTAS ----------

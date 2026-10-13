@@ -60,6 +60,10 @@ export interface Conductor {
   fechaVencLicencia: Date | null;
   activo: boolean;
   codTipoId: string; // C = Cedula (default), otros codigos segun diccionario RNDC
+  /** Direccion y municipio: el RNDC los exige para registrarlo como tercero. */
+  direccion?: string | null;
+  ciudad?: string | null;
+  codMunicipioRndc?: string | null;
 }
 
 export interface Tercero {
@@ -81,6 +85,8 @@ export interface Tercero {
   longitud: number | null;
   /** Codigo DIVIPOLA (8 digitos) del municipio de la sede. */
   codMunicipioRndc: string | null;
+  /** Nombre de la sede en el RNDC (obligatorio con NIT; ver src/rndc/maestros.ts). */
+  nombreSede?: string | null;
 }
 
 export interface Ruta {
@@ -660,8 +666,8 @@ export const conductores = {
     data: Omit<Conductor, "id" | "activo" | "codTipoId"> & Partial<Pick<Conductor, "codTipoId">>
   ): Promise<Conductor> {
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO conductores (cedula, nombre, licencia, categoriaLicencia, fechaVencLicencia, codTipoId)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO conductores (cedula, nombre, licencia, categoriaLicencia, fechaVencLicencia, codTipoId, direccion, ciudad, codMunicipioRndc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.cedula,
         data.nombre,
@@ -669,6 +675,9 @@ export const conductores = {
         data.categoriaLicencia,
         fechaMysql(data.fechaVencLicencia),
         data.codTipoId ?? "C",
+        data.direccion ?? null,
+        data.ciudad ?? null,
+        data.codMunicipioRndc ?? null,
       ]
     );
     return (await this.findById(result.insertId))!;
@@ -682,6 +691,9 @@ export const conductores = {
       licencia: "texto",
       categoriaLicencia: "texto",
       fechaVencLicencia: "fecha",
+      direccion: "texto",
+      ciudad: "texto",
+      codMunicipioRndc: "texto",
       activo: "booleano",
     });
     return this.findById(id);
@@ -719,8 +731,8 @@ export const terceros = {
       >
   ): Promise<Tercero> {
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO terceros (nit, nombre, direccion, ciudad, telefono, rol, codTipoId, codSede, latitud, longitud, codMunicipioRndc)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO terceros (nit, nombre, direccion, ciudad, telefono, rol, codTipoId, codSede, latitud, longitud, codMunicipioRndc, nombreSede)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.nit,
         data.nombre,
@@ -733,6 +745,7 @@ export const terceros = {
         data.latitud ?? null,
         data.longitud ?? null,
         data.codMunicipioRndc ?? null,
+        data.nombreSede ?? null,
       ]
     );
     return (await this.findById(result.insertId))!;
@@ -748,6 +761,7 @@ export const terceros = {
       ciudad: "texto",
       telefono: "texto",
       codMunicipioRndc: "texto",
+      nombreSede: "texto",
       latitud: "numero",
       longitud: "numero",
     });

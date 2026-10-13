@@ -727,6 +727,25 @@ export async function initSchema(): Promise<void> {
     // "Fecha pago cliente": cuando vence la factura (el cliente debe pagar).
     // facturaFechaPago es el pago real ("fecha pago factura").
     ["cuadro_viajes", "facturaVence", "DATE"],
+    // Registro en el RNDC de los maestros (procesos 11 y 12, ver
+    // src/rndc/maestros.ts): ultimo radicado, cuando y el error si lo rechazo.
+    ["terceros", "nombreSede", "VARCHAR(100)"],
+    ["terceros", "rndcRadicado", "VARCHAR(30)"],
+    ["terceros", "rndcEn", "DATETIME"],
+    ["terceros", "rndcError", "TEXT"],
+    // El RNDC registra al conductor como tercero: exige direccion y municipio.
+    ["conductores", "direccion", "VARCHAR(200)"],
+    ["conductores", "ciudad", "VARCHAR(80)"],
+    ["conductores", "codMunicipioRndc", "VARCHAR(10)"],
+    ["conductores", "rndcRadicado", "VARCHAR(30)"],
+    ["conductores", "rndcEn", "DATETIME"],
+    ["conductores", "rndcError", "TEXT"],
+    ["vehiculos", "rndcRadicado", "VARCHAR(30)"],
+    ["vehiculos", "rndcEn", "DATETIME"],
+    ["vehiculos", "rndcError", "TEXT"],
+    ["remolques", "rndcRadicado", "VARCHAR(30)"],
+    ["remolques", "rndcEn", "DATETIME"],
+    ["remolques", "rndcError", "TEXT"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
