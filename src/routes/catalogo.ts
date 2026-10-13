@@ -10,6 +10,7 @@ import { config } from "../config";
 import { revisarVencimientos } from "../alertas";
 import { RndcClient } from "../rndc/client";
 import { MAESTROS, MaestroNoEncontrado, registrarMaestro } from "../rndc/maestros";
+import { cifrar, descifrar, ErrorCifrado } from "../cifrado";
 import type { Maestro } from "../rndc/maestros";
 import {
   consultarSicetac,
@@ -103,6 +104,71 @@ catalogoRouter.put("/remolques/:id", async (req, res) => {
   await responderEdicion(res, () => remolques.update(Number(req.params.id), datos));
 });
 
+// ---------- ACCESO AL GPS ----------
+/** Link del GPS no valido: la ruta lo responde como 422. */
+class ErrorGps extends Error {}
+
+/**
+ * Link de una plataforma GPS: vacio -> null; solo http(s), para que nadie
+ * guarde un "javascript:..." que se ejecute al hacer clic. Lanza ErrorGps.
+ */
+function urlGps(valor: unknown): string | null {
+  const t = String(valor ?? "").trim();
+  if (!t) return null;
+  if (!/^https?:\/\/[^\s]+$/i.test(t)) throw new ErrorGps("El link del GPS debe empezar por http:// o https://");
+  return t;
+}
+
+/**
+ * Guarda los datos del GPS que vengan en el cuerpo (gpsUrl, gpsUsuario,
+ * gpsClave). gpsClave vacia o ausente no cambia la guardada; null la borra.
+ */
+async function guardarGpsVehiculo(id: number, b: Record<string, unknown>) {
+  const datos: Record<string, unknown> = {};
+  if ("gpsUrl" in b) datos.gpsUrl = urlGps(b.gpsUrl);
+  if ("gpsUsuario" in b) datos.gpsUsuario = String(b.gpsUsuario ?? "").trim() || null;
+  if (Object.keys(datos).length) await vehiculos.update(id, datos);
+  if (b.gpsClave === null) await vehiculos.fijarClaveGps(id, null);
+  else if (typeof b.gpsClave === "string" && b.gpsClave !== "") await vehiculos.fijarClaveGps(id, cifrar(b.gpsClave));
+}
+
+/**
+ * guardarGpsVehiculo respondiendo 422 si el link esta mal o falta la llave de
+ * cifrado. Devuelve false si ya respondio el error (la ruta debe terminar).
+ */
+async function guardarGpsO422(res: Response, id: number, b: Record<string, unknown>): Promise<boolean> {
+  try {
+    await guardarGpsVehiculo(id, b);
+    return true;
+  } catch (exc) {
+    if (exc instanceof ErrorGps || exc instanceof ErrorCifrado) {
+      res.status(422).json({ error: exc.message });
+      return false;
+    }
+    throw exc;
+  }
+}
+
+/**
+ * GET /api/catalogo/vehiculos/:id/gps: link, usuario y clave (descifrada) de
+ * la plataforma GPS del vehiculo, para revisar a que hora salio del cargue
+ * mientras se despacha. Es la unica ruta que entrega la clave.
+ */
+catalogoRouter.get("/vehiculos/:id/gps", async (req, res) => {
+  const acceso = await vehiculos.accesoGps(Number(req.params.id));
+  if (!acceso) return res.status(404).json({ error: "Vehiculo no encontrado." });
+  let clave: string | null = null;
+  let aviso: string | null = null;
+  if (acceso.claveCifrada) {
+    try {
+      clave = descifrar(acceso.claveCifrada);
+    } catch (exc) {
+      aviso = (exc as Error).message;
+    }
+  }
+  res.json({ placa: acceso.placa, proveedor: acceso.proveedor, url: acceso.url, usuario: acceso.usuario, clave, aviso });
+});
+
 // ---------- VEHICULOS ----------
 /** GET /api/catalogo/vehiculos: vehiculos del catalogo (sin los eliminados). */
 catalogoRouter.get("/vehiculos", async (_req, res) => {
@@ -131,10 +197,20 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
     await vehiculos.restaurar(previo.id);
     const datos = { ...b };
     delete datos.placa;
-    const recuperado = await vehiculos.update(previo.id, datos);
-    return res.status(201).json({ ...recuperado, recuperado: true });
+    delete datos.gpsUrl;
+    delete datos.gpsUsuario;
+    delete datos.gpsClave;
+    await vehiculos.update(previo.id, datos);
+    if (!(await guardarGpsO422(res, previo.id, b))) return;
+    return res.status(201).json({ ...(await vehiculos.findById(previo.id)), recuperado: true });
   }
 
+  // El link se revisa antes de crear: si esta mal no queda un vehiculo a medias.
+  try {
+    urlGps(b.gpsUrl);
+  } catch (exc) {
+    return res.status(422).json({ error: (exc as Error).message });
+  }
   const creado = await vehiculos.create({
     placa,
     placaRemolque: b.placaRemolque ? String(b.placaRemolque).toUpperCase().trim() : null,
@@ -150,7 +226,8 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
     pesoVehiculoVacio: b.pesoVehiculoVacio ? Number(b.pesoVehiculoVacio) : null,
     nombreTenedor: b.nombreTenedor ?? null,
   });
-  res.status(201).json(creado);
+  if (!(await guardarGpsO422(res, creado.id, b))) return;
+  res.status(201).json(await vehiculos.findById(creado.id));
 });
 
 /**
@@ -202,6 +279,9 @@ catalogoRouter.put("/vehiculos/:id", async (req, res) => {
       error: "El titular del manifiesto es obligatorio: sin el no se puede expedir el manifiesto.",
     });
   }
+  // Primero el GPS (link y clave): si el link esta mal o falta la llave de
+  // cifrado, no se guarda nada y se responde 422.
+  if (!(await guardarGpsO422(res, Number(req.params.id), req.body ?? {}))) return;
   await responderEdicion(res, () => vehiculos.update(Number(req.params.id), datos));
 });
 
@@ -397,15 +477,28 @@ catalogoRouter.post("/monitoreo", async (req, res) => {
   if (nit.length > 15) {
     return res.status(422).json({ error: "El NIT de la empresa de monitoreo admite maximo 15 digitos" });
   }
-  await empresasMonitoreo.guardar(nit, nombre);
+  let url: string | null;
+  try {
+    url = urlGps(req.body?.urlPlataforma);
+  } catch (exc) {
+    return res.status(422).json({ error: (exc as Error).message });
+  }
+  await empresasMonitoreo.guardar(nit, nombre, url);
   res.status(201).json(await empresasMonitoreo.findByNit(nit));
 });
 
 /** PUT /api/catalogo/monitoreo/:id: cambia NIT y/o nombre de una empresa de monitoreo. */
 catalogoRouter.put("/monitoreo/:id", async (req, res) => {
-  const datos: { nit?: string; nombre?: string } = {};
+  const datos: { nit?: string; nombre?: string; urlPlataforma?: string | null } = {};
   if (req.body?.nit !== undefined) datos.nit = String(req.body.nit).replace(/\D/g, "");
   if (req.body?.nombre !== undefined) datos.nombre = String(req.body.nombre).trim();
+  if (req.body?.urlPlataforma !== undefined) {
+    try {
+      datos.urlPlataforma = urlGps(req.body.urlPlataforma);
+    } catch (exc) {
+      return res.status(422).json({ error: (exc as Error).message });
+    }
+  }
   if (datos.nit === "" || datos.nombre === "") {
     return res.status(422).json({ error: "Indica el NIT y el nombre de la empresa de monitoreo" });
   }

@@ -387,6 +387,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/catalogo/remolques` | Todos los remolques. |
 | `POST` | `/api/catalogo/remolques` | Crea un remolque (placa en mayuscula). 201 con el creado. |
 | `PUT` | `/api/catalogo/remolques/:id` | Edita solo los campos enviados. |
+| `GET` | `/api/catalogo/vehiculos/:id/gps` | Link, usuario y clave (descifrada) de la plataforma GPS del vehiculo, para revisar a que hora salio del cargue mientras se despacha. Es la unica ruta que entrega la clave. |
 | `GET` | `/api/catalogo/vehiculos` | Vehiculos del catalogo (sin los eliminados). |
 | `POST` | `/api/catalogo/vehiculos` | Crea un vehiculo. |
 | `DELETE` | `/api/catalogo/vehiculos/:id` | "Elimina" un vehiculo: borrado logico. Sale del catalogo, del despacho y de las alertas, pero se conserva para los viajes que ya lo usaron. |
@@ -484,10 +485,11 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_500 funciones, componentes, métodos y rutas en 35 archivos._
+_511 funciones, componentes, métodos y rutas en 36 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/auth.ts`](#srcauthts) (35)
+- [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
@@ -495,7 +497,7 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
 - [`src/db.ts`](#srcdbts) (2)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/index.ts`](#srcindexts) (1)
-- [`src/repo.ts`](#srcrepots) (92)
+- [`src/repo.ts`](#srcrepots) (94)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (43)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
 - [`src/rndc/consultas.ts`](#srcrndcconsultasts) (19)
@@ -506,7 +508,7 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (15)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (23)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
-- [`src/routes/catalogo.ts`](#srcroutescatalogots) (41)
+- [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (16)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (9)
@@ -554,7 +556,8 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
   poder corregirla desde la alerta.
 
 - **`revisarVencimientos(diasAviso, incluirInactivos)`** · _función_
-  Revisa toda la flota y los conductores activos.
+  Revisa los vehiculos y conductores activos (los remolques no tienen SOAT ni
+  tecnomecanica) y la poliza de carga de la empresa.
 
   Los registros sin fecha se reportan aparte: no estan vencidos, pero tampoco
   se puede afirmar que esten vigentes, y esa diferencia importa porque el
@@ -695,6 +698,32 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
 
   - **`recuperaciones.borrarDe(usuarioId)`** · _método_
     Anula los codigos pendientes de un usuario (tras usarlos).
+
+### `src/cifrado.ts`
+
+> Cifrado de datos sensibles guardados en la base (hoy: la clave de la
+> plataforma GPS de cada vehiculo).
+>
+> AES-256-GCM con una llave derivada (scrypt) de TMS_CLAVE_CIFRADO del .env.
+> Quien lea la base sin el .env no ve las claves. GCM ademas detecta si el
+> texto guardado fue alterado.
+>
+> Formato guardado: "v1:" + base64(iv de 12 bytes | etiqueta de 16 | cifrado).
+>
+> Si se cambia TMS_CLAVE_CIFRADO, las claves guardadas ya no se pueden leer y
+> hay que volver a escribirlas.
+
+- **`ErrorCifrado`** · _clase_
+  Falta la llave o el dato guardado no se puede descifrar.
+
+- **`llave()`** · _función_
+  Llave de 32 bytes derivada de TMS_CLAVE_CIFRADO (minimo 16 caracteres).
+
+- **`cifrar(texto)`** · _función_
+  Cifra un texto para guardarlo en la base.
+
+- **`descifrar(guardado)`** · _función_
+  Descifra lo que guardo cifrar(). Lanza ErrorCifrado si no se puede.
 
 ### `src/config.ts`
 
@@ -1052,7 +1081,8 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
   Normaliza un tercero: latitud y longitud (DECIMAL, llegan como texto) a number.
 
 - **`mapVehiculo(row)`** · _función_
-  MySQL devuelve TINYINT(1) como 0/1; aqui se normaliza a boolean real.
+  MySQL devuelve TINYINT(1) como 0/1; aqui se normaliza a boolean real. La
+  clave cifrada del GPS se quita: solo se entrega por vehiculos.accesoGps.
 
 - **`fechaMysql(d)`** · _función_
   Date -> "AAAA-MM-DD HH:MM:SS" en UTC, el formato que espera MySQL. null se conserva.
@@ -1121,6 +1151,13 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
   - **`vehiculos.update(id, datos)`** · _método_
     Edita un vehiculo desde el catalogo (incluida la flota: LOPEZ, MYC o
     TERCERO). Solo cambia los campos enviados (ver actualizarFila).
+
+  - **`vehiculos.fijarClaveGps(id, cifrada)`** · _método_
+    Guarda la clave del GPS ya cifrada (null la borra).
+
+  - **`vehiculos.accesoGps(id)`** · _método_
+    Datos para entrar al GPS del vehiculo: link (el del vehiculo o el de su
+    empresa de monitoreo), usuario y clave cifrada, y el nombre del proveedor.
 
 - **`conductores`** · _módulo_
   Repositorio de conductores (tabla conductores).
@@ -1212,11 +1249,11 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
   - **`empresasMonitoreo.findByNit(nit)`** · _método_
     Una empresa de monitoreo por NIT (activa o no), o null.
 
-  - **`empresasMonitoreo.guardar(nit, nombre)`** · _método_
+  - **`empresasMonitoreo.guardar(nit, nombre, urlPlataforma)`** · _método_
     Crea o renombra por NIT. El nombre puede cambiar; el NIT es la llave.
 
   - **`empresasMonitoreo.update(id, datos)`** · _método_
-    Cambia NIT y/o nombre de una empresa de monitoreo y la devuelve.
+    Cambia NIT, nombre y/o link de la plataforma y la devuelve.
 
   - **`empresasMonitoreo.desactivar(id)`** · _método_
     Desactiva una empresa de monitoreo (no se borra: viajes viejos la usan).
@@ -2325,6 +2362,26 @@ _500 funciones, componentes, métodos y rutas en 35 archivos._
 
 - **`PUT /remolques/:id`** · _ruta HTTP_
   PUT /api/catalogo/remolques/:id: edita solo los campos enviados.
+
+- **`ErrorGps`** · _clase_
+  Link del GPS no valido: la ruta lo responde como 422.
+
+- **`urlGps(valor)`** · _función_
+  Link de una plataforma GPS: vacio -> null; solo http(s), para que nadie
+  guarde un "javascript:..." que se ejecute al hacer clic. Lanza ErrorGps.
+
+- **`guardarGpsVehiculo(id, b)`** · _función_
+  Guarda los datos del GPS que vengan en el cuerpo (gpsUrl, gpsUsuario,
+  gpsClave). gpsClave vacia o ausente no cambia la guardada; null la borra.
+
+- **`guardarGpsO422(res, id, b)`** · _función_
+  guardarGpsVehiculo respondiendo 422 si el link esta mal o falta la llave de
+  cifrado. Devuelve false si ya respondio el error (la ruta debe terminar).
+
+- **`GET /vehiculos/:id/gps`** · _ruta HTTP_
+  GET /api/catalogo/vehiculos/:id/gps: link, usuario y clave (descifrada) de
+  la plataforma GPS del vehiculo, para revisar a que hora salio del cargue
+  mientras se despacha. Es la unica ruta que entrega la clave.
 
 - **`GET /vehiculos`** · _ruta HTTP_
   GET /api/catalogo/vehiculos: vehiculos del catalogo (sin los eliminados).

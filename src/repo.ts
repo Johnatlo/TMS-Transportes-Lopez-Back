@@ -49,6 +49,12 @@ export interface Vehiculo {
   cedulaConductorHabitual: string | null;
   /** LOPEZ o MYC (flota propia) o TERCERO. */
   flota?: "LOPEZ" | "MYC" | "TERCERO";
+  /** Link de la plataforma GPS de este vehiculo (si no, el de su empresa de monitoreo). */
+  gpsUrl?: string | null;
+  /** Usuario de la plataforma GPS. */
+  gpsUsuario?: string | null;
+  /** true si tiene clave del GPS guardada. La clave nunca viaja en las listas. */
+  gpsTieneClave?: boolean;
 }
 
 export interface Conductor {
@@ -296,9 +302,13 @@ function mapTercero(row: Tercero): Tercero {
   return { ...row, latitud: aNumero(row.latitud), longitud: aNumero(row.longitud) };
 }
 
-/** MySQL devuelve TINYINT(1) como 0/1; aqui se normaliza a boolean real. */
+/**
+ * MySQL devuelve TINYINT(1) como 0/1; aqui se normaliza a boolean real. La
+ * clave cifrada del GPS se quita: solo se entrega por vehiculos.accesoGps.
+ */
 function mapVehiculo(row: Vehiculo): Vehiculo {
-  return { ...row, activo: !!row.activo, aplicaFopat: !!row.aplicaFopat };
+  const { gpsClaveCifrada, ...resto } = row as Vehiculo & { gpsClaveCifrada?: string | null };
+  return { ...resto, activo: !!row.activo, aplicaFopat: !!row.aplicaFopat, gpsTieneClave: !!gpsClaveCifrada };
 }
 
 /** Date -> "AAAA-MM-DD HH:MM:SS" en UTC, el formato que espera MySQL. null se conserva. */
@@ -593,9 +603,44 @@ export const vehiculos = {
       aplicaFopat: "booleano",
       nitMonitoreoFlota: "texto",
       flota: "texto",
+      gpsUrl: "texto",
+      gpsUsuario: "texto",
       activo: "booleano",
     });
     return this.findById(id);
+  },
+
+  /** Guarda la clave del GPS ya cifrada (null la borra). */
+  async fijarClaveGps(id: number, cifrada: string | null): Promise<void> {
+    await pool.query("UPDATE vehiculos SET gpsClaveCifrada = ? WHERE id = ?", [cifrada, id]);
+  },
+
+  /**
+   * Datos para entrar al GPS del vehiculo: link (el del vehiculo o el de su
+   * empresa de monitoreo), usuario y clave cifrada, y el nombre del proveedor.
+   */
+  async accesoGps(id: number): Promise<{
+    placa: string;
+    proveedor: string | null;
+    url: string | null;
+    usuario: string | null;
+    claveCifrada: string | null;
+  } | null> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT v.placa, v.gpsUrl, v.gpsUsuario, v.gpsClaveCifrada, e.nombre AS proveedor, e.urlPlataforma
+         FROM vehiculos v LEFT JOIN empresas_monitoreo e ON e.nit = v.nitMonitoreoFlota
+        WHERE v.id = ?`,
+      [id]
+    );
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      placa: r.placa,
+      proveedor: r.proveedor ?? null,
+      url: r.gpsUrl || r.urlPlataforma || null,
+      usuario: r.gpsUsuario ?? null,
+      claveCifrada: r.gpsClaveCifrada ?? null,
+    };
   },
 };
 
@@ -940,6 +985,8 @@ export interface EmpresaMonitoreo {
   nit: string;
   nombre: string;
   activa: boolean;
+  /** Link de la plataforma GPS del proveedor (lo usan sus vehiculos sin link propio). */
+  urlPlataforma?: string | null;
 }
 
 /**
@@ -966,17 +1013,21 @@ export const empresasMonitoreo = {
   },
 
   /** Crea o renombra por NIT. El nombre puede cambiar; el NIT es la llave. */
-  async guardar(nit: string, nombre: string): Promise<void> {
+  async guardar(nit: string, nombre: string, urlPlataforma: string | null = null): Promise<void> {
     await pool.query(
-      `INSERT INTO empresas_monitoreo (nit, nombre) VALUES (?, ?)
-       ON DUPLICATE KEY UPDATE nombre = VALUES(nombre), activa = 1`,
-      [nit, nombre]
+      `INSERT INTO empresas_monitoreo (nit, nombre, urlPlataforma) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE nombre = VALUES(nombre), activa = 1,
+                               urlPlataforma = COALESCE(VALUES(urlPlataforma), urlPlataforma)`,
+      [nit, nombre, urlPlataforma]
     );
   },
 
-  /** Cambia NIT y/o nombre de una empresa de monitoreo y la devuelve. */
-  async update(id: number, datos: { nit?: string; nombre?: string }): Promise<EmpresaMonitoreo | null> {
-    await actualizarFila("empresas_monitoreo", id, datos, { nit: "texto", nombre: "texto" });
+  /** Cambia NIT, nombre y/o link de la plataforma y la devuelve. */
+  async update(
+    id: number,
+    datos: { nit?: string; nombre?: string; urlPlataforma?: string | null }
+  ): Promise<EmpresaMonitoreo | null> {
+    await actualizarFila("empresas_monitoreo", id, datos, { nit: "texto", nombre: "texto", urlPlataforma: "texto" });
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM empresas_monitoreo WHERE id = ?", [id]);
     const row = rows[0] as EmpresaMonitoreo | undefined;
     return row ? { ...row, activa: !!row.activa } : null;

@@ -746,6 +746,14 @@ export async function initSchema(): Promise<void> {
     ["remolques", "rndcRadicado", "VARCHAR(30)"],
     ["remolques", "rndcEn", "DATETIME"],
     ["remolques", "rndcError", "TEXT"],
+    // Acceso a la plataforma GPS de cada vehiculo, para ver a que hora salio
+    // del cargue (ver GET /api/catalogo/vehiculos/:id/gps). La clave va
+    // cifrada (src/cifrado.ts); la URL del vehiculo, si esta, manda sobre la
+    // de su empresa de monitoreo.
+    ["vehiculos", "gpsUrl", "VARCHAR(300)"],
+    ["vehiculos", "gpsUsuario", "VARCHAR(100)"],
+    ["vehiculos", "gpsClaveCifrada", "TEXT"],
+    ["empresas_monitoreo", "urlPlataforma", "VARCHAR(300)"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).

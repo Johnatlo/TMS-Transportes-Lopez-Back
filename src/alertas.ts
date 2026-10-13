@@ -7,7 +7,7 @@
  * viernes. Por eso las alertas miran hacia adelante y no solo a lo vencido.
  */
 
-import { vehiculos, conductores, remolques, parametros } from "./repo";
+import { vehiculos, conductores, parametros } from "./repo";
 
 /** Umbrales en dias. Se puede pedir otro al consultar. */
 export const DIAS_AVISO_POR_DEFECTO = 30;
@@ -120,13 +120,14 @@ export interface ResumenAlertas {
   sinFecha: AlertaDocumento[];
   diasAviso: number;
   /** Cuantos elementos se revisaron, para dar contexto al conteo. */
-  revisados: { vehiculos: number; remolques: number; conductores: number };
+  revisados: { vehiculos: number; conductores: number };
   /** true si la revision incluyo registros inactivos. */
   incluyeInactivos: boolean;
 }
 
 /**
- * Revisa toda la flota y los conductores activos.
+ * Revisa los vehiculos y conductores activos (los remolques no tienen SOAT ni
+ * tecnomecanica) y la poliza de carga de la empresa.
  *
  * Los registros sin fecha se reportan aparte: no estan vencidos, pero tampoco
  * se puede afirmar que esten vigentes, y esa diferencia importa porque el
@@ -136,9 +137,8 @@ export async function revisarVencimientos(
   diasAviso = DIAS_AVISO_POR_DEFECTO,
   incluirInactivos = false
 ): Promise<ResumenAlertas> {
-  const [flota, trailers, personal, params] = await Promise.all([
+  const [flota, personal, params] = await Promise.all([
     vehiculos.findMany(),
-    remolques.findMany(),
     conductores.findMany(),
     parametros.obtener(),
   ]);
@@ -146,7 +146,6 @@ export async function revisarVencimientos(
   // Por defecto solo activos: un vehiculo retirado con el SOAT vencido no es
   // una alarma. Con incluirInactivos se revisan todos, marcados con `activo`.
   const activos = flota.filter((v) => incluirInactivos || v.activo);
-  const trailersActivos = trailers.filter((r) => incluirInactivos || r.activo);
   const conductoresActivos = personal.filter((c) => incluirInactivos || c.activo);
 
   const todas: AlertaDocumento[] = [];
@@ -168,16 +167,7 @@ export async function revisarVencimientos(
     );
   }
 
-  // Los remolques tambien llevan tecnomecanica y el RNDC la valida.
-  for (const r of trailersActivos) {
-    todas.push(
-      alerta("TECNOMECANICA", `${r.placa} (remolque)`, r.placa, r.fechaVencTecnomecanica, diasAviso, {
-        entidad: "remolque",
-        id: r.id,
-        campo: "fechaVencTecnomecanica",
-      }, r.activo)
-    );
-  }
+  // Los remolques no tienen SOAT ni tecnomecanica: no generan alertas.
 
   for (const c of conductoresActivos) {
     todas.push(
@@ -212,7 +202,6 @@ export async function revisarVencimientos(
     diasAviso,
     revisados: {
       vehiculos: activos.length,
-      remolques: trailersActivos.length,
       conductores: conductoresActivos.length,
     },
     incluyeInactivos: incluirInactivos,
