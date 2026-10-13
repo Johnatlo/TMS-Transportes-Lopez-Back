@@ -49,7 +49,7 @@ export type FilaHeredable = Record<string, unknown> & {
 
 /** Campos que se copian del anulado si en la fila nueva estan vacios. */
 const CAMPOS_HEREDABLES = [
-  "remision", "fechaRadicado", "facturaNumero", "facturaFecha",
+  "remision", "fechaRadicado", "facturaNumero", "facturaFecha", "facturaVence",
   "facturaFechaPago", "fechaPagoSaldo", "revisadoContabilidadPorId", "revisadoContabilidadEn",
   "revisadoGerenciaPorId", "revisadoGerenciaEn",
 ] as const;
@@ -115,6 +115,9 @@ export interface FilaCuadro {
   facturado: boolean;
   facturaNumero: string | null;
   facturaFecha: string | null;
+  /** "Fecha pago cliente": cuando vence la factura. Pasada, hay que cobrar. */
+  facturaVence: string | null;
+  /** "Fecha pago factura": cuando el cliente pago. Con ella el viaje queda todo pagado. */
   facturaFechaPago: string | null;
   fechaPagoSaldo: string | null;
   /** Terceros: fecha de descargue + 15 dias. Flota propia: null. */
@@ -168,8 +171,9 @@ export const sumarDias = (fecha: string, dias: number) => {
 /**
  * Estado de una fila a partir de sus datos (exportado para las pruebas).
  *
- * - Todo pagado: solo cuando el cliente le pago la factura a la empresa
- *   (facturaFechaPago, "fecha de pago a la empresa"). El saldo del tercero y
+ * - Todo pagado: solo cuando el cliente pago la factura (facturaFechaPago,
+ *   "fecha pago factura"). La "fecha pago cliente" (facturaVence) es solo el
+ *   vencimiento. El saldo del tercero y
  *   los anticipos de bomba se siguen aparte (columnas y "Saldos vencidos").
  * - Facturado: cuando la factura tiene numero Y fecha, escritos a mano o con
  *   "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
@@ -240,6 +244,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     facturado: !!r.facturado,
     facturaNumero: r.facturaNumero,
     facturaFecha: dia(r.facturaFecha),
+    facturaVence: dia(r.facturaVence),
     facturaFechaPago: dia(r.facturaFechaPago),
     fechaPagoSaldo: dia(r.fechaPagoSaldo),
     venceSaldo: null as string | null,
@@ -281,6 +286,7 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   facturado: "booleano",
   facturaNumero: "texto",
   facturaFecha: "fecha",
+  facturaVence: "fecha",
   facturaFechaPago: "fecha",
   fechaPagoSaldo: "fecha",
 };
@@ -549,15 +555,20 @@ export const cuadro = {
   },
 
   /** Una factura que cubre varios viajes (los urbanos se facturan juntos). */
-  async facturar(ids: number[], datos: { facturaNumero?: string | null; facturaFecha?: string | null }) {
+  async facturar(
+    ids: number[],
+    datos: { facturaNumero?: string | null; facturaFecha?: string | null; facturaVence?: string | null }
+  ) {
     if (ids.length === 0) throw new ErrorCuadro("Selecciona al menos un viaje.");
     const numero = valorCampo("facturaNumero", "texto", datos.facturaNumero);
     const fecha = valorCampo("facturaFecha", "fecha", datos.facturaFecha);
+    const vence = valorCampo("facturaVence", "fecha", datos.facturaVence);
     const [res] = await pool.query<ResultSetHeader>(
       `UPDATE cuadro_viajes SET facturado = 1,
-              facturaNumero = COALESCE(?, facturaNumero), facturaFecha = COALESCE(?, facturaFecha)
+              facturaNumero = COALESCE(?, facturaNumero), facturaFecha = COALESCE(?, facturaFecha),
+              facturaVence = COALESCE(?, facturaVence)
         WHERE id IN (?)`,
-      [numero, fecha, ids]
+      [numero, fecha, vence, ids]
     );
     return res.affectedRows;
   },

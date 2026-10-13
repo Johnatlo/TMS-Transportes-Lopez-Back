@@ -8,9 +8,11 @@
  *    los dias hasta que los papeles queden listos para facturar.
  * 2. Por facturar: viajes con los papeles listos y sin factura, o facturados
  *    sin numero o fecha (sin fecha no se sabe cuando vence).
- * 3. Cartera: facturas con numero y fecha que el cliente aun no paga, con su
- *    vencimiento (fecha de factura + dias de credito del cliente), las
- *    gestiones de cobro y la fecha en que el cliente prometio pagar.
+ * 3. Cartera: facturas con numero y fecha que el cliente aun no paga (sin
+ *    "fecha pago factura"), con su vencimiento ("fecha pago cliente", o si no
+ *    esta, fecha de factura + dias de credito del cliente), las gestiones de
+ *    cobro y la fecha en que el cliente prometio pagar. Avisa desde que pasa
+ *    el vencimiento: hay que llamar y cobrar.
  *
  * Todas las alertas se activan cada dia: lo pendiente avisa todos los dias
  * hasta que alguien lo atiende ese dia (registra el seguimiento de los
@@ -159,7 +161,10 @@ export interface FacturaCartera {
   empresa: string;
   facturaFecha: string;
   diasCredito: number;
+  /** "Fecha pago cliente" escrita en el cuadro, o fecha de factura + dias de credito. */
   vence: string;
+  /** true si el vencimiento es la "fecha pago cliente" escrita a mano. */
+  venceManual: boolean;
   /** Positivo: dias vencida. Negativo: dias que faltan. */
   diasVencida: number;
   valor: number;
@@ -186,31 +191,21 @@ export interface ResumenCliente {
 }
 
 /**
- * Alerta de una factura por cobrar: todos los dias, hasta que se paga, salvo
- * el dia en que ya se anoto una gestion de cobro (`gestionHoy`). Urgente si
- * esta vencida o si ya llego la fecha en que el cliente prometio pagar.
+ * Alerta de cobro de una factura sin pagar: empieza cuando pasa la fecha pago
+ * cliente (el vencimiento) o la fecha en que el cliente prometio pagar, y
+ * avisa todos los dias hasta que se registra la fecha pago factura. El dia en
+ * que ya se anoto una gestion de cobro (`gestionHoy`) no avisa. Antes del
+ * vencimiento no hay alerta.
  */
 export function alertaFactura(vence: string, compromisoPago: string | null, hoy: string, gestionHoy = false): AlertaFila | null {
   if (gestionHoy) return null;
   const motivos: string[] = [];
-  let nivel: NivelAlerta = "atencion";
   const diasVencida = diasEntre(vence, hoy);
-  if (compromisoPago && compromisoPago <= hoy) {
+  if (diasVencida > 0) motivos.push(`Vencida hace ${diasVencida} dias: llamar al cliente y cobrar.`);
+  if (compromisoPago && compromisoPago < hoy) {
     motivos.push(`El cliente prometio pagar el ${compromisoPago} y no se ha registrado el pago.`);
-    nivel = "urgente";
   }
-  if (diasVencida > 0) {
-    motivos.push(`Vencida hace ${diasVencida} dias.`);
-    nivel = "urgente";
-  } else if (diasVencida === 0) {
-    motivos.push("Vence hoy.");
-  } else if (compromisoPago && compromisoPago > hoy) {
-    motivos.push(`Vence en ${-diasVencida} dias; el cliente prometio pagar el ${compromisoPago}.`);
-  } else {
-    motivos.push(`Vence en ${-diasVencida} dias.`);
-  }
-  motivos.push("Hacer seguimiento de cobro hoy.");
-  return { nivel, motivos, comunicarse: false };
+  return motivos.length ? { nivel: "urgente", motivos, comunicarse: false } : null;
 }
 
 /**
@@ -236,7 +231,9 @@ export function agruparCartera(
     // Si los viajes tienen fechas distintas, cuenta la mas antigua.
     const facturaFecha = viajes.map((v) => v.facturaFecha!).sort()[0];
     const diasCredito = plazos.get(empresa) ?? DIAS_CREDITO_DEFECTO;
-    const vence = sumarDias(facturaFecha, diasCredito);
+    // La fecha pago cliente escrita en el cuadro manda; si no hay, se calcula.
+    const venceEscrito = viajes.map((v) => v.facturaVence).filter((v): v is string => !!v).sort()[0];
+    const vence = venceEscrito ?? sumarDias(facturaFecha, diasCredito);
     const ultimaGestion = gestiones.get(llave) ?? null;
     const compromisoPago = ultimaGestion?.compromisoPago ?? null;
     facturas.push({
@@ -245,6 +242,7 @@ export function agruparCartera(
       facturaFecha,
       diasCredito,
       vence,
+      venceManual: !!venceEscrito,
       diasVencida: diasEntre(vence, hoy),
       valor: viajes.reduce((s, v) => s + (v.valorFlete ?? 0), 0),
       viajesSinValor: viajes.filter((v) => v.valorFlete === null).length,

@@ -44,6 +44,7 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     facturado: false,
     facturaNumero: null,
     facturaFecha: null,
+    facturaVence: null,
     facturaFechaPago: null,
     fechaPagoSaldo: null,
     venceSaldo: null,
@@ -144,18 +145,19 @@ describe("alerta de una factura", () => {
   test("vencida: urgente", () => {
     expect(alertaFactura("2026-10-01", null, HOY)?.nivel).toBe("urgente");
   });
-  test("sin vencer: avisa todos los dias igual (atencion)", () => {
-    expect(alertaFactura("2026-10-15", null, HOY)?.nivel).toBe("atencion");
-    expect(alertaFactura("2026-11-30", null, HOY)?.nivel).toBe("atencion");
+  test("antes de que pase la fecha pago cliente (y el dia mismo) no avisa", () => {
+    expect(alertaFactura("2026-10-15", null, HOY)).toBeNull();
+    expect(alertaFactura(HOY, null, HOY)).toBeNull();
+  });
+  test("pasada la fecha pago cliente: llamar y cobrar", () => {
+    expect(alertaFactura("2026-10-09", null, HOY)?.motivos[0]).toContain("llamar al cliente y cobrar");
   });
   test("con gestion de cobro hoy: se calla hasta manana, aunque este vencida", () => {
     expect(alertaFactura("2026-10-01", null, HOY, true)).toBeNull();
   });
-  test("compromiso de pago que ya llego: urgente", () => {
-    expect(alertaFactura("2026-11-30", "2026-10-10", HOY)?.nivel).toBe("urgente");
-  });
-  test("con compromiso de pago futuro sigue avisando y lo menciona", () => {
-    expect(alertaFactura("2026-10-12", "2026-10-20", HOY)?.motivos[0]).toContain("prometio pagar el 2026-10-20");
+  test("compromiso de pago que ya paso sin pago: urgente aunque no haya vencido", () => {
+    expect(alertaFactura("2026-11-30", "2026-10-09", HOY)?.nivel).toBe("urgente");
+    expect(alertaFactura("2026-11-30", HOY, HOY)).toBeNull();
   });
 });
 
@@ -176,6 +178,13 @@ describe("cartera", () => {
     expect(fe1.viajes).toHaveLength(2);
     expect(fe1.vence).toBe("2026-10-16");
     expect(fe1.diasVencida).toBe(-6);
+  });
+
+  test("la fecha pago cliente escrita en el cuadro manda sobre los dias de credito", () => {
+    const [f] = agruparCartera([facturada(1, { facturaVence: "2026-10-20" })], new Map([["CARTONES AMERICA", 45]]), new Map(), HOY);
+    expect(f.vence).toBe("2026-10-20");
+    expect(f.venceManual).toBe(true);
+    expect(f.alerta).toBeNull();
   });
 
   test("sin plazo configurado: 30 dias", () => {

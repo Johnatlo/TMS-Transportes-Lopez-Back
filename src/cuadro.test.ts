@@ -35,6 +35,7 @@ function viaje(cambios: Partial<Base> = {}): Base {
     facturado: false,
     facturaNumero: null,
     facturaFecha: null,
+    facturaVence: null,
     facturaFechaPago: null,
     fechaPagoSaldo: null,
     venceSaldo: null,

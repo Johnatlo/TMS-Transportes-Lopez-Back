@@ -860,8 +860,9 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
 - **`estadoDe(f)`** · _función_
   Estado de una fila a partir de sus datos (exportado para las pruebas).
 
-  - Todo pagado: solo cuando el cliente le pago la factura a la empresa
-    (facturaFechaPago, "fecha de pago a la empresa"). El saldo del tercero y
+  - Todo pagado: solo cuando el cliente pago la factura (facturaFechaPago,
+    "fecha pago factura"). La "fecha pago cliente" (facturaVence) es solo el
+    vencimiento. El saldo del tercero y
     los anticipos de bomba se siguen aparte (columnas y "Saldos vencidos").
   - Facturado: cuando la factura tiene numero Y fecha, escritos a mano o con
     "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
@@ -3095,9 +3096,11 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
 >    los dias hasta que los papeles queden listos para facturar.
 > 2. Por facturar: viajes con los papeles listos y sin factura, o facturados
 >    sin numero o fecha (sin fecha no se sabe cuando vence).
-> 3. Cartera: facturas con numero y fecha que el cliente aun no paga, con su
->    vencimiento (fecha de factura + dias de credito del cliente), las
->    gestiones de cobro y la fecha en que el cliente prometio pagar.
+> 3. Cartera: facturas con numero y fecha que el cliente aun no paga (sin
+>    "fecha pago factura"), con su vencimiento ("fecha pago cliente", o si no
+>    esta, fecha de factura + dias de credito del cliente), las gestiones de
+>    cobro y la fecha en que el cliente prometio pagar. Avisa desde que pasa
+>    el vencimiento: hay que llamar y cobrar.
 >
 > Todas las alertas se activan cada dia: lo pendiente avisa todos los dias
 > hasta que alguien lo atiende ese dia (registra el seguimiento de los
@@ -3135,9 +3138,11 @@ _490 funciones, componentes, métodos y rutas en 34 archivos._
   Sin alerta si el viaje cargo antes de `desde`.
 
 - **`alertaFactura(vence, compromisoPago, hoy, gestionHoy)`** · _función_
-  Alerta de una factura por cobrar: todos los dias, hasta que se paga, salvo
-  el dia en que ya se anoto una gestion de cobro (`gestionHoy`). Urgente si
-  esta vencida o si ya llego la fecha en que el cliente prometio pagar.
+  Alerta de cobro de una factura sin pagar: empieza cuando pasa la fecha pago
+  cliente (el vencimiento) o la fecha en que el cliente prometio pagar, y
+  avisa todos los dias hasta que se registra la fecha pago factura. El dia en
+  que ya se anoto una gestion de cobro (`gestionHoy`) no avisa. Antes del
+  vencimiento no hay alerta.
 
 - **`agruparCartera(filas, plazos, gestiones, hoy)`** · _función_
   Agrupa por factura (numero + empresa) los viajes facturados con numero y

@@ -724,6 +724,9 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "papelesFaltan", "VARCHAR(300)"],
     ["cuadro_viajes", "papelesRevisadoEn", "DATETIME"],
     ["cuadro_viajes", "papelesRevisadoPorId", "INT"],
+    // "Fecha pago cliente": cuando vence la factura (el cliente debe pagar).
+    // facturaFechaPago es el pago real ("fecha pago factura").
+    ["cuadro_viajes", "facturaVence", "DATE"],
   ];
 
   // Ajustes de columnas existentes (no son altas, son cambios de definicion).
@@ -747,6 +750,14 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // ¿Ya existia el vencimiento de factura? Si no, se crea abajo y se corrige
+  // una sola vez lo que se habia escrito antes (ver despues del ciclo).
+  const [conVence] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'facturaVence'`
+  );
+  const venceEsNuevo = (conVence as unknown[]).length === 0;
+
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(
       `SELECT 1 FROM information_schema.COLUMNS
@@ -756,6 +767,16 @@ export async function initSchema(): Promise<void> {
     if ((filas as unknown[]).length === 0) {
       await pool.query(`ALTER TABLE \`${tabla}\` ADD COLUMN \`${columna}\` ${definicion}`);
     }
+  }
+
+  // Correccion unica al crear facturaVence: lo que se lleno en "fecha pago
+  // cliente" (facturaFechaPago) era el vencimiento de la factura, no el pago.
+  // Se pasa a facturaVence y facturaFechaPago queda para el pago real.
+  if (venceEsNuevo) {
+    await pool.query(
+      `UPDATE cuadro_viajes SET facturaVence = facturaFechaPago, facturaFechaPago = NULL
+        WHERE facturaFechaPago IS NOT NULL`
+    );
   }
 
   // Un numero de manifiesto no se puede repetir: es la ultima barrera contra
