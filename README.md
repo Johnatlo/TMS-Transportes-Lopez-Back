@@ -498,7 +498,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_558 funciones, componentes, métodos y rutas en 38 archivos._
+_559 funciones, componentes, métodos y rutas en 38 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -508,7 +508,7 @@ _558 funciones, componentes, métodos y rutas en 38 archivos._
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
 - [`src/cuadro.ts`](#srccuadrots) (30)
-- [`src/db.ts`](#srcdbts) (2)
+- [`src/db.ts`](#srcdbts) (3)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/index.ts`](#srcindexts) (1)
@@ -1165,6 +1165,17 @@ _558 funciones, componentes, métodos y rutas en 38 archivos._
   3. Indices y ajustes de datos idempotentes (se pueden correr en cada
      arranque sin pisar lo que ya esta).
   Asi un despliegue nuevo actualiza la base solo, sin migraciones manuales.
+
+- **`unificarCollation()`** · _función_
+  Deja todas las tablas con la misma collation que la tabla viajes.
+
+  Por que: las tablas que se crean en un arranque toman la collation por
+  defecto del servidor (en MySQL 8 es utf8mb4_0900_ai_ci), pero las que venian
+  de antes pueden tener otra (utf8mb4_general_ci, como en MariaDB). Al
+  comparar textos de dos tablas distintas en una consulta, MySQL responde
+  "Illegal mix of collations ... for operation '='". Convirtiendo las que no
+  coinciden, todas quedan iguales (solo se tocan las distintas, que suelen ser
+  las nuevas y pequenas). Si algo falla se avisa y el sistema sigue.
 
 ### `src/facturacion.ts`
 

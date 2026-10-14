@@ -7,6 +7,7 @@
  * - `initSchema`: crea las tablas y agrega las columnas que falten al arrancar.
  */
 import mysql from "mysql2/promise";
+import type { RowDataPacket } from "mysql2";
 import "dotenv/config";
 
 export const pool = mysql.createPool({
@@ -938,4 +939,47 @@ export async function initSchema(): Promise<void> {
       WHERE p.municipioDestino IS NULL
         AND td.codMunicipioRndc REGEXP '^[0-9]{8}$'`
   );
+
+  await unificarCollation();
+}
+
+/**
+ * Deja todas las tablas con la misma collation que la tabla viajes.
+ *
+ * Por que: las tablas que se crean en un arranque toman la collation por
+ * defecto del servidor (en MySQL 8 es utf8mb4_0900_ai_ci), pero las que venian
+ * de antes pueden tener otra (utf8mb4_general_ci, como en MariaDB). Al
+ * comparar textos de dos tablas distintas en una consulta, MySQL responde
+ * "Illegal mix of collations ... for operation '='". Convirtiendo las que no
+ * coinciden, todas quedan iguales (solo se tocan las distintas, que suelen ser
+ * las nuevas y pequenas). Si algo falla se avisa y el sistema sigue.
+ */
+async function unificarCollation(): Promise<void> {
+  try {
+    const [ref] = await pool.query<RowDataPacket[]>(
+      `SELECT TABLE_COLLATION AS collation FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'viajes'`
+    );
+    const collation: string | undefined = ref[0]?.collation;
+    if (!collation || !/^[a-z0-9_]+$/i.test(collation)) return;
+    const juego = collation.split("_")[0];
+    const [distintas] = await pool.query<RowDataPacket[]>(
+      `SELECT TABLE_NAME AS tabla FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_COLLATION <> ?`,
+      [collation]
+    );
+    // Columnas sueltas con otra collation (agregadas con ALTER en otro momento).
+    const [columnas] = await pool.query<RowDataPacket[]>(
+      `SELECT DISTINCT TABLE_NAME AS tabla FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND COLLATION_NAME IS NOT NULL AND COLLATION_NAME <> ?`,
+      [collation]
+    );
+    const tablas = [...new Set([...distintas, ...columnas].map((t) => String(t.tabla)))];
+    for (const tabla of tablas) {
+      await pool.query(`ALTER TABLE \`${tabla}\` CONVERT TO CHARACTER SET ${juego} COLLATE ${collation}`);
+      console.log(`Collation: tabla ${tabla} convertida a ${collation}.`);
+    }
+  } catch (err) {
+    console.warn("AVISO: no se pudo unificar la collation de las tablas:", (err as Error).message);
+  }
 }
