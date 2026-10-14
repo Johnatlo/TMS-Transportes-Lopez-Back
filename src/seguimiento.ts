@@ -24,7 +24,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { cuadro, dia, ErrorCuadro, ESTADOS_PAPELES, hoyColombia, sumarDias } from "./cuadro";
+import { cuadro, dia, ErrorCuadro, ESTADOS_PAPELES, hoyColombia, papelesListos, sumarDias } from "./cuadro";
 import type { EstadoPapeles, FilaCuadro } from "./cuadro";
 
 /** Dias de credito si el cliente no tiene plazo configurado. */
@@ -80,7 +80,7 @@ export const descargo = (f: FilaCuadro, hoy: string) =>
  */
 export function alertaPapeles(f: FilaCuadro, hoy: string, desde = ""): AlertaFila | null {
   if (f.fecha < desde) return null;
-  if (!sinFactura(f) || f.estadoPapeles === "RADICADO" || !descargo(f, hoy)) return null;
+  if (!sinFactura(f) || papelesListos(f.estadoPapeles) || !descargo(f, hoy)) return null;
   const dias = f.fechaDescargue ? Math.max(0, diasEntre(f.fechaDescargue, hoy)) : null;
   const revisadoHoy = !!f.papelesRevisadoEn && diaColombia(f.papelesRevisadoEn) === hoy;
   // Ya se atendio hoy: vuelve a avisar manana.
@@ -106,7 +106,7 @@ export function alertaPapeles(f: FilaCuadro, hoy: string, desde = ""): AlertaFil
  */
 export function alertaFacturacion(f: FilaCuadro, hoy: string, desde = ""): AlertaFila | null {
   if (f.anulado || f.facturaFechaPago || f.fecha < desde) return null;
-  if (sinFactura(f) && f.estadoPapeles === "RADICADO") {
+  if (sinFactura(f) && papelesListos(f.estadoPapeles)) {
     const dias = f.fechaRadicado ? Math.max(0, diasEntre(f.fechaRadicado, hoy)) : null;
     return {
       nivel: dias !== null && dias >= DIAS_PAPELES_DEMORADOS ? "urgente" : "atencion",
@@ -511,6 +511,7 @@ const ETIQUETA_PAPELES: Record<EstadoPapeles, string> = {
   PARQUEADERO: "en el parqueadero",
   OFICINA: "donde Don Alexander",
   RADICADO: "listos para facturar",
+  RADICADOS: "radicados",
 };
 
 /** Fila de cartera_gestiones -> GestionCobro. */

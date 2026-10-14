@@ -424,6 +424,14 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/cuadro/bombas` | Catalogo de bombas aliadas. |
 | `POST` | `/api/cuadro/bombas` | Crea una bomba ({ nombre, ciudad }). Devuelve su id. |
 | `PUT` | `/api/cuadro/bombas/:bombaId` | Cambia nombre, ciudad o activa; devuelve la lista. |
+| `GET` | `/api/cuadro/anticipos` | Todos los tramos de anticipo (ida y vuelta), lo mas reciente primero. |
+| `GET` | `/api/cuadro/anticipos/resumen` | Deuda, pagado, abonado por el socio, pendiente y cupo con la bomba. |
+| `PUT` | `/api/cuadro/anticipos/parametros` | Cupo de credito con la bomba y precio y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }). Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id. |
+| `GET` | `/api/cuadro/abonos-socio` | Abonos del socio a la bomba, con sus viajes. |
+| `POST` | `/api/cuadro/abonos-socio` | Registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }). |
+| `DELETE` | `/api/cuadro/abonos-socio/:abonoId` | Borra un abono. |
+| `PUT` | `/api/cuadro/anticipos/:anticipoId` | Fecha de pago, nota, viaje o datos del cruce (galones, precio y descuento: recalcula el combustible) de un tramo. |
+| `PUT` | `/api/cuadro/tanqueos/:tanqueoId` | Factura de la bomba (numero, fecha) o la bomba del tanqueo. |
 | `GET` | `/api/cuadro/tarifas` | La matriz de fletes. |
 | `PUT` | `/api/cuadro/tarifas` | Reemplaza la matriz completa con la importada del Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }). |
 | `PUT` | `/api/cuadro/tarifas/:tarifaId` | Cambia una tarifa y la devuelve (404 si no existe). |
@@ -490,15 +498,16 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_526 funciones, componentes, métodos y rutas en 37 archivos._
+_558 funciones, componentes, métodos y rutas en 38 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
+- [`src/anticipos.ts`](#srcanticiposts) (23)
 - [`src/auth.ts`](#srcauthts) (35)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (29)
+- [`src/cuadro.ts`](#srccuadrots) (30)
 - [`src/db.ts`](#srcdbts) (2)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
 - [`src/fechas.ts`](#srcfechasts) (1)
@@ -515,7 +524,7 @@ _526 funciones, componentes, métodos y rutas en 37 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (23)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (21)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (29)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (9)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -568,6 +577,124 @@ _526 funciones, componentes, métodos y rutas en 37 archivos._
   Los registros sin fecha se reportan aparte: no estan vencidos, pero tampoco
   se puede afirmar que esten vigentes, y esa diferencia importa porque el
   despacho si los deja pasar.
+
+### `src/anticipos.ts`
+
+> Anticipos de los viajes: efectivo y combustible (bomba / EDS).
+>
+> Se llevan de dos formas a la vez (como el Excel "cuadro de anticipos"):
+> - Por tanqueo (anticipos_tanqueo): lo que se entrego de una vez en una
+>   bomba, que puede cubrir la ida y la vuelta. Es lo que se corrobora con la
+>   factura de la bomba.
+> - Por viaje (cuadro_anticipos): cada tramo (IDA o VUELTA) con su efectivo y
+>   su combustible, sumado al viaje (recorrido / empresa) del cuadro pagos.
+>
+> Si el anticipo es de ida y vuelta, la vuelta se guarda sin viaje y se
+> asigna sola al proximo viaje de esa placa (asignarVueltasPendientes), con
+> su valor, su bomba y su fecha.
+>
+> Cuentas con la bomba (resumirBomba): lo que se le debe (todo lo entregado en
+> la bomba), lo pagado, lo que abono un socio (el Zorro) por algunos viajes y
+> el cupo de credito que queda.
+>
+> Cruce con la relacion quincenal de la bomba: el combustible de cada tramo es
+> la formula de la columna COMBUST. del Excel, que da el valor exacto
+> (redondeado): round(galones x precio por galon - descuento). El precio se
+> sugiere desde los parametros (11.390); el descuento (por la sociedad) se
+> sugiere como galones x descuento por galon (250), en pesos. Los dos se
+> pueden cambiar en cada tramo.
+
+- **`placaNormal(p)`** · _función_
+  Placa comparable: mayusculas sin guion ni espacios ("SZP-339" -> "SZP339").
+
+- **`pesos(v, campo)`** · _función_
+  Valor en pesos >= 0; vacio -> 0. Lanza ErrorCuadro si no es numero.
+
+- **`fecha(v, campo)`** · _función_
+  Fecha "AAAA-MM-DD" valida o ErrorCuadro.
+
+- **`validarAnticipo(d)`** · _función_
+  Valida el anticipo del formulario. Reglas:
+  - Fecha obligatoria; al menos un valor (efectivo o combustible) en la ida.
+  - Si hay combustible (ida o vuelta), la bomba es obligatoria.
+  - Ida y vuelta: la vuelta debe tener algun valor.
+  - Compatibilidad: "valor" sin desglose se toma como combustible.
+
+- **`mapear(r)`** · _función_
+  Fila de SELECT_ANTICIPOS -> FilaAnticipo.
+
+- **`descuentoSugerido(galones, descuentoPorGalon)`** · _función_
+  Descuento sugerido en pesos: galones x descuento por galon, redondeado.
+
+- **`combustibleSegunFormula(galones, precioGalon, descuento)`** · _función_
+  Combustible de un tramo segun la relacion de la bomba (la formula de la
+  columna COMBUST. del Excel): round(galones x precio - descuento).
+  Ej.: 100,182 galones x 11.230 - 25.044 = 1.100.000.
+
+- **`resumirBomba(tramos, abonadoSocio, p)`** · _función_
+  Cuentas con la bomba a partir de los tramos: solo cuentan los entregados en
+  una bomba (los de solo efectivo sin bomba no son deuda con ella).
+
+- **`anticipos`** · _módulo_
+  Anticipos por tanqueo y por tramo: registrar, asignar vueltas, listar y corregir.
+
+  - **`anticipos.registrar(cuadroViajeId, d, usuarioId)`** · _método_
+    Registra un anticipo en un viaje del cuadro: crea el tanqueo, el tramo de
+    IDA en este viaje y, si es de ida y vuelta, el tramo de VUELTA pendiente
+    (se asigna solo al proximo viaje de la placa). Todo en una transaccion.
+
+  - **`anticipos.asignarVueltasPendientes()`** · _método_
+    Asigna cada vuelta pendiente al proximo viaje de su placa: el primero del
+    cuadro (no anulado) despues del viaje de ida, por fecha y luego por orden
+    de creacion. Si aun no hay, sigue pendiente. Devuelve cuantas asigno.
+
+  - **`anticipos.delViaje(cuadroViajeId)`** · _método_
+    Los tramos de un viaje (para su detalle), por fecha.
+
+  - **`anticipos.cuadro()`** · _método_
+    El cuadro de anticipos completo (una fila por tramo), lo mas reciente primero.
+
+  - **`anticipos.actualizarTanqueo(id, d)`** · _método_
+    Datos de la factura de la bomba de un tanqueo (para corroborarlo): numero,
+    fecha y, si hace falta, la bomba (cambia tambien en sus tramos).
+
+  - **`anticipos.actualizarTramo(id, d)`** · _método_
+    Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, a que
+    viaje se suma (para corregir una vuelta asignada al viaje equivocado) o
+    los datos del cruce: galones, precio por galon y descuento. Con galones,
+    el combustible del tramo se recalcula con la formula de la bomba (precio
+    y descuento vacios = los sugeridos) y se guarda lo que se habia
+    registrado antes, para ver la diferencia.
+
+  - **`anticipos.cruzarTramo(id, d)`** · _método_
+    Cruce de un tramo con la relacion de la bomba: guarda galones, precio y
+    descuento y recalcula el combustible con la formula. Precio vacio = el
+    sugerido; descuento vacio = galones x descuento por galon sugerido. Sin
+    galones, el tramo vuelve al combustible que se habia registrado.
+
+  - **`anticipos.borrarTramo(id)`** · _método_
+    Quita un tramo. Si era la ida de un anticipo de ida y vuelta, tambien
+    quita la vuelta que aun no se asigno a ningun viaje. Si el tanqueo queda
+    sin tramos, se borra.
+
+  - **`anticipos.parametrosBomba()`** · _método_
+    Cupo con la bomba, precio por galon y descuento por galon sugeridos.
+
+  - **`anticipos.guardarParametrosBomba(d)`** · _método_
+    Cambia el cupo con la bomba y/o los valores sugeridos del cruce.
+
+  - **`anticipos.resumen()`** · _método_
+    Cuentas con la bomba: deuda, pagado, abonado por el socio, pendiente y cupo disponible.
+
+  - **`anticipos.abonos()`** · _método_
+    Abonos del socio, el mas reciente primero, con sus viajes.
+
+  - **`anticipos.registrarAbono(d, usuarioId)`** · _método_
+    Registra un abono del socio: socio, fecha, nota y los viajes con el valor
+    de cada uno (al menos uno). El valor del abono es la suma de los viajes.
+
+  - **`anticipos.borrarAbono(id)`** · _método_
+    Borra un abono del socio (y su reparto en los viajes).
 
 ### `src/auth.ts`
 
@@ -867,6 +994,9 @@ _526 funciones, componentes, métodos y rutas en 37 archivos._
 > - naranja: revisado por contabilidad, falta la gerente
 > - amarillo: todo pagado
 
+- **`papelesListos(e)`** · _función_
+  Papeles listos para facturar: "listo para facturar" o, en CORAME, ya radicados.
+
 - **`datosAHeredar(anulada, nueva)`** · _función_
   Que hereda la fila del manifiesto nuevo de la del manifiesto anulado al que
   reemplaza: solo lo que en la nueva esta vacio (nunca pisa lo que ya tiene).
@@ -950,8 +1080,9 @@ _526 funciones, componentes, métodos y rutas en 37 archivos._
     listar sincroniza los manifiestos expedidos, para que siempre esten todos.
 
   - **`cuadro.obtener(id)`** · _método_
-    Un viaje con sus anticipos (con nombre de la bomba y quien los registro) y
-    sus notas (con autor), la mas reciente primero. null si no existe.
+    Un viaje con sus anticipos (cada tramo con efectivo, combustible y bomba;
+    ver src/anticipos.ts) y sus notas (con autor), la mas reciente primero.
+    null si no existe.
 
   - **`cuadro.crear(datos, usuarioId)`** · _método_
     Viaje sin manifiesto (urbano o planillado por el generador de carga).
@@ -959,7 +1090,7 @@ _526 funciones, componentes, métodos y rutas en 37 archivos._
   - **`cuadro.actualizar(id, datos)`** · _método_
     Guarda solo los campos que vienen en 'datos' (validados).
 
-    Ademas: al pasar los papeles a RADICADO sin fecha, se pone la de hoy en
+    Ademas: al pasar los papeles a RADICADO o RADICADOS sin fecha, se pone la de hoy en
     Colombia; al devolverlos a otro estado, se borra. Si cambia la placa, se
     vuelve a enlazar el vehiculo del catalogo.
 
@@ -979,15 +1110,15 @@ _526 funciones, componentes, métodos y rutas en 37 archivos._
     Borra una nota de ese viaje.
 
   - **`cuadro.agregarAnticipo(id, d, usuarioId)`** · _método_
-    Registra un anticipo entregado por una bomba aliada: bomba, valor, fecha,
-    fecha de pago a la bomba (opcional) y nota. Bomba, valor y fecha son
-    obligatorios.
+    Registra un anticipo en el viaje: efectivo y combustible, bomba, fecha y,
+    si es de ida y vuelta, el anticipo de vuelta (queda para el proximo viaje
+    de la placa). Ver anticipos.registrar.
 
   - **`cuadro.actualizarAnticipo(id, anticipoId, d)`** · _método_
     Solo la fecha de pago a la bomba y la nota se editan; lo demas se borra y se vuelve a crear.
 
   - **`cuadro.borrarAnticipo(id, anticipoId)`** · _método_
-    Quita un anticipo de ese viaje.
+    Quita un anticipo de ese viaje (y la vuelta pendiente si era la ida; ver anticipos.borrarTramo).
 
 - **`bombas`** · _módulo_
   Catalogo de bombas aliadas que entregan anticipos a los conductores.
@@ -2605,6 +2736,32 @@ _526 funciones, componentes, métodos y rutas en 37 archivos._
 
 - **`PUT /bombas/:bombaId`** · _ruta HTTP_
   PUT /api/cuadro/bombas/:bombaId: cambia nombre, ciudad o activa; devuelve la lista.
+
+- **`GET /anticipos`** · _ruta HTTP_
+  GET /api/cuadro/anticipos: todos los tramos de anticipo (ida y vuelta), lo mas reciente primero.
+
+- **`GET /anticipos/resumen`** · _ruta HTTP_
+  GET /api/cuadro/anticipos/resumen: deuda, pagado, abonado por el socio, pendiente y cupo con la bomba.
+
+- **`PUT /anticipos/parametros`** · _ruta HTTP_
+  PUT /api/cuadro/anticipos/parametros: cupo de credito con la bomba y precio
+  y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }).
+  Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id.
+
+- **`GET /abonos-socio`** · _ruta HTTP_
+  GET /api/cuadro/abonos-socio: abonos del socio a la bomba, con sus viajes.
+
+- **`POST /abonos-socio`** · _ruta HTTP_
+  POST /api/cuadro/abonos-socio: registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }).
+
+- **`DELETE /abonos-socio/:abonoId`** · _ruta HTTP_
+  DELETE /api/cuadro/abonos-socio/:abonoId: borra un abono.
+
+- **`PUT /anticipos/:anticipoId`** · _ruta HTTP_
+  PUT /api/cuadro/anticipos/:anticipoId: fecha de pago, nota, viaje o datos del cruce (galones, precio y descuento: recalcula el combustible) de un tramo.
+
+- **`PUT /tanqueos/:tanqueoId`** · _ruta HTTP_
+  PUT /api/cuadro/tanqueos/:tanqueoId: factura de la bomba (numero, fecha) o la bomba del tanqueo.
 
 - **`GET /tarifas`** · _ruta HTTP_
   GET /api/cuadro/tarifas: la matriz de fletes.

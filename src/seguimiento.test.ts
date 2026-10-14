@@ -133,6 +133,11 @@ describe("alerta de papeles", () => {
 });
 
 describe("alerta de facturacion", () => {
+  test("radicados (CORAME): sin alerta de papeles y entra en por facturar", () => {
+    expect(alertaPapeles(fila({ estadoPapeles: "RADICADOS" }), HOY)).toBeNull();
+    expect(alertaFacturacion(fila({ estadoPapeles: "RADICADOS", fechaRadicado: HOY }), HOY)).not.toBeNull();
+  });
+
   test("listo para facturar sin factura: avisa desde el mismo dia, urgente desde el quinto", () => {
     expect(alertaFacturacion(fila({ estadoPapeles: "RADICADO", fechaRadicado: HOY }), HOY)?.nivel).toBe("atencion");
     expect(alertaFacturacion(fila({ estadoPapeles: "RADICADO", fechaRadicado: "2026-10-05" }), HOY)?.nivel).toBe("urgente");

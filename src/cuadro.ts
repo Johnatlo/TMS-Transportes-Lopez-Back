@@ -16,13 +16,19 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
+// anticipos.ts tambien importa de aqui; solo se usan dentro de funciones, asi
+// que el ciclo no molesta (cuando se llaman, los dos modulos ya cargaron).
+import { anticipos } from "./anticipos";
 
 /**
  * Donde van los papeles: en ruta, ya descargo, con el conductor, parqueadero,
- * oficina (Don Alexander) y radicados (listo para facturar).
+ * oficina (Don Alexander), listos para facturar (RADICADO) y, solo en CORAME /
+ * Cartones America, radicados en el cliente (RADICADOS, el ultimo paso).
  */
-export type EstadoPapeles = "EN_RUTA" | "DESCARGADO" | "CONDUCTOR" | "PARQUEADERO" | "OFICINA" | "RADICADO";
-export const ESTADOS_PAPELES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDUCTOR", "PARQUEADERO", "OFICINA", "RADICADO"];
+export type EstadoPapeles = "EN_RUTA" | "DESCARGADO" | "CONDUCTOR" | "PARQUEADERO" | "OFICINA" | "RADICADO" | "RADICADOS";
+export const ESTADOS_PAPELES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDUCTOR", "PARQUEADERO", "OFICINA", "RADICADO", "RADICADOS"];
+/** Papeles listos para facturar: "listo para facturar" o, en CORAME, ya radicados. */
+export const papelesListos = (e: string) => e === "RADICADO" || e === "RADICADOS";
 /** Fuera del flujo de CORAME no hay parqueadero ni oficina: del conductor se pasa a radicado. */
 export const ESTADOS_PAPELES_OTROS_CLIENTES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDUCTOR", "RADICADO"];
 
@@ -88,7 +94,8 @@ export function datosAHeredar(anulada: FilaHeredable, nueva: FilaHeredable): Rec
 /** El flujo largo de papeles (parqueadero, Don Alexander) es solo de este cliente. */
 export const CLIENTE_FLUJO_LARGO = /CORAME|CARTONES\s+AMERICA/i;
 
-export type EstadoCuadro = "ANULADO" | "PAGADO" | "FACTURADO" | "FACTURADO_SIN_DATOS" | "RADICADO" | "SIN_RADICAR" | "EN_RUTA";
+export type EstadoCuadro =
+  | "ANULADO" | "PAGADO" | "FACTURADO" | "FACTURADO_SIN_DATOS" | "RADICADOS" | "RADICADO" | "SIN_RADICAR" | "EN_RUTA";
 
 export interface FilaCuadro {
   id: number;
@@ -194,6 +201,7 @@ export function estadoDe(f: Omit<FilaCuadro, "estado" | "todoPagado">): { estado
   if (f.facturaFechaPago) return { estado: "PAGADO", todoPagado };
   if (f.facturaNumero && f.facturaFecha) return { estado: "FACTURADO", todoPagado };
   if (f.facturado || f.facturaNumero || f.facturaFecha) return { estado: "FACTURADO_SIN_DATOS", todoPagado };
+  if (f.estadoPapeles === "RADICADOS") return { estado: "RADICADOS", todoPagado };
   if (f.estadoPapeles === "RADICADO") return { estado: "RADICADO", todoPagado };
   if (f.estadoPapeles !== "EN_RUTA") return { estado: "SIN_RADICAR", todoPagado };
   return { estado: "EN_RUTA", todoPagado };
@@ -458,25 +466,20 @@ export const cuadro = {
    */
   async listar(): Promise<FilaCuadro[]> {
     await this.sincronizarManifiestos();
+    // Las vueltas de anticipos de ida y vuelta pasan al proximo viaje de la placa.
+    await anticipos.asignarVueltasPendientes();
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} ORDER BY c.fecha DESC, c.id DESC`);
     return rows.map(mapear);
   },
 
   /**
-   * Un viaje con sus anticipos (con nombre de la bomba y quien los registro) y
-   * sus notas (con autor), la mas reciente primero. null si no existe.
+   * Un viaje con sus anticipos (cada tramo con efectivo, combustible y bomba;
+   * ver src/anticipos.ts) y sus notas (con autor), la mas reciente primero.
+   * null si no existe.
    */
   async obtener(id: number) {
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} WHERE c.id = ?`, [id]);
     if (!rows[0]) return null;
-    const [anticipos] = await pool.query<RowDataPacket[]>(
-      `SELECT a.id, a.bombaId, b.nombre AS bomba, b.ciudad, a.valor, a.fecha, a.fechaPago, a.nota,
-              u.nombre AS creadoPor, a.creadoEn
-         FROM cuadro_anticipos a JOIN bombas b ON b.id = a.bombaId
-         LEFT JOIN usuarios u ON u.id = a.creadoPorId
-        WHERE a.cuadroViajeId = ? ORDER BY a.fecha, a.id`,
-      [id]
-    );
     const [notas] = await pool.query<RowDataPacket[]>(
       `SELECT n.id, n.texto, n.creadaEn, u.nombre AS autor
          FROM cuadro_notas n LEFT JOIN usuarios u ON u.id = n.usuarioId
@@ -485,13 +488,7 @@ export const cuadro = {
     );
     return {
       ...mapear(rows[0]),
-      anticipos: anticipos.map((a) => ({
-        ...a,
-        valor: Number(a.valor),
-        fecha: dia(a.fecha),
-        fechaPago: dia(a.fechaPago),
-        creadoEn: new Date(a.creadoEn).toISOString(),
-      })),
+      anticipos: await anticipos.delViaje(id),
       listaNotas: notas.map((n) => ({ ...n, creadaEn: new Date(n.creadaEn).toISOString() })),
     };
   },
@@ -521,7 +518,7 @@ export const cuadro = {
   /**
    * Guarda solo los campos que vienen en 'datos' (validados).
    *
-   * Ademas: al pasar los papeles a RADICADO sin fecha, se pone la de hoy en
+   * Ademas: al pasar los papeles a RADICADO o RADICADOS sin fecha, se pone la de hoy en
    * Colombia; al devolverlos a otro estado, se borra. Si cambia la placa, se
    * vuelve a enlazar el vehiculo del catalogo.
    */
@@ -535,10 +532,10 @@ export const cuadro = {
       valores.push(valorCampo(campo, tipo, datos[campo]));
     }
     // Radicado sin fecha: hoy. Volver atras borra la fecha.
-    if (datos.estadoPapeles === "RADICADO" && !("fechaRadicado" in datos)) {
+    if (papelesListos(String(datos.estadoPapeles)) && !("fechaRadicado" in datos)) {
       sets.push("fechaRadicado = COALESCE(fechaRadicado, ?)");
       valores.push(hoyColombia());
-    } else if ("estadoPapeles" in datos && datos.estadoPapeles !== "RADICADO") {
+    } else if ("estadoPapeles" in datos && !papelesListos(String(datos.estadoPapeles))) {
       sets.push("fechaRadicado = NULL");
     }
     if ("placa" in datos) {
@@ -605,21 +602,12 @@ export const cuadro = {
   },
 
   /**
-   * Registra un anticipo entregado por una bomba aliada: bomba, valor, fecha,
-   * fecha de pago a la bomba (opcional) y nota. Bomba, valor y fecha son
-   * obligatorios.
+   * Registra un anticipo en el viaje: efectivo y combustible, bomba, fecha y,
+   * si es de ida y vuelta, el anticipo de vuelta (queda para el proximo viaje
+   * de la placa). Ver anticipos.registrar.
    */
   async agregarAnticipo(id: number, d: Record<string, unknown>, usuarioId: number | null) {
-    const valor = valorCampo("valor", "numero", d.valor);
-    const fecha = valorCampo("fecha", "fecha", d.fecha);
-    if (!d.bombaId) throw new ErrorCuadro("Elige la bomba que entrego el anticipo.");
-    if (!valor) throw new ErrorCuadro("Escribe el valor del anticipo.");
-    if (!fecha) throw new ErrorCuadro("Escribe la fecha del anticipo.");
-    await pool.query(
-      `INSERT INTO cuadro_anticipos (cuadroViajeId, bombaId, valor, fecha, fechaPago, nota, creadoPorId)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, Number(d.bombaId), valor, fecha, valorCampo("fechaPago", "fecha", d.fechaPago), valorCampo("nota", "texto", d.nota), usuarioId]
-    );
+    await anticipos.registrar(id, d, usuarioId);
   },
 
   /** Solo la fecha de pago a la bomba y la nota se editan; lo demas se borra y se vuelve a crear. */
@@ -642,9 +630,13 @@ export const cuadro = {
     ]);
   },
 
-  /** Quita un anticipo de ese viaje. */
+  /** Quita un anticipo de ese viaje (y la vuelta pendiente si era la ida; ver anticipos.borrarTramo). */
   async borrarAnticipo(id: number, anticipoId: number) {
-    await pool.query("DELETE FROM cuadro_anticipos WHERE id = ? AND cuadroViajeId = ?", [anticipoId, id]);
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT 1 FROM cuadro_anticipos WHERE id = ? AND cuadroViajeId = ?", [
+      anticipoId,
+      id,
+    ]);
+    if (rows[0]) await anticipos.borrarTramo(anticipoId);
   },
 };
 

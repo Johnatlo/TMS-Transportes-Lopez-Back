@@ -369,8 +369,8 @@ export async function initSchema(): Promise<void> {
       tarifaKilo DOUBLE,
       valorFijo DOUBLE,
       fechaDescargue DATE,
-      -- EN_RUTA, DESCARGADO, CONDUCTOR, PARQUEADERO, OFICINA, RADICADO. Parqueadero y
-      -- oficina (Don Alexander) solo en el flujo de CORAME / Cartones America.
+      -- EN_RUTA, DESCARGADO, CONDUCTOR, PARQUEADERO, OFICINA, RADICADO, RADICADOS. Parqueadero,
+      -- oficina (Don Alexander) y RADICADOS solo en el flujo de CORAME / Cartones America.
       estadoPapeles VARCHAR(15) NOT NULL DEFAULT 'EN_RUTA',
       flujoCorame TINYINT(1) NOT NULL DEFAULT 0,
       fechaRadicado DATE,
@@ -409,6 +409,48 @@ export async function initSchema(): Promise<void> {
       INDEX idx_anticipo_viaje (cuadroViajeId),
       CONSTRAINT fk_anticipo_viaje FOREIGN KEY (cuadroViajeId) REFERENCES cuadro_viajes(id) ON DELETE CASCADE,
       CONSTRAINT fk_anticipo_bomba FOREIGN KEY (bombaId) REFERENCES bombas(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Tanqueos: un anticipo entregado en una bomba (EDS) de una vez, que puede
+  // cubrir el viaje de ida y el de vuelta. Es lo que se corrobora con la
+  // factura de la bomba. Cada tramo (ida o vuelta) va en cuadro_anticipos.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS anticipos_tanqueo (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      placa VARCHAR(15) NOT NULL,
+      fecha DATE NOT NULL,
+      bombaId INT,
+      idaYVuelta TINYINT(1) NOT NULL DEFAULT 0,
+      facturaBomba VARCHAR(40),
+      fechaFacturaBomba DATE,
+      nota VARCHAR(200),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_tanqueo_placa (placa),
+      CONSTRAINT fk_tanqueo_bomba FOREIGN KEY (bombaId) REFERENCES bombas(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Abonos de un socio (el Zorro) que le paga directamente a la bomba los
+  // anticipos de algunos viajes: cuanto, cuando y a que viajes corresponde.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS abonos_socio (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      socio VARCHAR(100) NOT NULL,
+      fecha DATE NOT NULL,
+      valor DOUBLE NOT NULL,
+      nota VARCHAR(200),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS abonos_socio_viajes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      abonoId INT NOT NULL,
+      cuadroViajeId INT NOT NULL,
+      valor DOUBLE NOT NULL,
+      INDEX idx_abono_viaje (cuadroViajeId),
+      CONSTRAINT fk_abono_socio FOREIGN KEY (abonoId) REFERENCES abonos_socio(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   // Notas del viaje con autor y fecha (como los comentarios del Excel).
@@ -770,6 +812,26 @@ export async function initSchema(): Promise<void> {
     // Envio a facturacion (cuadro para la contadora, ver src/facturacion.ts):
     // tarifa de la matriz usada, peso que se factura (puede ser el minimo
     // pactado), nota de la factura y cuando se envio.
+    // Anticipos por tramo (ver src/anticipos.ts): efectivo y combustible por
+    // separado, de que tanqueo salen, si es la ida o la vuelta y la placa (la
+    // vuelta queda sin viaje hasta el proximo viaje de esa placa).
+    ["cuadro_anticipos", "tanqueoId", "INT"],
+    ["cuadro_anticipos", "tramo", "VARCHAR(6) NOT NULL DEFAULT 'IDA'"],
+    ["cuadro_anticipos", "efectivo", "DOUBLE"],
+    ["cuadro_anticipos", "combustible", "DOUBLE"],
+    ["cuadro_anticipos", "placa", "VARCHAR(15)"],
+    // Cruce con la relacion de la bomba (como la columna COMBUST. del Excel):
+    // combustible = round(galones x precio por galon - descuento en pesos).
+    // Precio y descuento se sugieren desde los parametros y se pueden cambiar.
+    // combustibleEntregado guarda lo que se habia registrado antes del cruce.
+    ["cuadro_anticipos", "galones", "DOUBLE"],
+    ["cuadro_anticipos", "precioGalon", "DOUBLE"],
+    ["cuadro_anticipos", "descuento", "DOUBLE"],
+    ["cuadro_anticipos", "combustibleEntregado", "DOUBLE"],
+    // Bomba: cupo de credito con la empresa y valores sugeridos para el cruce.
+    ["parametros_empresa", "cupoBomba", "DOUBLE NOT NULL DEFAULT 500000000"],
+    ["parametros_empresa", "precioGalonBomba", "DOUBLE NOT NULL DEFAULT 11390"],
+    ["parametros_empresa", "descuentoGalonBomba", "DOUBLE NOT NULL DEFAULT 250"],
     ["cuadro_viajes", "tarifaFleteId", "INT"],
     ["cuadro_viajes", "pesoFacturadoKg", "DOUBLE"],
     ["cuadro_viajes", "notaFactura", "VARCHAR(300)"],
@@ -819,6 +881,14 @@ export async function initSchema(): Promise<void> {
       await pool.query(`ALTER TABLE \`${tabla}\` ADD COLUMN \`${columna}\` ${definicion}`);
     }
   }
+
+  // La vuelta de un anticipo de ida y vuelta no tiene viaje todavia, y un
+  // anticipo solo en efectivo no tiene bomba.
+  await pool.query("ALTER TABLE cuadro_anticipos MODIFY cuadroViajeId INT NULL, MODIFY bombaId INT NULL").catch(() => undefined);
+  // Los anticipos de antes eran solo de bomba (combustible): se marcan asi.
+  await pool.query(
+    "UPDATE cuadro_anticipos SET combustible = valor, efectivo = 0 WHERE combustible IS NULL AND efectivo IS NULL"
+  );
 
   // Correccion unica al crear facturaVence: lo que se lleno en "fecha pago
   // cliente" (facturaFechaPago) era el vencimiento de la factura, no el pago.

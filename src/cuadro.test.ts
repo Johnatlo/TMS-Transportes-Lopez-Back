@@ -76,6 +76,11 @@ describe("estado del viaje en el cuadro (los colores del Excel)", () => {
     expect(estadoDe(viaje({ estadoPapeles: "RADICADO" })).estado).toBe("RADICADO");
   });
 
+  test("CORAME: radicados es el ultimo paso de los papeles; la factura sigue mandando", () => {
+    expect(estadoDe(viaje({ estadoPapeles: "RADICADOS" })).estado).toBe("RADICADOS");
+    expect(estadoDe(viaje({ estadoPapeles: "RADICADOS", facturaNumero: "TL 1", facturaFecha: "2026-10-14" })).estado).toBe("FACTURADO");
+  });
+
   test("facturado sin numero ni fecha (azul)", () => {
     expect(estadoDe(viaje({ estadoPapeles: "RADICADO", facturado: true })).estado).toBe("FACTURADO_SIN_DATOS");
   });

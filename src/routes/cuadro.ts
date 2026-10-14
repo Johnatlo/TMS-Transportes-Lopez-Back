@@ -1,6 +1,7 @@
 import { Router, type Response } from "express";
 import { bombas, cuadro, ErrorCuadro } from "../cuadro";
 import { facturacion } from "../facturacion";
+import { anticipos } from "../anticipos";
 
 /**
  * Cuadro pagos de viajes (ver src/cuadro.ts). Montado en /api/cuadro con
@@ -36,6 +37,54 @@ cuadroRouter.put("/bombas/:bombaId", async (req, res) => {
   await responder(res, async () => {
     await bombas.actualizar(Number(req.params.bombaId), req.body ?? {});
     return bombas.listar();
+  });
+});
+
+// ---------- Cuadro de anticipos (ver src/anticipos.ts) ----------
+/** GET /api/cuadro/anticipos: todos los tramos de anticipo (ida y vuelta), lo mas reciente primero. */
+cuadroRouter.get("/anticipos", async (_req, res) => {
+  res.json(await anticipos.cuadro());
+});
+/** GET /api/cuadro/anticipos/resumen: deuda, pagado, abonado por el socio, pendiente y cupo con la bomba. */
+cuadroRouter.get("/anticipos/resumen", async (_req, res) => {
+  res.json(await anticipos.resumen());
+});
+/**
+ * PUT /api/cuadro/anticipos/parametros: cupo de credito con la bomba y precio
+ * y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }).
+ * Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id.
+ */
+cuadroRouter.put("/anticipos/parametros", async (req, res) => {
+  await responder(res, () => anticipos.guardarParametrosBomba(req.body ?? {}));
+});
+/** GET /api/cuadro/abonos-socio: abonos del socio a la bomba, con sus viajes. */
+cuadroRouter.get("/abonos-socio", async (_req, res) => {
+  res.json(await anticipos.abonos());
+});
+/** POST /api/cuadro/abonos-socio: registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }). */
+cuadroRouter.post("/abonos-socio", async (req, res) => {
+  await responder(res, async () => {
+    await anticipos.registrarAbono(req.body ?? {}, req.usuario?.id ?? null);
+    return anticipos.abonos();
+  });
+});
+/** DELETE /api/cuadro/abonos-socio/:abonoId: borra un abono. */
+cuadroRouter.delete("/abonos-socio/:abonoId", async (req, res) => {
+  await anticipos.borrarAbono(Number(req.params.abonoId));
+  res.json(await anticipos.abonos());
+});
+/** PUT /api/cuadro/anticipos/:anticipoId: fecha de pago, nota, viaje o datos del cruce (galones, precio y descuento: recalcula el combustible) de un tramo. */
+cuadroRouter.put("/anticipos/:anticipoId", async (req, res) => {
+  await responder(res, async () => {
+    await anticipos.actualizarTramo(Number(req.params.anticipoId), req.body ?? {});
+    return anticipos.cuadro();
+  });
+});
+/** PUT /api/cuadro/tanqueos/:tanqueoId: factura de la bomba (numero, fecha) o la bomba del tanqueo. */
+cuadroRouter.put("/tanqueos/:tanqueoId", async (req, res) => {
+  await responder(res, async () => {
+    await anticipos.actualizarTanqueo(Number(req.params.tanqueoId), req.body ?? {});
+    return anticipos.cuadro();
   });
 });
 
