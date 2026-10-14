@@ -53,6 +53,10 @@ function viaje(cambios: Partial<Base> = {}): Base {
     papelesFaltan: null,
     papelesRevisadoEn: null,
     papelesRevisadoPor: null,
+    pesoFacturadoKg: null,
+    tarifaFleteId: null,
+    notaFactura: null,
+    enviadoFacturarEn: null,
     ...cambios,
   };
 }

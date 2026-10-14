@@ -424,6 +424,11 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/cuadro/bombas` | Catalogo de bombas aliadas. |
 | `POST` | `/api/cuadro/bombas` | Crea una bomba ({ nombre, ciudad }). Devuelve su id. |
 | `PUT` | `/api/cuadro/bombas/:bombaId` | Cambia nombre, ciudad o activa; devuelve la lista. |
+| `GET` | `/api/cuadro/tarifas` | La matriz de fletes. |
+| `PUT` | `/api/cuadro/tarifas` | Reemplaza la matriz completa con la importada del Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }). |
+| `PUT` | `/api/cuadro/tarifas/:tarifaId` | Cambia una tarifa y la devuelve (404 si no existe). |
+| `GET` | `/api/cuadro/por-facturar` | Viajes listos para facturar (y los ya enviados sin fecha de factura). |
+| `POST` | `/api/cuadro/enviar-facturacion` | Guarda en cada viaje lo que va en el cuadro de la contadora ({ filas: [{ id, tarifaFleteId, tipo, valorTon, pesoFacturadoKg, total, remision, notaFactura, facturaNumero }] }). |
 | `POST` | `/api/cuadro/facturar` | Asigna una misma factura a varios viajes. |
 | `GET` | `/api/cuadro/:id` | Un viaje con sus anticipos y notas (404 si no existe). |
 | `POST` | `/api/cuadro` | Crea un viaje sin manifiesto (urbano o planillado por el cliente). Placa, empresa y fecha obligatorias. Devuelve el viaje creado. |
@@ -485,7 +490,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_511 funciones, componentes, métodos y rutas en 36 archivos._
+_526 funciones, componentes, métodos y rutas en 37 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/auth.ts`](#srcauthts) (35)
@@ -495,6 +500,7 @@ _511 funciones, componentes, métodos y rutas en 36 archivos._
 - [`src/correo.ts`](#srccorreots) (9)
 - [`src/cuadro.ts`](#srccuadrots) (29)
 - [`src/db.ts`](#srcdbts) (2)
+- [`src/facturacion.ts`](#srcfacturacionts) (10)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/repo.ts`](#srcrepots) (94)
@@ -509,7 +515,7 @@ _511 funciones, componentes, métodos y rutas en 36 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (23)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (16)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (21)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (9)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -1028,6 +1034,58 @@ _511 funciones, componentes, métodos y rutas en 36 archivos._
   3. Indices y ajustes de datos idempotentes (se pueden correr en cada
      arranque sin pisar lo que ya esta).
   Asi un despliegue nuevo actualiza la base solo, sin migraciones manuales.
+
+### `src/facturacion.ts`
+
+> Envio a facturacion: el cuadro que se le manda a la contadora (que factura
+> en World Office) con los viajes listos para facturar, y la matriz de fletes
+> de la que salen los valores sugeridos.
+>
+> - La matriz se importa desde el Excel "MATRIZ FLETES" (el frontend lo lee y
+>   manda las filas); no vive en el repositorio porque son precios reales.
+> - Lo que la matriz sugiere (valor, peso minimo) se puede cambiar en cada
+>   viaje: hay valores negociados aparte. Al enviar, lo editado queda en el
+>   viaje del cuadro pagos (flete, peso facturado, nota, remision, factura).
+
+- **`texto(v, max)`** · _función_
+  Texto recortado; vacio -> null.
+
+- **`numero(v)`** · _función_
+  Numero positivo; vacio o invalido -> null.
+
+- **`normalizarTarifa(t)`** · _función_
+  Valida y normaliza una tarifa recibida (de la importacion o de una edicion).
+
+- **`mapearTarifa(r)`** · _función_
+  Fila de tarifas_flete -> TarifaFlete.
+
+- **`facturacion`** · _módulo_
+  Matriz de fletes y envio a facturacion: lectura y escritura en la base.
+
+  - **`facturacion.tarifas()`** · _método_
+    La matriz de fletes, por nombre.
+
+  - **`facturacion.reemplazarTarifas(lista)`** · _método_
+    Reemplaza la matriz completa por la importada (en una transaccion: si algo
+    falla queda la anterior). Los viajes que apuntaban a tarifas viejas
+    conservan su valor; solo pierden el enlace a la tarifa.
+
+  - **`facturacion.actualizarTarifa(id, datos)`** · _método_
+    Cambia una tarifa (valor, tipo, peso minimo, observaciones...) y la devuelve.
+
+  - **`facturacion.porFacturar()`** · _método_
+    Viajes listos para facturar (papeles radicados, sin factura con fecha), y
+    los ya enviados a la contadora que aun no tienen fecha de factura (para
+    poder volver a generar el cuadro). Con el radicado de la remesa y la
+    ultima tarifa usada con cada cliente (para sugerirla).
+
+  - **`facturacion.guardarEnvio(filas)`** · _método_
+    Guarda en cada viaje lo que se envia a facturar y marca la fecha de envio.
+
+    Por viaje: tarifa de la matriz, tipo (TON: valor por tonelada y peso
+    facturado; FIJO: el total), remision, nota de la factura y consecutivo de
+    factura (manual: hay varias empresas). El flete del cuadro pagos queda con
+    estos valores. Todo en una transaccion.
 
 ### `src/fechas.ts`
 
@@ -2547,6 +2605,24 @@ _511 funciones, componentes, métodos y rutas en 36 archivos._
 
 - **`PUT /bombas/:bombaId`** · _ruta HTTP_
   PUT /api/cuadro/bombas/:bombaId: cambia nombre, ciudad o activa; devuelve la lista.
+
+- **`GET /tarifas`** · _ruta HTTP_
+  GET /api/cuadro/tarifas: la matriz de fletes.
+
+- **`PUT /tarifas`** · _ruta HTTP_
+  PUT /api/cuadro/tarifas: reemplaza la matriz completa con la importada del
+  Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }).
+
+- **`PUT /tarifas/:tarifaId`** · _ruta HTTP_
+  PUT /api/cuadro/tarifas/:tarifaId: cambia una tarifa y la devuelve (404 si no existe).
+
+- **`GET /por-facturar`** · _ruta HTTP_
+  GET /api/cuadro/por-facturar: viajes listos para facturar (y los ya enviados sin fecha de factura).
+
+- **`POST /enviar-facturacion`** · _ruta HTTP_
+  POST /api/cuadro/enviar-facturacion: guarda en cada viaje lo que va en el
+  cuadro de la contadora ({ filas: [{ id, tarifaFleteId, tipo, valorTon,
+  pesoFacturadoKg, total, remision, notaFactura, facturaNumero }] }).
 
 - **`POST /facturar`** · _ruta HTTP_
   Asigna una misma factura a varios viajes.

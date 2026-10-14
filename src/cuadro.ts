@@ -50,6 +50,7 @@ export type FilaHeredable = Record<string, unknown> & {
 /** Campos que se copian del anulado si en la fila nueva estan vacios. */
 const CAMPOS_HEREDABLES = [
   "remision", "fechaRadicado", "facturaNumero", "facturaFecha", "facturaVence",
+  "tarifaFleteId", "pesoFacturadoKg", "notaFactura", "enviadoFacturarEn",
   "facturaFechaPago", "fechaPagoSaldo", "revisadoContabilidadPorId", "revisadoContabilidadEn",
   "revisadoGerenciaPorId", "revisadoGerenciaEn",
 ] as const;
@@ -106,8 +107,16 @@ export interface FilaCuadro {
   tipoFlete: "KILO" | "FIJO";
   tarifaKilo: number | null;
   valorFijo: number | null;
-  /** KILO: kilos x tarifa. FIJO: el valor fijo. */
+  /** KILO: kilos (los facturados si los hay) x tarifa. FIJO: el valor fijo. */
   valorFlete: number | null;
+  /** Peso que se factura: el real o el minimo pactado con el cliente (34000, 32000...). */
+  pesoFacturadoKg: number | null;
+  /** Tarifa de la matriz de fletes con que se facturo. */
+  tarifaFleteId: number | null;
+  /** Nota de la factura para la contadora (remision, toneladas, valor, placa). */
+  notaFactura: string | null;
+  /** Cuando se envio en el cuadro de facturacion. */
+  enviadoFacturarEn: string | null;
   fechaDescargue: string | null;
   estadoPapeles: EstadoPapeles;
   flujoCorame: boolean;
@@ -234,9 +243,13 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     valorFlete:
       r.tipoFlete === "FIJO"
         ? num(r.valorFijo)
-        : r.pesoKg !== null && r.tarifaKilo !== null
-          ? Math.round(Number(r.pesoKg) * Number(r.tarifaKilo))
+        : (r.pesoFacturadoKg ?? r.pesoKg) !== null && r.tarifaKilo !== null
+          ? Math.round(Number(r.pesoFacturadoKg ?? r.pesoKg) * Number(r.tarifaKilo))
           : null,
+    pesoFacturadoKg: num(r.pesoFacturadoKg),
+    tarifaFleteId: r.tarifaFleteId ?? null,
+    notaFactura: r.notaFactura ?? null,
+    enviadoFacturarEn: r.enviadoFacturarEn ? new Date(r.enviadoFacturarEn).toISOString() : null,
     fechaDescargue: dia(r.fechaDescargue),
     estadoPapeles: r.estadoPapeles as EstadoPapeles,
     flujoCorame: !!r.flujoCorame,
@@ -276,6 +289,8 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   manifiesto: "texto",
   remision: "texto",
   pesoKg: "numero",
+  pesoFacturadoKg: "numero",
+  notaFactura: "texto",
   tipoFlete: "texto",
   tarifaKilo: "numero",
   valorFijo: "numero",

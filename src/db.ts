@@ -424,6 +424,23 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Matriz de fletes por cliente (se importa desde el Excel "MATRIZ FLETES"):
+  // nombre de la tarifa (cliente y ruta), razon social, valor, tipo (TON por
+  // tonelada, FIJO por viaje, POR / POR3 con clientes adicionales), peso minimo
+  // a facturar (34000 o 32000 kg segun el trato) y observaciones.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tarifas_flete (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nombre VARCHAR(200) NOT NULL,
+      razonSocial VARCHAR(200),
+      valor DOUBLE,
+      tipo VARCHAR(10) NOT NULL DEFAULT 'TON',
+      pesoMinimoKg INT,
+      observaciones VARCHAR(500),
+      INDEX idx_tarifa_razon (razonSocial)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Cartera: plazo de pago y contacto de cobro de cada cliente del cuadro
   // (la llave es el nombre de la empresa, como en cuadro_viajes.empresa).
   await pool.query(`
@@ -750,6 +767,13 @@ export async function initSchema(): Promise<void> {
     // del cargue (ver GET /api/catalogo/vehiculos/:id/gps). La clave va
     // cifrada (src/cifrado.ts); la URL del vehiculo, si esta, manda sobre la
     // de su empresa de monitoreo.
+    // Envio a facturacion (cuadro para la contadora, ver src/facturacion.ts):
+    // tarifa de la matriz usada, peso que se factura (puede ser el minimo
+    // pactado), nota de la factura y cuando se envio.
+    ["cuadro_viajes", "tarifaFleteId", "INT"],
+    ["cuadro_viajes", "pesoFacturadoKg", "DOUBLE"],
+    ["cuadro_viajes", "notaFactura", "VARCHAR(300)"],
+    ["cuadro_viajes", "enviadoFacturarEn", "DATETIME"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],
     ["vehiculos", "gpsUsuario", "VARCHAR(100)"],
     ["vehiculos", "gpsClaveCifrada", "TEXT"],

@@ -1,5 +1,6 @@
 import { Router, type Response } from "express";
 import { bombas, cuadro, ErrorCuadro } from "../cuadro";
+import { facturacion } from "../facturacion";
 
 /**
  * Cuadro pagos de viajes (ver src/cuadro.ts). Montado en /api/cuadro con
@@ -36,6 +37,39 @@ cuadroRouter.put("/bombas/:bombaId", async (req, res) => {
     await bombas.actualizar(Number(req.params.bombaId), req.body ?? {});
     return bombas.listar();
   });
+});
+
+// ---------- Envio a facturacion y matriz de fletes (ver src/facturacion.ts) ----------
+/** GET /api/cuadro/tarifas: la matriz de fletes. */
+cuadroRouter.get("/tarifas", async (_req, res) => {
+  res.json(await facturacion.tarifas());
+});
+/**
+ * PUT /api/cuadro/tarifas: reemplaza la matriz completa con la importada del
+ * Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }).
+ */
+cuadroRouter.put("/tarifas", async (req, res) => {
+  await responder(res, async () => ({ importadas: await facturacion.reemplazarTarifas(req.body?.tarifas) }));
+});
+/** PUT /api/cuadro/tarifas/:tarifaId: cambia una tarifa y la devuelve (404 si no existe). */
+cuadroRouter.put("/tarifas/:tarifaId", async (req, res) => {
+  await responder(res, async () => {
+    const t = await facturacion.actualizarTarifa(Number(req.params.tarifaId), req.body ?? {});
+    if (!t) throw new ErrorCuadro("Tarifa no encontrada.");
+    return t;
+  });
+});
+/** GET /api/cuadro/por-facturar: viajes listos para facturar (y los ya enviados sin fecha de factura). */
+cuadroRouter.get("/por-facturar", async (_req, res) => {
+  res.json(await facturacion.porFacturar());
+});
+/**
+ * POST /api/cuadro/enviar-facturacion: guarda en cada viaje lo que va en el
+ * cuadro de la contadora ({ filas: [{ id, tarifaFleteId, tipo, valorTon,
+ * pesoFacturadoKg, total, remision, notaFactura, facturaNumero }] }).
+ */
+cuadroRouter.post("/enviar-facturacion", async (req, res) => {
+  await responder(res, async () => ({ guardados: await facturacion.guardarEnvio(req.body?.filas) }));
 });
 
 /** Asigna una misma factura a varios viajes. */

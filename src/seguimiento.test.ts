@@ -62,6 +62,10 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     papelesFaltan: null,
     papelesRevisadoEn: null,
     papelesRevisadoPor: null,
+    pesoFacturadoKg: null,
+    tarifaFleteId: null,
+    notaFactura: null,
+    enviadoFacturarEn: null,
     ...cambios,
   };
   return { ...base, ...estadoDe(base) };
