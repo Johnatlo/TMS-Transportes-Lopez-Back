@@ -15,6 +15,7 @@ import { CredencialesRndc } from "../rndc/builders";
 import { consultarPlaca, probarAcceso } from "../rndc/consultas";
 import { vehiculos } from "../repo";
 import { CONFIGURACIONES_SICETAC } from "../rndc/sicetac";
+import { credencialesRndc } from "../rndc/conexion";
 
 const LINEA = "-".repeat(72);
 
@@ -70,11 +71,7 @@ async function main() {
   }
   ok(`Usuario ${config.rndc.usuario}, NIT ${config.rndc.empresaNit}`);
 
-  const credenciales: CredencialesRndc = {
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    nitEmpresa: config.rndc.empresaNit,
-  };
+  const credenciales: CredencialesRndc = credencialesRndc();
   const cliente = new RndcClient({
     wsdlUrl: config.rndc.wsdlUrl,
     usuario: config.rndc.usuario,

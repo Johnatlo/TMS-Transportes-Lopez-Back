@@ -36,6 +36,7 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     tipoFlete: "KILO" as const,
     tarifaKilo: 100,
     valorFijo: null,
+    fleteAdicional: null,
     valorFlete: 3_400_000,
     fechaDescargue: "2026-10-09",
     estadoPapeles: "CONDUCTOR" as const,

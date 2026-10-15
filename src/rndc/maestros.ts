@@ -33,13 +33,9 @@
  * en el RNDC): por eso el registro es una accion explicita del usuario.
  */
 import type { RowDataPacket } from "mysql2";
-import { config } from "../config";
 import { pool } from "../db";
-import { construirXmlMensaje } from "./builders";
-import { RndcClient } from "./client";
-
-export const PROCESO_TERCERO = "11";
-export const PROCESO_VEHICULO = "12";
+import { construirXmlMensaje, PROCESO_ID_TERCERO, PROCESO_ID_VEHICULO } from "./builders";
+import { clienteRegistro, credencialesRndc } from "./conexion";
 
 export type Maestro = "terceros" | "conductores" | "vehiculos" | "remolques";
 export const MAESTROS: Maestro[] = ["terceros", "conductores", "vehiculos", "remolques"];
@@ -190,21 +186,15 @@ export async function registrarMaestro(maestro: Maestro, id: number): Promise<Re
 
   const [proceso, variables] =
     maestro === "terceros"
-      ? [PROCESO_TERCERO, variablesTercero(fila as unknown as FilaTercero)]
+      ? [PROCESO_ID_TERCERO, variablesTercero(fila as unknown as FilaTercero)]
       : maestro === "conductores"
-        ? [PROCESO_TERCERO, variablesConductor(fila as unknown as FilaConductor)]
+        ? [PROCESO_ID_TERCERO, variablesConductor(fila as unknown as FilaConductor)]
         : maestro === "vehiculos"
-          ? [PROCESO_VEHICULO, variablesVehiculo(fila as unknown as FilaVehiculo)]
-          : [PROCESO_VEHICULO, variablesRemolque(fila as unknown as { placa: string })];
+          ? [PROCESO_ID_VEHICULO, variablesVehiculo(fila as unknown as FilaVehiculo)]
+          : [PROCESO_ID_VEHICULO, variablesRemolque(fila as unknown as { placa: string })];
 
-  const credenciales = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
-  const cliente = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: config.rndc.simular,
-    reintentos: config.rndc.reintentos,
-  });
+  const credenciales = credencialesRndc();
+  const cliente = clienteRegistro();
   const avisos: string[] = [];
   if (maestro === "terceros" && texto(fila.telefono) && !variables.NUMTELEFONOCONTACTO) {
     avisos.push(

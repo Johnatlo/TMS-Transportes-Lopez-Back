@@ -9,8 +9,11 @@ import { anticipos } from "../anticipos";
  */
 export const cuadroRouter = Router();
 
-/** Errores de validacion como 422 con su mensaje; lo demas sigue al manejador general. */
-async function responder(res: Response, fn: () => Promise<unknown>) {
+/**
+ * Errores de validacion (ErrorCuadro) como 422 con su mensaje; lo demas sigue
+ * al manejador general. Tambien lo usan las rutas de seguimiento.
+ */
+export async function responder(res: Response, fn: () => Promise<unknown>) {
   try {
     res.json(await fn());
   } catch (exc) {

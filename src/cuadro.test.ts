@@ -27,6 +27,7 @@ function viaje(cambios: Partial<Base> = {}): Base {
     tipoFlete: "KILO",
     tarifaKilo: null,
     valorFijo: null,
+    fleteAdicional: null,
     valorFlete: null,
     fechaDescargue: "2026-10-06",
     estadoPapeles: "EN_RUTA",
@@ -149,5 +150,10 @@ describe("manifiesto anulado y vuelto a expedir: que hereda la fila nueva", () =
 
   test("una anulada sin nada diligenciado no cambia nada", () => {
     expect(datosAHeredar({ ...nueva }, nueva)).toEqual({});
+  });
+
+  test("el adicional por clientes (POR / POR3) pasa junto con la tarifa", () => {
+    const anulada = { tipoFlete: "KILO", tarifaKilo: 195, valorFijo: null, fleteAdicional: 300_000 };
+    expect(datosAHeredar(anulada, nueva)).toEqual({ tipoFlete: "KILO", tarifaKilo: 195, fleteAdicional: 300_000 });
   });
 });

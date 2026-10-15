@@ -837,6 +837,11 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "pesoFacturadoKg", "DOUBLE"],
     ["cuadro_viajes", "notaFactura", "VARCHAR(300)"],
     ["cuadro_viajes", "enviadoFacturarEn", "DATETIME"],
+    // Flete por tonelada con 2 o 3 clientes (tarifas POR / POR3): se suma al
+    // peso x tarifa (300.000 por cada cliente adicional).
+    ["cuadro_viajes", "fleteAdicional", "DOUBLE"],
+    // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
+    ["tarifas_flete", "pesoFijoKg", "INT"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],
     ["vehiculos", "gpsUsuario", "VARCHAR(100)"],
     ["vehiculos", "gpsClaveCifrada", "TEXT"],

@@ -11,8 +11,8 @@
  * y llevan un bloque <documento> con los filtros.
  */
 
-import { RndcClient, leerEtiqueta, leerEtiquetas } from "./client";
-import { CredencialesRndc } from "./builders";
+import { RndcClient, leerEtiqueta } from "./client";
+import { CredencialesRndc, escapeTexto, escapeXml } from "./builders";
 
 export const TIPO_SOLICITUD_CONSULTA = "6";
 
@@ -23,26 +23,6 @@ export const TIPO_SOLICITUD_CONSULTA = "6";
  * Transporte, febrero 2020) -> docs/Manual WebServicePlaca.pdf.
  */
 export const PROCESO_ID_RNA_PLACA = "48";
-
-/** Escapa los caracteres especiales del XML (&, <, >, comillas). */
-function escapeXml(valor: string): string {
-  return valor
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-/**
- * Texto de un elemento XML: solo hay que escapar &, < y >. Las comillas se
- * dejan tal cual porque los filtros de las consultas van entre comillas
- * sencillas ('TDM735') y el RNDC no esta documentado como decodificador de
- * &apos;.
- */
-function escapeTexto(valor: string): string {
-  return valor.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 /**
  * Arma el XML de una consulta (tipo 6).
@@ -221,11 +201,6 @@ export async function probarAcceso(
       : `Acceso correcto (el RNDC respondio, aunque con otro error: ${resultado.errorCrudo}).`,
     xmlRespuesta: resultado.xmlRespuesta,
   };
-}
-
-/** Lista cruda de valores de una etiqueta, para explorar respuestas nuevas. */
-export function valoresDe(xml: string, etiqueta: string): string[] {
-  return leerEtiquetas(xml, etiqueta);
 }
 
 // ---------------------------------------------------------------------------

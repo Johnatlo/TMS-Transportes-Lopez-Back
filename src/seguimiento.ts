@@ -31,8 +31,6 @@ import type { EstadoPapeles, FilaCuadro } from "./cuadro";
 export const DIAS_CREDITO_DEFECTO = 30;
 /** Dias despues del descargue en que unos papeles sin radicar ya son urgentes. */
 export const DIAS_PAPELES_DEMORADOS = 5;
-/** Dias antes del vencimiento en que una factura se muestra como "por vencer pronto". */
-export const DIAS_AVISO_VENCIMIENTO = 5;
 /**
  * Los viajes cargados antes de esta fecha no generan alertas de papeles ni de
  * facturacion: se manejaron en el Excel y nunca se actualizaron en el TMS

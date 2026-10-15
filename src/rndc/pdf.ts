@@ -43,26 +43,13 @@ export interface ResultadoPdf {
   nombreArchivo: string;
 }
 
-/** procesoid del PDF segun el documento [GUIA V7 seccion 9]. */
-export const PROCESO_PDF_MANIFIESTO = "4";
-
 /**
- * procesoid que se intenta para el PDF de la remesa.
- *
- * VERIFICADO QUE NO FUNCIONA (2026-09-26): el RNDC responde "RNDC12: El
- * procesoid 3 no es correcto para generar el PDF". Ya no se usa desde las
- * rutas; se conserva por si el Ministerio lo habilita a futuro.
- *
- * Nota original: NO esta documentado. La guia solo describe el 4 (manifiesto), pero
- * define el tipo 21 como "consultar el pdf de un proceso" en general y avisa
- * que "en el futuro pueden aparecer otros tipos de pdf". El 3 es el proceso de
- * remesa en el resto del webservice, asi que es la hipotesis razonable.
- *
- * Si el RNDC no lo soporta, el llamador debe caer a la representacion propia:
- * el Manual de Operacion General autoriza a la empresa de transporte a generar
- * su propio PDF con los datos de la remesa radicada.
+ * procesoid del PDF segun el documento [GUIA V7 seccion 9]. Solo existe para
+ * el manifiesto: el de la remesa (procesoid 3) se probo el 2026-09-26 y el
+ * RNDC responde "RNDC12: El procesoid 3 no es correcto para generar el PDF";
+ * la remesa se imprime con la representacion propia (remesa-impresion.ts).
  */
-export const PROCESO_PDF_REMESA = "3";
+export const PROCESO_PDF_MANIFIESTO = "4";
 
 /**
  * Pide el PDF de un manifiesto ya radicado.
@@ -79,23 +66,6 @@ export async function descargarPdfManifiesto(
     PROCESO_PDF_MANIFIESTO,
     radicado,
     `manifiesto-${consecutivoParaNombre || radicado}.pdf`
-  );
-}
-
-/**
- * Pide el PDF de una remesa radicada. Puede fallar si el RNDC no expone ese
- * proceso; el llamador decide si cae a la representacion propia.
- */
-export async function descargarPdfRemesa(
-  config: ConfigPdf,
-  radicado: string,
-  consecutivoParaNombre?: string
-): Promise<ResultadoPdf> {
-  return descargarPdfProceso(
-    config,
-    PROCESO_PDF_REMESA,
-    radicado,
-    `remesa-${consecutivoParaNombre || radicado}.pdf`
   );
 }
 

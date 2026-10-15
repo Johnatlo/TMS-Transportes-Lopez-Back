@@ -29,11 +29,8 @@ export type EstadoPapeles = "EN_RUTA" | "DESCARGADO" | "CONDUCTOR" | "PARQUEADER
 export const ESTADOS_PAPELES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDUCTOR", "PARQUEADERO", "OFICINA", "RADICADO", "RADICADOS"];
 /** Papeles listos para facturar: "listo para facturar" o, en CORAME, ya radicados. */
 export const papelesListos = (e: string) => e === "RADICADO" || e === "RADICADOS";
-/** Fuera del flujo de CORAME no hay parqueadero ni oficina: del conductor se pasa a radicado. */
-export const ESTADOS_PAPELES_OTROS_CLIENTES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDUCTOR", "RADICADO"];
 
 export type Flota = "LOPEZ" | "MYC" | "TERCERO";
-export const FLOTAS: Flota[] = ["LOPEZ", "MYC", "TERCERO"];
 
 /** Dias para pagarle el saldo a un tercero despues de entregar el viaje. */
 export const DIAS_PAGO_TERCEROS = 15;
@@ -50,6 +47,7 @@ export type FilaHeredable = Record<string, unknown> & {
   estadoPapeles?: unknown;
   tarifaKilo?: unknown;
   valorFijo?: unknown;
+  fleteAdicional?: unknown;
   facturado?: unknown;
 };
 
@@ -83,6 +81,7 @@ export function datosAHeredar(anulada: FilaHeredable, nueva: FilaHeredable): Rec
     cambios.tipoFlete = anulada.tipoFlete;
     if (!vacio(anulada.tarifaKilo)) cambios.tarifaKilo = anulada.tarifaKilo;
     if (!vacio(anulada.valorFijo)) cambios.valorFijo = anulada.valorFijo;
+    if (!vacio(anulada.fleteAdicional)) cambios.fleteAdicional = anulada.fleteAdicional;
   }
   if (nueva.estadoPapeles === "EN_RUTA" && !vacio(anulada.estadoPapeles) && anulada.estadoPapeles !== "EN_RUTA") {
     cambios.estadoPapeles = anulada.estadoPapeles;
@@ -114,7 +113,12 @@ export interface FilaCuadro {
   tipoFlete: "KILO" | "FIJO";
   tarifaKilo: number | null;
   valorFijo: number | null;
-  /** KILO: kilos (los facturados si los hay) x tarifa. FIJO: el valor fijo. */
+  /**
+   * Solo KILO: se suma a kilos x tarifa. Es el adicional por clientes de las
+   * tarifas POR (300.000, 2 clientes) y POR3 (600.000, 3 clientes).
+   */
+  fleteAdicional: number | null;
+  /** KILO: kilos (los facturados si los hay) x tarifa + adicional. FIJO: el valor fijo. */
   valorFlete: number | null;
   /** Peso que se factura: el real o el minimo pactado con el cliente (34000, 32000...). */
   pesoFacturadoKg: number | null;
@@ -248,11 +252,12 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     tipoFlete: r.tipoFlete === "FIJO" ? ("FIJO" as const) : ("KILO" as const),
     tarifaKilo: num(r.tarifaKilo),
     valorFijo: num(r.valorFijo),
+    fleteAdicional: num(r.fleteAdicional),
     valorFlete:
       r.tipoFlete === "FIJO"
         ? num(r.valorFijo)
         : (r.pesoFacturadoKg ?? r.pesoKg) !== null && r.tarifaKilo !== null
-          ? Math.round(Number(r.pesoFacturadoKg ?? r.pesoKg) * Number(r.tarifaKilo))
+          ? Math.round(Number(r.pesoFacturadoKg ?? r.pesoKg) * Number(r.tarifaKilo)) + (num(r.fleteAdicional) ?? 0)
           : null,
     pesoFacturadoKg: num(r.pesoFacturadoKg),
     tarifaFleteId: r.tarifaFleteId ?? null,
@@ -302,6 +307,7 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   tipoFlete: "texto",
   tarifaKilo: "numero",
   valorFijo: "numero",
+  fleteAdicional: "numero",
   fechaDescargue: "fecha",
   estadoPapeles: "texto",
   flujoCorame: "booleano",

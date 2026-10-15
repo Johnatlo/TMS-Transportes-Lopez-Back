@@ -18,18 +18,14 @@
  */
 
 import { config, describirAmbiente } from "../config";
-import { RndcClient } from "../rndc/client";
 import { vehiculos, remolques, conductores, empresasMonitoreo } from "../repo";
 import { pool } from "../db";
+import { clienteLectura } from "../rndc/conexion";
+import { escapeTexto } from "../rndc/builders";
 
 const aplicar = process.argv.includes("--aplicar");
 const iMeses = process.argv.indexOf("--meses");
 const meses = iMeses > 0 ? Number(process.argv[iMeses + 1]) || 6 : 6;
-
-/** Escapa &, < y > para el XML de la consulta. */
-function escapar(v: string): string {
-  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 /**
  * XML de la consulta tipo 3 del proceso 4 (manifiestos propios) entre dos
@@ -41,12 +37,12 @@ function xmlConsultaMes(ini: string, fin: string): string {
   return `<?xml version='1.0' encoding='ISO-8859-1' ?>
 <root>
  <acceso>
-  <username>${escapar(config.rndc.usuario)}</username>
-  <password>${escapar(config.rndc.password)}</password>
+  <username>${escapeTexto(config.rndc.usuario)}</username>
+  <password>${escapeTexto(config.rndc.password)}</password>
  </acceso>
  <solicitud><tipo>3</tipo><procesoid>4</procesoid></solicitud>
  <variables>INGRESOID,FECHAING,NUMMANIFIESTOCARGA,NUMPLACA,NUMPLACAREMOLQUE,NUMIDCONDUCTOR,NITMONITOREOFLOTA</variables>
- <documento><NUMNITEMPRESATRANSPORTE>${escapar(config.rndc.empresaNit)}</NUMNITEMPRESATRANSPORTE></documento>
+ <documento><NUMNITEMPRESATRANSPORTE>${escapeTexto(config.rndc.empresaNit)}</NUMNITEMPRESATRANSPORTE></documento>
  <documentorango><iniFECHAING>'${ini}'</iniFECHAING><finFECHAING>'${fin}'</finFECHAING></documentorango>
 </root>`;
 }
@@ -87,13 +83,7 @@ async function main() {
   console.log(describirAmbiente());
   console.log(`Ventana: ultimos ${meses} meses. Modo: ${aplicar ? "APLICAR (guarda)" : "solo mostrar"}\n`);
 
-  const cliente = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: config.rndc.simular,
-    soloConsultas: true,
-  });
+  const cliente = clienteLectura(config.rndc.simular);
 
   // Mes por mes: una consulta de muchos meses puede ser pesada para el RNDC.
   const manifiestos: Manifiesto[] = [];

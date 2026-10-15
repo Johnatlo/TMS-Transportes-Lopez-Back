@@ -79,12 +79,11 @@ async function main() {
     contratanteId: cliente.id,
     remitenteId: cliente.id,
     destinatarioId: cliente.id,
-    rutaId: ruta.id,
+    municipioOrigen: ruta.codigoOrigenRndc,
+    municipioDestino: ruta.codigoDestinoRndc,
     // tipoMercancia es el texto que viaja como DESCRIPCIONCORTAPRODUCTO
     // (obligatorio en carga general, maximo 60 caracteres).
     tipoMercancia: "PAPEL Y CARTON PARA RECICLAJE",
-    naturalezaCarga: null,
-    unidadMedida: null,
     observaciones: null,
     // Dos tipos distintos, aunque aqui coincidan en "G".
     tipoOperacionRemesa: "G",

@@ -23,11 +23,13 @@ export interface TarifaFlete {
   nombre: string;
   /** Cliente que se factura. */
   razonSocial: string | null;
-  /** TON: por tonelada. FIJO: por viaje. POR/POR3: ver observaciones. */
+  /** TON: por tonelada. FIJO: por viaje. POR / POR3: por tonelada + 300.000 / 600.000 (2 o 3 clientes). */
   valor: number | null;
   tipo: TipoTarifa;
   /** Si va por menos de este peso, se factura este (34000, 32000 kg). */
   pesoMinimoKg: number | null;
+  /** Peso que se factura siempre, sin importar el tiquete (33000 kg). */
+  pesoFijoKg: number | null;
   observaciones: string | null;
 }
 
@@ -54,6 +56,7 @@ export function normalizarTarifa(t: Record<string, unknown>): Omit<TarifaFlete, 
     valor: numero(t.valor),
     tipo: (TIPOS_TARIFA as string[]).includes(tipo) ? (tipo as TipoTarifa) : "TON",
     pesoMinimoKg: numero(t.pesoMinimoKg) === null ? null : Math.round(numero(t.pesoMinimoKg)!),
+    pesoFijoKg: numero(t.pesoFijoKg) === null ? null : Math.round(numero(t.pesoFijoKg)!),
     observaciones: texto(t.observaciones, 500),
   };
 }
@@ -66,6 +69,7 @@ const mapearTarifa = (r: RowDataPacket): TarifaFlete => ({
   valor: r.valor === null ? null : Number(r.valor),
   tipo: r.tipo,
   pesoMinimoKg: r.pesoMinimoKg ?? null,
+  pesoFijoKg: r.pesoFijoKg ?? null,
   observaciones: r.observaciones ?? null,
 });
 
@@ -97,8 +101,8 @@ export const facturacion = {
       await conexion.query("UPDATE cuadro_viajes SET tarifaFleteId = NULL WHERE tarifaFleteId IS NOT NULL");
       await conexion.query("DELETE FROM tarifas_flete");
       await conexion.query(
-        "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones) VALUES ?",
-        [tarifas.map((t) => [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.observaciones])]
+        "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones) VALUES ?",
+        [tarifas.map((t) => [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones])]
       );
       await conexion.commit();
     } catch (exc) {
@@ -116,8 +120,8 @@ export const facturacion = {
     if (!rows[0]) return null;
     const t = normalizarTarifa({ ...mapearTarifa(rows[0]), ...datos });
     await pool.query(
-      "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, observaciones = ? WHERE id = ?",
-      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.observaciones, id]
+      "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, pesoFijoKg = ?, observaciones = ? WHERE id = ?",
+      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, id]
     );
     return { id, ...t };
   },
@@ -174,7 +178,7 @@ export const facturacion = {
         const total = numero(f.total);
         const [res] = await conexion.query<ResultSetHeader>(
           `UPDATE cuadro_viajes SET
-              tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, pesoFacturadoKg = ?,
+              tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?,
               remision = ?, notaFactura = ?, facturaNumero = COALESCE(?, facturaNumero), enviadoFacturarEn = ?
             WHERE id = ? AND anulado = 0`,
           [
@@ -182,6 +186,7 @@ export const facturacion = {
             fijo ? "FIJO" : "KILO",
             fijo || valorTon === null ? null : valorTon / 1000,
             fijo ? total : null,
+            fijo ? null : numero(f.adicional),
             numero(f.pesoFacturadoKg),
             texto(f.remision, 60),
             texto(f.notaFactura, 300),

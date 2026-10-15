@@ -25,7 +25,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../db";
 import { config } from "../config";
 import { RndcClient } from "./client";
-import type { CredencialesRndc } from "./builders";
+import { escapeTexto, type CredencialesRndc } from "./builders";
+import { clienteLectura, credencialesRndc } from "./conexion";
 
 /** Estados en los que el viaje se esta enviando: la sincronizacion no lo toca. */
 const ESTADOS_EN_CURSO = ["PENDIENTE", "REINTENTANDO", "ANULANDO", "CUMPLIENDO"];
@@ -129,9 +130,6 @@ const VARIABLES = {
   anulacionesRemesa: ["INGRESOID", "FECHAING", "CONSECUTIVOREMESA"],
 };
 
-/** Escapa &, < y > para el XML de la consulta. */
-const escapar = (v: string) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
 /** Parte la respuesta en documentos: cada uno, sus etiquetas en minuscula -> valor. */
 export function leerDocumentos(xml: string): Registro[] {
   return (xml.match(/<documento>[\s\S]*?<\/documento>/gi) ?? []).map((bloque) => {
@@ -157,10 +155,10 @@ async function consultarRango(
 ): Promise<Registro[]> {
   const xml = `<?xml version='1.0' encoding='ISO-8859-1' ?>
 <root>
- <acceso><username>${escapar(cred.usuario)}</username><password>${escapar(cred.password)}</password></acceso>
+ <acceso><username>${escapeTexto(cred.usuario)}</username><password>${escapeTexto(cred.password)}</password></acceso>
  <solicitud><tipo>3</tipo><procesoid>${procesoId}</procesoid></solicitud>
  <variables>${variables.join(",")}</variables>
- <documento><NUMNITEMPRESATRANSPORTE>${escapar(cred.nitEmpresa)}</NUMNITEMPRESATRANSPORTE></documento>
+ <documento><NUMNITEMPRESATRANSPORTE>${escapeTexto(cred.nitEmpresa)}</NUMNITEMPRESATRANSPORTE></documento>
  <documentorango><iniFECHAING>'${fechaConsulta(desde)}'</iniFECHAING><finFECHAING>'${fechaConsulta(hasta)}'</finFECHAING></documentorango>
 </root>`;
   const r = await cliente.enviar(xml, procesoId);
@@ -489,15 +487,8 @@ export async function sincronizarConRndc(opciones: { completa?: boolean } = {}):
       opciones.completa || !ultimoCompleto || Date.now() - ultimoCompleto.getTime() > HORAS_ENTRE_BARRIDOS_COMPLETOS * 3_600_000;
     const hasta = new Date(Date.now() + 24 * 3_600_000); // el fin del rango no se incluye
     const desde = completa ? desdeCompleto() : new Date(Date.now() - DIAS_VENTANA_CORTA * 24 * 3_600_000);
-    const cliente = new RndcClient({
-      wsdlUrl: config.rndc.wsdlUrl,
-      usuario: config.rndc.usuario,
-      password: config.rndc.password,
-      simular: false,
-      reintentos: config.rndc.reintentos,
-      soloConsultas: true,
-    });
-    const cred = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
+    const cliente = clienteLectura();
+    const cred = credencialesRndc();
     try {
       const resumen = await sincronizarRango(cliente, cred, desde, hasta);
       await q(

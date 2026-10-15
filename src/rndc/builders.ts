@@ -31,7 +31,7 @@
 export const TIPO_SOLICITUD_REGISTRAR = "1";
 export const PROCESO_ID_REMESA = "3"; // Expedir Remesa Terrestre de Carga [REM pag. 47]
 export const PROCESO_ID_MANIFIESTO = "4"; // Expedir Manifiesto de Carga [MAN pag. 20]
-export const PROCESO_ID_TERCERO = "11"; // Crear/actualizar Tercero (maestro)
+export const PROCESO_ID_TERCERO = "11"; // Crear/actualizar Tercero (maestro) [Guia Web Service V5 pag. 9]
 
 // Anulacion. Nombres de proceso y etiquetas: diccionarios del wstest
 // capturados por el usuario (2026-09-26). Codigos de motivo: respuestas del
@@ -40,7 +40,7 @@ export const PROCESO_ID_TERCERO = "11"; // Crear/actualizar Tercero (maestro)
 export const PROCESO_ID_ANULAR_CUMPLIDO_INICIAL = "54"; // ANULAR CUMPLIDO INICIAL REMESA
 export const PROCESO_ID_ANULAR_MANIFIESTO = "32"; // ANULAR MANIFIESTO DE CARGA
 export const PROCESO_ID_ANULAR_REMESA = "9"; // ANULAR REMESA
-export const PROCESO_ID_VEHICULO = "12"; // Crear/actualizar Vehiculo (maestro)
+export const PROCESO_ID_VEHICULO = "12"; // Crear/actualizar Vehiculo o remolque (maestro) [Guia Web Service V5 pag. 9]
 
 // Cumplidos. Etiquetas: ejemplos XML de la "Guia Cumplido de Remesa y
 // Manifiesto V1" (Mintransporte, 02/06/2026), pag. 18-19. Tipos C/S:
@@ -113,9 +113,6 @@ export const TIPOS_EMPAQUE: Record<string, string> = {
   "17": "Varios",
 };
 
-/** El de la carga habitual de la empresa (reciclaje a granel). */
-export const TIPO_EMPAQUE_POR_DEFECTO = "15";
-
 /**
  * Unidad de medida COMERCIAL del producto -- UNIDADMEDIDAPRODUCTO [REM pag. 47-48].
  * Distinta de UNIDADMEDIDACAPACIDAD, que es la unidad de TRANSPORTE y siempre
@@ -146,12 +143,6 @@ export const UNIDAD_MEDIDA_TRANSPORTE_KILOS = "1";
  */
 export const TARIFA_RETENCION_FUENTE_DEFECTO = 0.01;
 
-/**
- * Peso bruto vehicular a partir del cual aplica el aporte FOPAT
- * (Ley 2251 de 2022, art. 21) [MAN pag. 15].
- */
-export const PBV_MINIMO_FOPAT_KG = 10500;
-
 /** Factor del aporte FOPAT: 0.1% del valor a pagar [MAN pag. 15]. */
 export const FACTOR_FOPAT = 0.001;
 
@@ -170,13 +161,23 @@ export const MAX_MANIFIESTOS_POR_PLACA_DIA = 10;
 // ---------------------------------------------------------------------------
 
 /** Escapa los caracteres especiales del XML (&, <, >, comillas y apostrofo). */
-function escapeXml(valor: string): string {
+export function escapeXml(valor: string): string {
   return valor
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+/**
+ * Texto de un elemento XML: solo hay que escapar &, < y >. Las comillas se
+ * dejan tal cual porque los filtros de las consultas van entre comillas
+ * sencillas ('TDM735') y el RNDC no esta documentado como decodificador de
+ * &apos;.
+ */
+export function escapeTexto(valor: string): string {
+  return valor.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /**
@@ -1432,11 +1433,6 @@ export function municipioDestinoDe(
 ): string | null {
   if (vacio2?.destino) return vacio2.destino;
   return destinoRuta;
-}
-
-/** Atajo: true si hay al menos un problema que impide enviar. */
-export function tieneErroresBloqueantes(problemas: ProblemaValidacion[]): boolean {
-  return problemas.some((p) => p.gravedad === "ERROR");
 }
 
 // ---------------------------------------------------------------------------

@@ -416,7 +416,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/catalogo/alertas` | El RNDC valida SOAT, tecnomecanica y licencia contra la fecha de descargue, no contra hoy: conviene ver lo que vence pronto y no solo lo vencido. |
 | `GET` | `/api/catalogo/parametros` | Parametros de la empresa, sus datos fijos (nombre, NIT) y el aviso de vigencia de la poliza de carga. |
 | `PUT` | `/api/catalogo/parametros` | Guarda los parametros de la empresa. Solo cambian los campos que llegan: un guardado parcial no borra la poliza. |
-| `GET` | `/api/catalogo/plantillas` | Plantillas activas con sus terceros y ruta. |
+| `GET` | `/api/catalogo/plantillas` | Plantillas activas con sus terceros. |
 | `DELETE` | `/api/catalogo/plantillas/:id` | "Elimina" una plantilla (en realidad la desactiva: ver plantillas.desactivar en el repo). No se borra de verdad porque el historial de viajes y remesas la referencia por id. |
 | `POST` | `/api/catalogo/plantillas` | Valida el cuerpo (plantillaDesdeCuerpo) y crea la plantilla. 422 con el problema si algo no es valido. |
 | `PUT` | `/api/catalogo/plantillas/:id` | Edita una plantilla. |
@@ -498,7 +498,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_559 funciones, componentes, métodos y rutas en 38 archivos._
+_554 funciones, componentes, métodos y rutas en 39 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -515,23 +515,24 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (43)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
-- [`src/rndc/consultas.ts`](#srcrndcconsultasts) (19)
+- [`src/rndc/conexion.ts`](#srcrndcconexionts) (4)
+- [`src/rndc/consultas.ts`](#srcrndcconsultasts) (16)
 - [`src/rndc/estampado.ts`](#srcrndcestampadots) (4)
 - [`src/rndc/maestros.ts`](#srcrndcmaestrosts) (9)
-- [`src/rndc/pdf.ts`](#srcrndcpdfts) (5)
+- [`src/rndc/pdf.ts`](#srcrndcpdfts) (4)
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
-- [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (15)
-- [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (23)
+- [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
+- [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (22)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (29)
-- [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (9)
+- [`src/routes/despacho.ts`](#srcroutesdespachots) (44)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (8)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
 - [`src/scripts/crear-usuario.ts`](#srcscriptscrearusuariots) (1)
-- [`src/scripts/habituales.ts`](#srcscriptshabitualests) (6)
+- [`src/scripts/habituales.ts`](#srcscriptshabitualests) (5)
 - [`src/scripts/importar.ts`](#srcscriptsimportarts) (10)
 - [`src/scripts/probar-correo.ts`](#srcscriptsprobarcorreots) (1)
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
@@ -1496,7 +1497,7 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
     que desaparece de la lista y de los selectores sin perder el historial.
 
   - **`plantillas.findMany()`** · _método_
-    Las plantillas activas, cada una con sus terceros y su ruta.
+    Las plantillas activas, cada una con sus terceros.
 
   - **`plantillas.findById(id)`** · _método_
     Una plantilla (activa o no) con sus relaciones, o null.
@@ -1529,7 +1530,7 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 
   - **`plantillas.conRelaciones(p)`** · _método_
     Completa una plantilla con sus terceros (contratante, remitente y
-    destinatario) y su ruta, consultados en paralelo.
+    destinatario), consultados en paralelo.
 
   - **`plantillas.create(data)`** · _método_
     Crea una plantilla. Si no viene la ruta (origen y destino), se deduce del
@@ -1676,6 +1677,12 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 
 - **`escapeXml(valor)`** · _función_
   Escapa los caracteres especiales del XML (&, <, >, comillas y apostrofo).
+
+- **`escapeTexto(valor)`** · _función_
+  Texto de un elemento XML: solo hay que escapar &, < y >. Las comillas se
+  dejan tal cual porque los filtros de las consultas van entre comillas
+  sencillas ('TDM735') y el RNDC no esta documentado como decodificador de
+  &apos;.
 
 - **`tag(nombre, valor)`** · _función_
   Emite una etiqueta. Omite null/undefined/cadena vacia, pero SI emite el
@@ -1863,9 +1870,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
   `destinoRuta` es el destino explicito de la plantilla de la ULTIMA remesa:
   en multiparada el viaje termina donde descarga el ultimo cliente.
 
-- **`tieneErroresBloqueantes(problemas)`** · _función_
-  Atajo: true si hay al menos un problema que impide enviar.
-
 - **`construirDatosAnularCumplidoInicial(consecutivoRemesa, numManifiesto, motivo, observaciones)`** · _función_
   Proceso 54. Se hace mientras el manifiesto existe (pide su numero).
 
@@ -1994,6 +1998,33 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
       espanol (explicarError).
     - Con radicado: exito, con MEC y codigo de seguridad QR si vienen.
 
+### `src/rndc/conexion.ts`
+
+> Credenciales y clientes del RNDC armados desde la configuracion, para no
+> repetirlos en cada ruta. Tres clientes:
+>
+> - clienteRegistro: expide, cumple y anula (servidor del ambiente). Respeta
+>   la simulacion (RNDC_SIMULAR).
+> - clienteLectura: consultas de solo lectura (tipo 3/6) al mismo servidor.
+>   soloConsultas bloquea cualquier mensaje que registre algo.
+> - clienteSicetac: consultas de SICETAC al servidor de consultas
+>   (config.rndc.consultasWsdlUrl), tambien solo lectura.
+>
+> Las lecturas no simulan por defecto (se usan solo cuando no hay simulacion);
+> quien quiera respetar RNDC_SIMULAR pasa simular = config.rndc.simular.
+
+- **`credencialesRndc()`** · _función_
+  Usuario, clave y NIT de la empresa ante el RNDC.
+
+- **`clienteRegistro()`** · _función_
+  Cliente que registra documentos (expedir, cumplir, anular).
+
+- **`clienteLectura(simular)`** · _función_
+  Cliente de solo lectura contra el servidor del ambiente.
+
+- **`clienteSicetac(simular)`** · _función_
+  Cliente de solo lectura contra el servidor de consultas (SICETAC).
+
 ### `src/rndc/consultas.ts`
 
 > Consultas de solo lectura al RNDC.
@@ -2006,15 +2037,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 >
 > A diferencia del registro (tipo de solicitud 1), las consultas usan el tipo 6
 > y llevan un bloque <documento> con los filtros.
-
-- **`escapeXml(valor)`** · _función_
-  Escapa los caracteres especiales del XML (&, <, >, comillas).
-
-- **`escapeTexto(valor)`** · _función_
-  Texto de un elemento XML: solo hay que escapar &, < y >. Las comillas se
-  dejan tal cual porque los filtros de las consultas van entre comillas
-  sencillas ('TDM735') y el RNDC no esta documentado como decodificador de
-  &apos;.
 
 - **`construirXmlConsulta(credenciales, procesoId, variables, filtros)`** · _función_
   Arma el XML de una consulta (tipo 6).
@@ -2040,9 +2062,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
   No hay un proceso documentado de "ping", asi que se reutiliza la consulta de
   placa con una placa cualquiera: si las credenciales estan mal, el RNDC lo
   dice antes de mirar el filtro.
-
-- **`valoresDe(xml, etiqueta)`** · _función_
-  Lista cruda de valores de una etiqueta, para explorar respuestas nuevas.
 
 - **`xmlDocumentoPropio(credenciales, procesoId, variables, filtroEtiqueta, filtroValor)`** · _función_
   XML de una consulta tipo 3 (documentos propios): pide las 'variables' del
@@ -2230,10 +2249,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 
   @param radicado Numero de radicado (ingresoid) devuelto al expedir.
 
-- **`descargarPdfRemesa(config, radicado, consecutivoParaNombre)`** · _función_
-  Pide el PDF de una remesa radicada. Puede fallar si el RNDC no expone ese
-  proceso; el llamador decide si cae a la representacion propia.
-
 - **`descargarPdfProceso(config, procesoId, radicado, nombreArchivo)`** · _función_
   Descarga generica: tipo 21 = consultar el pdf de un proceso.
 
@@ -2303,9 +2318,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 > municipios, su identificador (`rutasid`), su descripcion (`via`), si es la
 > estandar y su valor de movilizacion. Eso es exactamente lo que alimenta el
 > desplegable de "Via a Utilizar" del manifiesto y el piso del flete.
-
-- **`escapeXml(v)`** · _función_
-  Escapa los caracteres especiales del XML (&, <, >, comillas y apostrofo).
 
 - **`aCabeceraMunicipal(codigo)`** · _función_
   Los municipios de la consulta deben ser cabecera municipal: los ultimos tres
@@ -2442,9 +2454,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 
 - **`partesConsecutivoRemesa(consecutivo)`** · _función_
   "00006692B" -> { base: "00006692", orden: 3 }: la remesa A es la 2, la B la 3.
-
-- **`escapar(v)`** · _función_
-  Escapa &, < y > para el XML de la consulta.
 
 - **`leerDocumentos(xml)`** · _función_
   Parte la respuesta en documentos: cada uno, sus etiquetas en minuscula -> valor.
@@ -2706,7 +2715,7 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
   cambian los campos que llegan: un guardado parcial no borra la poliza.
 
 - **`GET /plantillas`** · _ruta HTTP_
-  GET /api/catalogo/plantillas: plantillas activas con sus terceros y ruta.
+  GET /api/catalogo/plantillas: plantillas activas con sus terceros.
 
 - **`DELETE /plantillas/:id`** · _ruta HTTP_
   "Elimina" una plantilla (en realidad la desactiva: ver plantillas.desactivar
@@ -2734,7 +2743,8 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 ### `src/routes/cuadro.ts`
 
 - **`responder(res, fn)`** · _función_
-  Errores de validacion como 422 con su mensaje; lo demas sigue al manejador general.
+  Errores de validacion (ErrorCuadro) como 422 con su mensaje; lo demas sigue
+  al manejador general. Tambien lo usan las rutas de seguimiento.
 
 - **`GET /`** · _ruta HTTP_
   GET /api/cuadro: todos los viajes del cuadro (sincroniza antes los manifiestos).
@@ -2995,10 +3005,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
   pruebas). Si el cumplido existia y no se anulo, el paso 2 falla con su
   propio mensaje y no se pierde nada.
 
-- **`clienteRegistro()`** · _función_
-  Cliente y credenciales del RNDC para registrar (tipo 1). Mismo servidor que
-  la expedicion y la anulacion.
-
 - **`POST /remesas/:remesaId/cumplir`** · _ruta HTTP_
   Cumplido de una remesa (proceso 5): reporta los kilos entregados y la hora
   real de entrada al cargue y al descargue. El RNDC completa la llegada y la
@@ -3136,9 +3142,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
   Detalle de un viaje con sus remesas.
 
 ### `src/routes/seguimiento.ts`
-
-- **`responder(res, fn)`** · _función_
-  Errores de validacion como 422 con su mensaje; lo demas sigue al manejador general.
 
 - **`GET /alertas`** · _ruta HTTP_
   GET /api/seguimiento/alertas: alertas de papeles, facturacion y cartera.
@@ -3308,9 +3311,6 @@ _559 funciones, componentes, métodos y rutas en 38 archivos._
 > cedulaConductorHabitual y nitMonitoreoFlota): no pisa lo que alguien ya
 > configuro a mano. Y solo si el remolque, el conductor o la empresa de
 > monitoreo existen en el catalogo local.
-
-- **`escapar(v)`** · _función_
-  Escapa &, < y > para el XML de la consulta.
 
 - **`xmlConsultaMes(ini, fin)`** · _función_
   XML de la consulta tipo 3 del proceso 4 (manifiestos propios) entre dos

@@ -16,7 +16,7 @@
  */
 
 import { RndcClient, RndcError, leerEtiqueta } from "./client";
-import { CredencialesRndc } from "./builders";
+import { CredencialesRndc, escapeXml } from "./builders";
 import { pool } from "../db";
 import type { RowDataPacket } from "mysql2";
 
@@ -74,16 +74,6 @@ export interface FiltrosSicetac {
   condicionCarga?: string;
   /** Filtra por unidad de transporte, ej. "ESTACAS" [SIC21]. */
   nombreUnidadTransporte?: string;
-}
-
-/** Escapa los caracteres especiales del XML (&, <, >, comillas y apostrofo). */
-function escapeXml(v: string): string {
-  return v
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }
 
 /**

@@ -102,12 +102,13 @@ import {
   leerAnulacionRemesa,
   leerAnulacionCumplidoInicial,
 } from "../rndc/consultas";
-import { RndcClient, RndcError } from "../rndc/client";
+import { RndcError } from "../rndc/client";
 import { estadoSincronizacion, sincronizarConRndc } from "../rndc/sincronizacion";
 import { aCabeceraMunicipal, calcularPisoSicetac, horasPactadasTotales, pisoSicetacEnVivo } from "../rndc/sicetac";
 import { descargarPdfManifiesto } from "../rndc/pdf";
 import { estamparLogo, logoComoDataUri } from "../rndc/estampado";
 import { construirHtmlRemesa } from "../rndc/remesa-impresion";
+import { clienteLectura, clienteRegistro, clienteSicetac, credencialesRndc } from "../rndc/conexion";
 
 export const despachoRouter = Router();
 
@@ -182,17 +183,10 @@ async function validarPisoSicetac(datos: {
     `(MAN045). Sube el flete a ${piso} o mas, y el FOPAT al 0,1% del nuevo flete.`;
 
   try {
-    const cliente = new RndcClient({
-      wsdlUrl: config.rndc.consultasWsdlUrl,
-      usuario: config.rndc.usuario,
-      password: config.rndc.password,
-      simular: false,
-      reintentos: config.rndc.reintentos,
-      soloConsultas: true,
-    });
+    const cliente = clienteSicetac();
     const vivo = await pisoSicetacEnVivo(
       cliente,
-      { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit },
+      credencialesRndc(),
       {
         configuracion,
         origen,
@@ -788,18 +782,8 @@ async function procesarViaje(
     return { status: 422, cuerpo: { ...actualizado, remesas: filasRemesa, datosRndc } };
   }
 
-  const credenciales = {
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    nitEmpresa: config.rndc.empresaNit,
-  };
-  const cliente = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: config.rndc.simular,
-    reintentos: config.rndc.reintentos,
-  });
+  const credenciales = credencialesRndc();
+  const cliente = clienteRegistro();
 
   // 2. PASO 1 DE 2: crear cada remesa (procesoid = 3).
   //
@@ -1006,20 +990,9 @@ export async function tomarSiYaExpedido(
 ): Promise<{ status: number; cuerpo: unknown } | null> {
   const numero = (numeroPedido || viaje.consecutivoManifiesto || "").trim().toUpperCase();
   if (config.rndc.simular || viaje.numeroManifiestoRndc || !numero) return null;
-  const credenciales = {
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    nitEmpresa: config.rndc.empresaNit,
-  };
+  const credenciales = credencialesRndc();
   // Mismo servidor que expide; soloConsultas: este cliente no puede registrar nada.
-  const cliente = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: false,
-    reintentos: config.rndc.reintentos,
-    soloConsultas: true,
-  });
+  const cliente = clienteLectura();
 
   let m;
   try {
@@ -1405,15 +1378,8 @@ const ESTADOS_ANULABLES = [
  */
 async function consultarEstadoParaAnular(viaje: Viaje, remesas: ViajeRemesa[]): Promise<boolean> {
   if (config.rndc.simular) return false;
-  const lector = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: false,
-    reintentos: config.rndc.reintentos,
-    soloConsultas: true,
-  });
-  const cred = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
+  const lector = clienteLectura();
+  const cred = credencialesRndc();
   try {
     if (viaje.numeroManifiestoRndc && !viaje.radicadoAnulacion && viaje.consecutivoManifiesto) {
       const a = await leerAnulacionManifiesto(lector, cred, viaje.consecutivoManifiesto);
@@ -1605,18 +1571,8 @@ despachoRouter.post("/:id/anular", async (req, res) => {
       return res.json({ ...final, remesas });
     }
 
-    const credenciales = {
-      usuario: config.rndc.usuario,
-      password: config.rndc.password,
-      nitEmpresa: config.rndc.empresaNit,
-    };
-    const cliente = new RndcClient({
-      wsdlUrl: config.rndc.wsdlUrl,
-      usuario: config.rndc.usuario,
-      password: config.rndc.password,
-      simular: config.rndc.simular,
-      reintentos: config.rndc.reintentos,
-    });
+    const credenciales = credencialesRndc();
+    const cliente = clienteRegistro();
     const avisos: string[] = [];
 
     // 1. Cumplido inicial (54). No bloqueante: ver comentario de la ruta.
@@ -1728,27 +1684,6 @@ despachoRouter.post("/:id/anular", async (req, res) => {
 });
 
 /**
- * Cliente y credenciales del RNDC para registrar (tipo 1). Mismo servidor que
- * la expedicion y la anulacion.
- */
-function clienteRegistro() {
-  return {
-    credenciales: {
-      usuario: config.rndc.usuario,
-      password: config.rndc.password,
-      nitEmpresa: config.rndc.empresaNit,
-    },
-    cliente: new RndcClient({
-      wsdlUrl: config.rndc.wsdlUrl,
-      usuario: config.rndc.usuario,
-      password: config.rndc.password,
-      simular: config.rndc.simular,
-      reintentos: config.rndc.reintentos,
-    }),
-  };
-}
-
-/**
  * Cumplido de una remesa (proceso 5): reporta los kilos entregados y la hora
  * real de entrada al cargue y al descargue. El RNDC completa la llegada y la
  * salida con el cumplido inicial que genera el GPS [Guia Cumplido 2.3].
@@ -1797,7 +1732,8 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
   }
 
   try {
-    const { credenciales, cliente } = clienteRegistro();
+    const credenciales = credencialesRndc();
+    const cliente = clienteRegistro();
     const enviar = (d: typeof datos) =>
       cliente.enviar(
         construirXmlMensaje(credenciales, PROCESO_ID_CUMPLIR_REMESA, construirDatosCumplidoRemesa(d)),
@@ -1879,15 +1815,8 @@ async function gpsDeRemesa(consecutivo: string) {
   if (config.rndc.simular) return null;
   try {
     return await leerCumplidoInicial(
-      new RndcClient({
-        wsdlUrl: config.rndc.wsdlUrl,
-        usuario: config.rndc.usuario,
-        password: config.rndc.password,
-        simular: false,
-        reintentos: config.rndc.reintentos,
-        soloConsultas: true,
-      }),
-      { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit },
+      clienteLectura(),
+      credencialesRndc(),
       consecutivo
     );
   } catch (exc) {
@@ -1914,17 +1843,10 @@ despachoRouter.get("/remesas/:remesaId/cumplido", async (req, res) => {
   if (!r) return res.status(404).json({ error: "Remesa no encontrada" });
   if (!config.rndc.simular && r.consecutivoRemesa) {
     try {
-      const lector = new RndcClient({
-        wsdlUrl: config.rndc.wsdlUrl,
-        usuario: config.rndc.usuario,
-        password: config.rndc.password,
-        simular: false,
-        reintentos: config.rndc.reintentos,
-        soloConsultas: true,
-      });
+      const lector = clienteLectura();
       const t = await leerTiemposCumplidoRemesa(
         lector,
-        { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit },
+        credencialesRndc(),
         r.consecutivoRemesa
       );
       if (t) return res.json({ fuente: "RNDC", ...t });
@@ -1960,7 +1882,8 @@ despachoRouter.post("/remesas/:remesaId/anular-cumplido", async (req, res) => {
   const motivo = String(req.body?.motivo ?? "").toUpperCase();
   const observaciones = String(req.body?.observaciones ?? "").trim() || "Anulacion de cumplido para corregir datos";
 
-  const { credenciales, cliente } = clienteRegistro();
+  const credenciales = credencialesRndc();
+  const cliente = clienteRegistro();
   // Lo registrado en el RNDC (incluidos los tiempos del GPS), para que el
   // formulario de correccion vuelva con esos mismos valores. Se lee antes de
   // anular: despues el RNDC ya no lo devuelve.
@@ -1968,14 +1891,7 @@ despachoRouter.post("/remesas/:remesaId/anular-cumplido", async (req, res) => {
   if (!config.rndc.simular) {
     try {
       registrado = await leerTiemposCumplidoRemesa(
-        new RndcClient({
-          wsdlUrl: config.rndc.wsdlUrl,
-          usuario: config.rndc.usuario,
-          password: config.rndc.password,
-          simular: false,
-          reintentos: config.rndc.reintentos,
-          soloConsultas: true,
-        }),
+        clienteLectura(),
         credenciales,
         remesa.consecutivoRemesa!
       );
@@ -2056,15 +1972,8 @@ async function baseCumplidoManifiesto(viaje: Viaje) {
  */
 export async function tiemposLogisticos(viaje: Viaje) {
   const remesas = (await viajeRemesas.findByViaje(viaje.id)).filter((r) => r.estado !== "ANULADA");
-  const credenciales = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
-  const lector = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: false,
-    reintentos: config.rndc.reintentos,
-    soloConsultas: true,
-  });
+  const credenciales = credencialesRndc();
+  const lector = clienteLectura();
   const minutos = (a: Date | null | undefined, b: Date | null | undefined) =>
     a && b ? Math.max(0, Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000)) : null;
 
@@ -2135,7 +2044,7 @@ export async function tiemposLogisticos(viaje: Viaje) {
   if (!config.rndc.simular && origen && destino && vehiculo?.configuracion) {
     try {
       vivo = await pisoSicetacEnVivo(
-        new RndcClient({ wsdlUrl: config.rndc.consultasWsdlUrl, usuario: config.rndc.usuario, password: config.rndc.password, simular: false, reintentos: config.rndc.reintentos, soloConsultas: true }),
+        clienteSicetac(),
         credenciales,
         { configuracion: vehiculo.configuracion, origen, destino, codVia: viaje.codVia, horasPactadas,
           unidadTransporte: config.sicetac.unidadTransporte, tipoCarga: config.sicetac.tipoCarga },
@@ -2216,15 +2125,8 @@ async function sincronizarCumplidos(viajeId: number): Promise<string[]> {
   if (config.rndc.simular) return [];
   const viaje = await viajes.findById(viajeId);
   if (!viaje || viaje.estado !== "CONFIRMADO" || !viaje.consecutivoManifiesto) return [];
-  const lector = new RndcClient({
-    wsdlUrl: config.rndc.wsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: false,
-    reintentos: config.rndc.reintentos,
-    soloConsultas: true,
-  });
-  const cred = { usuario: config.rndc.usuario, password: config.rndc.password, nitEmpresa: config.rndc.empresaNit };
+  const lector = clienteLectura();
+  const cred = credencialesRndc();
   const adoptados: string[] = [];
 
   for (const r of await viajeRemesas.findByViaje(viajeId)) {
@@ -2374,7 +2276,8 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
   }
 
   try {
-    const { credenciales, cliente } = clienteRegistro();
+    const credenciales = credencialesRndc();
+    const cliente = clienteRegistro();
     const resultado = await cliente.enviar(
       construirXmlMensaje(
         credenciales,

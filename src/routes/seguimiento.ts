@@ -1,22 +1,13 @@
-import { Router, type Response } from "express";
+import { Router } from "express";
 import { ErrorCuadro } from "../cuadro";
 import { seguimiento } from "../seguimiento";
+import { responder } from "./cuadro";
 
 /**
  * Seguimiento de papeles, facturacion y cartera (ver src/seguimiento.ts).
  * Montado en /api/seguimiento con sesion obligatoria.
  */
 export const seguimientoRouter = Router();
-
-/** Errores de validacion como 422 con su mensaje; lo demas sigue al manejador general. */
-async function responder(res: Response, fn: () => Promise<unknown>) {
-  try {
-    res.json(await fn());
-  } catch (exc) {
-    if (exc instanceof ErrorCuadro) return res.status(422).json({ error: exc.message });
-    throw exc;
-  }
-}
 
 /** GET /api/seguimiento/alertas: alertas de papeles, facturacion y cartera. */
 seguimientoRouter.get("/alertas", async (_req, res) => {

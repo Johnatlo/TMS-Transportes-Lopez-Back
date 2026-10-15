@@ -7,7 +7,6 @@
  * actualizarFila permite editar desde el catalogo solo los campos enviados.
  */
 import { pool } from "./db";
-import { config } from "./config";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 
 // ---------- Tipos ----------
@@ -112,8 +111,6 @@ export interface PlantillaViaje {
   contratanteId: number;
   remitenteId: number;
   destinatarioId: number;
-  /** @deprecated Reemplazado por municipioOrigen + municipioDestino. */
-  rutaId: number | null;
   /**
    * Ruta del viaje (DIVIPOLA, 8 digitos). Dato explicito y editable: se
    * precarga con el municipio del remitente y del destinatario, pero puede
@@ -130,12 +127,8 @@ export interface PlantillaViaje {
   valorFleteBase: number | null;
   fleteActualizadoEn: Date | null;
   tipoMercancia: string | null; // usado como DESCRIPCIONCORTAPRODUCTO (texto libre)
-  naturalezaCarga: string | null;
-  unidadMedida: string | null;
   observaciones: string | null;
   activa: boolean;
-  /** @deprecated Reemplazado por tipoOperacionRemesa + tipoManifiesto. */
-  codOperacionTransporte: string;
   /** CODOPERACIONTRANSPORTE de la remesa (proceso 3). 'G' = General. */
   tipoOperacionRemesa: string;
   /** CODOPERACIONTRANSPORTE del manifiesto (proceso 4): G/W/I/M/U/D. */
@@ -187,7 +180,6 @@ export interface PlantillaViajeConRelaciones extends PlantillaViaje {
   contratante: Tercero;
   remitente: Tercero;
   destinatario: Tercero;
-  ruta: Ruta;
 }
 
 export interface Viaje {
@@ -1143,8 +1135,7 @@ type CamposObligatoriosPlantilla =
   | "nombre"
   | "contratanteId"
   | "remitenteId"
-  | "destinatarioId"
-  | "rutaId";
+  | "destinatarioId";
 
 export type NuevaPlantilla = Pick<PlantillaViaje, CamposObligatoriosPlantilla> &
   Partial<Omit<PlantillaViaje, "id" | "activa" | CamposObligatoriosPlantilla>>;
@@ -1182,17 +1173,11 @@ function columnasPlantilla(data: NuevaPlantilla): Array<[columna: string, valor:
     ["contratanteId", data.contratanteId],
     ["remitenteId", data.remitenteId],
     ["destinatarioId", data.destinatarioId],
-    ["rutaId", data.rutaId],
     ["municipioOrigen", data.municipioOrigen ?? null],
     ["municipioDestino", data.municipioDestino ?? null],
     ["tipoMercancia", data.tipoMercancia ?? null],
-    ["naturalezaCarga", data.naturalezaCarga ?? null],
-    ["unidadMedida", data.unidadMedida ?? null],
     ["valorFleteBase", data.valorFleteBase ?? null],
     ["observaciones", data.observaciones ?? null],
-    // Columna heredada, ya sin uso: se conserva sincronizada con el tipo de
-    // manifiesto para no romper bases de datos existentes.
-    ["codOperacionTransporte", data.tipoManifiesto ?? "G"],
     ["tipoOperacionRemesa", data.tipoOperacionRemesa ?? "G"],
     ["tipoManifiesto", data.tipoManifiesto ?? "G"],
     ["codMunicipioIntermedio", data.codMunicipioIntermedio ?? null],
@@ -1245,7 +1230,7 @@ export const plantillas = {
     return res.affectedRows > 0;
   },
 
-  /** Las plantillas activas, cada una con sus terceros y su ruta. */
+  /** Las plantillas activas, cada una con sus terceros. */
   async findMany(): Promise<PlantillaViajeConRelaciones[]> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM plantillas_viaje WHERE activa = 1");
     return Promise.all((rows as PlantillaViaje[]).map((p) => this.conRelaciones(p)));
@@ -1375,15 +1360,13 @@ export const plantillas = {
 
   /**
    * Completa una plantilla con sus terceros (contratante, remitente y
-   * destinatario) y su ruta, consultados en paralelo.
+   * destinatario), consultados en paralelo.
    */
   async conRelaciones(p: PlantillaViaje): Promise<PlantillaViajeConRelaciones> {
-    const [contratante, remitente, destinatario, ruta] = await Promise.all([
+    const [contratante, remitente, destinatario] = await Promise.all([
       terceros.findById(p.contratanteId),
       terceros.findById(p.remitenteId),
       terceros.findById(p.destinatarioId),
-      // La ruta es opcional y esta en desuso; se conserva para plantillas viejas.
-      p.rutaId ? rutas.findById(p.rutaId) : Promise.resolve(null),
     ]);
     return {
       ...p,
@@ -1392,7 +1375,6 @@ export const plantillas = {
       contratante: contratante!,
       remitente: remitente!,
       destinatario: destinatario!,
-      ruta: ruta!,
     };
   },
   /**

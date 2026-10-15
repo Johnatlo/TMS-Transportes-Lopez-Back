@@ -8,7 +8,6 @@ import { Router, type Response } from "express";
 import { revisarCoordenadaSede, normalizarCodigoMercancia } from "../rndc/builders";
 import { config } from "../config";
 import { revisarVencimientos } from "../alertas";
-import { RndcClient } from "../rndc/client";
 import { MAESTROS, MaestroNoEncontrado, registrarMaestro } from "../rndc/maestros";
 import { cifrar, descifrar, ErrorCifrado } from "../cifrado";
 import type { Maestro } from "../rndc/maestros";
@@ -36,6 +35,7 @@ import {
   ErrorValidacion,
   type NuevaPlantilla,
 } from "../repo";
+import { clienteSicetac, credencialesRndc } from "../rndc/conexion";
 
 export const catalogoRouter = Router();
 
@@ -184,10 +184,8 @@ catalogoRouter.get("/vehiculos", async (_req, res) => {
  */
 catalogoRouter.post("/vehiculos", async (req, res) => {
   const b = req.body;
-  // El FOPAT aplica a toda la flota salvo excepcion explicita, asi que el
-  // valor por defecto viene de los parametros de la empresa y no se pide en
-  // el formulario de cada vehiculo.
-  const params = await parametros.obtener();
+  // El FOPAT queda activo por defecto (la columna aplicaFopat vale 1): aplica
+  // a toda la flota salvo excepcion, que se marca despues en el formulario.
   const placa = String(b.placa).toUpperCase().trim();
 
   // Si la placa existia y fue eliminada, se recupera con los datos nuevos en
@@ -552,21 +550,10 @@ catalogoRouter.get("/vias/sicetac", async (req, res) => {
     });
   }
 
-  const credenciales = {
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    nitEmpresa: config.rndc.empresaNit,
-  };
+  const credenciales = credencialesRndc();
   // SICETAC va al servidor de consultas (rndcws2) tambien en pruebas: ver
   // config.rndc.consultasWsdlUrl. soloConsultas bloquea cualquier registro.
-  const cliente = new RndcClient({
-    wsdlUrl: config.rndc.consultasWsdlUrl,
-    usuario: config.rndc.usuario,
-    password: config.rndc.password,
-    simular: config.rndc.simular,
-    reintentos: config.rndc.reintentos,
-    soloConsultas: true,
-  });
+  const cliente = clienteSicetac(config.rndc.simular);
 
   try {
     const resultado = await consultarSicetac(
@@ -796,7 +783,7 @@ catalogoRouter.put("/parametros", async (req, res) => {
 });
 
 // ---------- PLANTILLAS DE VIAJE ----------
-/** GET /api/catalogo/plantillas: plantillas activas con sus terceros y ruta. */
+/** GET /api/catalogo/plantillas: plantillas activas con sus terceros. */
 catalogoRouter.get("/plantillas", async (_req, res) => {
   res.json(await plantillas.findMany());
 });
@@ -861,9 +848,6 @@ async function plantillaDesdeCuerpo(
       contratanteId: Number(b.contratanteId),
       remitenteId: Number(b.remitenteId),
       destinatarioId: Number(b.destinatarioId),
-      // Columna heredada de la vieja tabla de rutas. Se conserva por
-      // compatibilidad; la ruta vive en municipioOrigen/municipioDestino.
-      rutaId: b.rutaId ? Number(b.rutaId) : null,
       municipioOrigen: ruta.municipioOrigen,
       municipioDestino: ruta.municipioDestino,
       // tipoMercancia viaja como DESCRIPCIONCORTAPRODUCTO (maximo 60 caracteres).
@@ -871,8 +855,6 @@ async function plantillaDesdeCuerpo(
       // Tarifa pactada para la ruta. Se actualiza cuando cambia SICETAC, no en
       // cada despacho; alli solo se precarga y se puede ajustar.
       valorFleteBase: b.valorFleteBase ? Number(b.valorFleteBase) : null,
-      naturalezaCarga: b.naturalezaCarga ?? null,
-      unidadMedida: b.unidadMedida ?? null,
       observaciones: b.observaciones ?? null,
 
       // Dos tipos distintos con el mismo nombre de etiqueta en el RNDC.
