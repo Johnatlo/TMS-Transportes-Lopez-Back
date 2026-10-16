@@ -134,7 +134,7 @@ export const facturacion = {
    */
   async porFacturar(): Promise<{ filas: FilaPorFacturar[]; ultimaTarifa: Record<string, number> }> {
     const filas = (await cuadro.listar()).filter(
-      (f) => !f.anulado && !f.facturaFecha && !f.facturaFechaPago && (f.estado === "RADICADO" || f.estado === "RADICADOS" || !!f.enviadoFacturarEn)
+      (f) => !f.anulado && !f.facturaFecha && !f.facturaFechaPago && (((f.estado === "RADICADO" || f.estado === "RADICADOS") && f.estadoFactura === "SIN_FACTURAR") || !!f.enviadoFacturarEn)
     );
     const remesas = filas.map((f) => f.viajeRemesaId).filter((x): x is number => !!x);
     const radicados = new Map<number, string>();

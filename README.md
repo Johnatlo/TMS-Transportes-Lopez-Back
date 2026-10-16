@@ -1032,6 +1032,11 @@ _554 funciones, componentes, métodos y rutas en 39 archivos._
     "fecha pago factura"). La "fecha pago cliente" (facturaVence) es solo el
     vencimiento. El saldo del tercero y
     los anticipos de bomba se siguen aparte (columnas y "Saldos vencidos").
+  - Papeles y factura son dos estados aparte: un viaje facturado sigue
+    diciendo si sus papeles estan radicados o no. `estado` es el de los
+    papeles (en proceso, sin radicar, listo para facturar, radicados) y
+    `estadoFactura` el de la factura. Solo "todo pagado" (y anulado)
+    reemplaza a los dos.
   - Facturado: cuando la factura tiene numero Y fecha, escritos a mano o con
     "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
     "facturado sin datos".

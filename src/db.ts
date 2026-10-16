@@ -840,6 +840,9 @@ export async function initSchema(): Promise<void> {
     // Flete por tonelada con 2 o 3 clientes (tarifas POR / POR3): se suma al
     // peso x tarifa (300.000 por cada cliente adicional).
     ["cuadro_viajes", "fleteAdicional", "DOUBLE"],
+    // Conductor que dice el manifiesto. El cuadro muestra el habitual del
+    // vehiculo en la flota (conductor); este queda como referencia.
+    ["cuadro_viajes", "conductorManifiesto", "VARCHAR(150)"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],
@@ -876,6 +879,11 @@ export async function initSchema(): Promise<void> {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'facturaVence'`
   );
   const venceEsNuevo = (conVence as unknown[]).length === 0;
+  const [conManifiesto] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'conductorManifiesto'`
+  );
+  const conductorManifiestoEsNuevo = (conManifiesto as unknown[]).length === 0;
 
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(
@@ -903,6 +911,24 @@ export async function initSchema(): Promise<void> {
     await pool.query(
       `UPDATE cuadro_viajes SET facturaVence = facturaFechaPago, facturaFechaPago = NULL
         WHERE facturaFechaPago IS NOT NULL`
+    );
+  }
+
+  // Correccion unica al crear conductorManifiesto: se guarda el conductor que
+  // trajo cada manifiesto y, donde nadie lo cambio a mano, el cuadro pasa a
+  // mostrar el conductor habitual del vehiculo en la flota.
+  if (conductorManifiestoEsNuevo) {
+    await pool.query(
+      `UPDATE cuadro_viajes cv JOIN viajes v ON v.id = cv.viajeId
+         LEFT JOIN conductores c ON c.id = v.conductorId
+          SET cv.conductorManifiesto = COALESCE(c.nombre, v.conductorRndc)`
+    );
+    await pool.query(
+      `UPDATE cuadro_viajes cv
+         JOIN vehiculos ve ON ve.id = cv.vehiculoId
+         JOIN conductores ch ON ch.cedula = ve.cedulaConductorHabitual
+          SET cv.conductor = ch.nombre
+        WHERE cv.conductor <=> cv.conductorManifiesto OR cv.conductor IS NULL OR cv.conductor = ''`
     );
   }
 

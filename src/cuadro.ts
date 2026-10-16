@@ -93,8 +93,10 @@ export function datosAHeredar(anulada: FilaHeredable, nueva: FilaHeredable): Rec
 /** El flujo largo de papeles (parqueadero, Don Alexander) es solo de este cliente. */
 export const CLIENTE_FLUJO_LARGO = /CORAME|CARTONES\s+AMERICA/i;
 
-export type EstadoCuadro =
-  | "ANULADO" | "PAGADO" | "FACTURADO" | "FACTURADO_SIN_DATOS" | "RADICADOS" | "RADICADO" | "SIN_RADICAR" | "EN_RUTA";
+/** Estado del viaje por sus papeles; ANULADO y PAGADO (todo pagado) reemplazan a los demas. */
+export type EstadoCuadro = "ANULADO" | "PAGADO" | "RADICADOS" | "RADICADO" | "SIN_RADICAR" | "EN_RUTA";
+/** Estado de la factura, aparte del de los papeles. */
+export type EstadoFactura = "SIN_FACTURAR" | "FACTURADO_SIN_DATOS" | "FACTURADO";
 
 export interface FilaCuadro {
   id: number;
@@ -160,6 +162,7 @@ export interface FilaCuadro {
   papelesRevisadoEn: string | null;
   papelesRevisadoPor: string | null;
   estado: EstadoCuadro;
+  estadoFactura: EstadoFactura;
   /** El cliente ya le pago la factura a la empresa (fecha de pago a la empresa). Amarillo. */
   todoPagado: boolean;
 }
@@ -195,20 +198,31 @@ export const sumarDias = (fecha: string, dias: number) => {
  *   "fecha pago factura"). La "fecha pago cliente" (facturaVence) es solo el
  *   vencimiento. El saldo del tercero y
  *   los anticipos de bomba se siguen aparte (columnas y "Saldos vencidos").
+ * - Papeles y factura son dos estados aparte: un viaje facturado sigue
+ *   diciendo si sus papeles estan radicados o no. `estado` es el de los
+ *   papeles (en proceso, sin radicar, listo para facturar, radicados) y
+ *   `estadoFactura` el de la factura. Solo "todo pagado" (y anulado)
+ *   reemplaza a los dos.
  * - Facturado: cuando la factura tiene numero Y fecha, escritos a mano o con
  *   "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
  *   "facturado sin datos".
  */
-export function estadoDe(f: Omit<FilaCuadro, "estado" | "todoPagado">): { estado: EstadoCuadro; todoPagado: boolean } {
+export function estadoDe(
+  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado">
+): { estado: EstadoCuadro; estadoFactura: EstadoFactura; todoPagado: boolean } {
   const todoPagado = !f.anulado && !!f.facturaFechaPago;
-  if (f.anulado) return { estado: "ANULADO", todoPagado: false };
-  if (f.facturaFechaPago) return { estado: "PAGADO", todoPagado };
-  if (f.facturaNumero && f.facturaFecha) return { estado: "FACTURADO", todoPagado };
-  if (f.facturado || f.facturaNumero || f.facturaFecha) return { estado: "FACTURADO_SIN_DATOS", todoPagado };
-  if (f.estadoPapeles === "RADICADOS") return { estado: "RADICADOS", todoPagado };
-  if (f.estadoPapeles === "RADICADO") return { estado: "RADICADO", todoPagado };
-  if (f.estadoPapeles !== "EN_RUTA") return { estado: "SIN_RADICAR", todoPagado };
-  return { estado: "EN_RUTA", todoPagado };
+  const estadoFactura: EstadoFactura =
+    f.facturaNumero && f.facturaFecha
+      ? "FACTURADO"
+      : f.facturado || f.facturaNumero || f.facturaFecha
+        ? "FACTURADO_SIN_DATOS"
+        : "SIN_FACTURAR";
+  if (f.anulado) return { estado: "ANULADO", estadoFactura, todoPagado: false };
+  if (f.facturaFechaPago) return { estado: "PAGADO", estadoFactura, todoPagado };
+  if (f.estadoPapeles === "RADICADOS") return { estado: "RADICADOS", estadoFactura, todoPagado };
+  if (f.estadoPapeles === "RADICADO") return { estado: "RADICADO", estadoFactura, todoPagado };
+  if (f.estadoPapeles !== "EN_RUTA") return { estado: "SIN_RADICAR", estadoFactura, todoPagado };
+  return { estado: "EN_RUTA", estadoFactura, todoPagado };
 }
 
 export const SELECT_CUADRO = `
@@ -371,10 +385,13 @@ export const cuadro = {
    */
   async sincronizarManifiestos(): Promise<number> {
     const [res] = await pool.query<ResultSetHeader>(
+      // El conductor del cuadro es el habitual del vehiculo en la flota (el que
+      // de verdad maneja); el del manifiesto queda en conductorManifiesto.
       `INSERT IGNORE INTO cuadro_viajes
-         (fecha, vehiculoId, placa, conductor, empresa, viajeId, viajeRemesaId,
+         (fecha, vehiculoId, placa, conductor, conductorManifiesto, empresa, viajeId, viajeRemesaId,
           manifiesto, remesa, pesoKg, fechaDescargue, flujoCorame, creadoPorId)
-       SELECT DATE(DATE_SUB(v.fechaCreacion, INTERVAL 5 HOUR)), v.vehiculoId, COALESCE(ve.placa, v.placaRndc), COALESCE(c.nombre, v.conductorRndc),
+       SELECT DATE(DATE_SUB(v.fechaCreacion, INTERVAL 5 HOUR)), v.vehiculoId, COALESCE(ve.placa, v.placaRndc),
+              COALESCE(ch.nombre, c.nombre, v.conductorRndc), COALESCE(c.nombre, v.conductorRndc),
               UPPER(COALESCE(con.nombre, prop.nombre, vr.propietarioNit, 'SIN CLIENTE')), v.id, vr.id,
               v.consecutivoManifiesto, vr.consecutivoRemesa, vr.pesoReal,
               DATE(DATE_SUB(vr.fechaHoraDescargue, INTERVAL 5 HOUR)),
@@ -383,6 +400,7 @@ export const cuadro = {
          JOIN viajes v ON v.id = vr.viajeId
          LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId
          LEFT JOIN conductores c ON c.id = v.conductorId
+         LEFT JOIN conductores ch ON ch.cedula = ve.cedulaConductorHabitual
          LEFT JOIN plantillas_viaje p ON p.id = vr.plantillaId
          LEFT JOIN terceros con ON con.id = p.contratanteId
          -- Remesas del portal: el cliente sale del propietario de la carga (por NIT).
@@ -505,7 +523,14 @@ export const cuadro = {
     if (!datos.placa) throw new ErrorCuadro("La placa es obligatoria.");
     if (!datos.empresa) throw new ErrorCuadro("La empresa es obligatoria.");
     if (!datos.fecha) throw new ErrorCuadro("La fecha es obligatoria.");
-    const [ve] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE placa = ?", [datos.placa]);
+    const [ve] = await pool.query<RowDataPacket[]>(
+      `SELECT ve.id, ch.nombre AS conductorHabitual FROM vehiculos ve
+         LEFT JOIN conductores ch ON ch.cedula = ve.cedulaConductorHabitual
+        WHERE ve.placa = ?`,
+      [datos.placa]
+    );
+    // Sin conductor escrito: el habitual del vehiculo en la flota.
+    if (!String(datos.conductor ?? "").trim() && ve[0]?.conductorHabitual) datos.conductor = ve[0].conductorHabitual;
     const columnas: string[] = ["vehiculoId", "creadoPorId"];
     const valores: unknown[] = [ve[0]?.id ?? null, usuarioId];
     if (!("flujoCorame" in datos)) datos.flujoCorame = CLIENTE_FLUJO_LARGO.test(String(datos.empresa));

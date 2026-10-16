@@ -6,7 +6,7 @@ vi.mock("./db", () => ({ pool: {} }));
 import { CLIENTE_FLUJO_LARGO, datosAHeredar, estadoDe, sumarDias } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 
-type Base = Omit<FilaCuadro, "estado" | "todoPagado">;
+type Base = Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado">;
 
 /** Viaje recien cargado; cada prueba cambia lo que necesita. */
 function viaje(cambios: Partial<Base> = {}): Base {
@@ -77,27 +77,36 @@ describe("estado del viaje en el cuadro (los colores del Excel)", () => {
     expect(estadoDe(viaje({ estadoPapeles: "RADICADO" })).estado).toBe("RADICADO");
   });
 
-  test("CORAME: radicados es el ultimo paso de los papeles; la factura sigue mandando", () => {
+  test("CORAME: radicados es el ultimo paso de los papeles", () => {
     expect(estadoDe(viaje({ estadoPapeles: "RADICADOS" })).estado).toBe("RADICADOS");
-    expect(estadoDe(viaje({ estadoPapeles: "RADICADOS", facturaNumero: "TL 1", facturaFecha: "2026-10-14" })).estado).toBe("FACTURADO");
+  });
+
+  test("facturar no borra el estado de los papeles: son dos estados aparte", () => {
+    const facturado = estadoDe(viaje({ estadoPapeles: "RADICADOS", facturaNumero: "TL 1", facturaFecha: "2026-10-14" }));
+    expect(facturado).toEqual({ estado: "RADICADOS", estadoFactura: "FACTURADO", todoPagado: false });
+    expect(estadoDe(viaje({ estadoPapeles: "CONDUCTOR", facturado: true }))).toMatchObject({
+      estado: "SIN_RADICAR",
+      estadoFactura: "FACTURADO_SIN_DATOS",
+    });
+    expect(estadoDe(viaje({ estadoPapeles: "RADICADO" })).estadoFactura).toBe("SIN_FACTURAR");
   });
 
   test("facturado sin numero ni fecha (azul)", () => {
-    expect(estadoDe(viaje({ estadoPapeles: "RADICADO", facturado: true })).estado).toBe("FACTURADO_SIN_DATOS");
+    expect(estadoDe(viaje({ estadoPapeles: "RADICADO", facturado: true })).estadoFactura).toBe("FACTURADO_SIN_DATOS");
   });
 
   test("facturado solo con numero Y fecha de factura, aunque no se haya marcado", () => {
-    expect(estadoDe(viaje({ facturaNumero: "7400", facturaFecha: "2026-10-12" })).estado).toBe("FACTURADO");
-    expect(estadoDe(viaje({ facturado: true, facturaNumero: "7400" })).estado).toBe("FACTURADO_SIN_DATOS");
-    expect(estadoDe(viaje({ facturaFecha: "2026-10-12" })).estado).toBe("FACTURADO_SIN_DATOS");
+    expect(estadoDe(viaje({ facturaNumero: "7400", facturaFecha: "2026-10-12" })).estadoFactura).toBe("FACTURADO");
+    expect(estadoDe(viaje({ facturado: true, facturaNumero: "7400" })).estadoFactura).toBe("FACTURADO_SIN_DATOS");
+    expect(estadoDe(viaje({ facturaFecha: "2026-10-12" })).estadoFactura).toBe("FACTURADO_SIN_DATOS");
   });
 
-  test("el cliente pago la factura", () => {
-    expect(estadoDe(viaje({ facturaNumero: "7400", facturaFechaPago: "2026-11-05" })).estado).toBe("PAGADO");
+  test("el cliente pago la factura: todo pagado reemplaza a los demas", () => {
+    expect(estadoDe(viaje({ estadoPapeles: "RADICADO", facturaNumero: "7400", facturaFechaPago: "2026-11-05" })).estado).toBe("PAGADO");
   });
 
   test("anulado gana sobre todo lo demas", () => {
-    expect(estadoDe(viaje({ anulado: true, facturaFechaPago: "2026-11-05" }))).toEqual({ estado: "ANULADO", todoPagado: false });
+    expect(estadoDe(viaje({ anulado: true, facturaFechaPago: "2026-11-05" }))).toMatchObject({ estado: "ANULADO", todoPagado: false });
   });
 });
 
