@@ -498,7 +498,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_554 funciones, componentes, métodos y rutas en 39 archivos._
+_556 funciones, componentes, métodos y rutas en 39 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -507,7 +507,7 @@ _554 funciones, componentes, métodos y rutas en 39 archivos._
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (30)
+- [`src/cuadro.ts`](#srccuadrots) (31)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
 - [`src/fechas.ts`](#srcfechasts) (1)
@@ -526,7 +526,7 @@ _554 funciones, componentes, métodos y rutas en 39 archivos._
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (29)
-- [`src/routes/despacho.ts`](#srcroutesdespachots) (44)
+- [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (8)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
@@ -1040,6 +1040,12 @@ _554 funciones, componentes, métodos y rutas en 39 archivos._
   - Facturado: cuando la factura tiene numero Y fecha, escritos a mano o con
     "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
     "facturado sin datos".
+
+- **`nombreMunicipio(codigo)`** · _función_
+  Nombre de un municipio a partir de su codigo DIVIPOLA (expresion SQL):
+  primero el catalogo de municipios; si no se importo, la ciudad de algun
+  tercero de ese municipio. El RNDC devuelve los de Antioquia sin el cero
+  inicial (5308000), por eso se comparan a 8 digitos.
 
 - **`mapear(r)`** · _función_
   Fila de SELECT_CUADRO -> FilaCuadro.
@@ -3058,6 +3064,11 @@ _554 funciones, componentes, métodos y rutas en 39 archivos._
   cumplido del manifiesto. Sin esto el viaje quedaba trabado: el sistema pedia
   cumplir remesas que el RNDC ya tenia (y rechazaba el reenvio). Solo lectura
   (tipo 3). Devuelve lo que adopto, para mostrarlo.
+
+- **`revisarCumplidosTrasError(viajeId)`** · _función_
+  Despues de un rechazo del cumplido (remesa o manifiesto) revisa en el RNDC
+  todo lo pendiente del viaje con sincronizarCumplidos. Si el RNDC no
+  responde, no cambia nada: el error original es el que se muestra.
 
 - **`POST /:id/cumplir/sincronizar`** · _ruta HTTP_
   POST /api/despacho/:id/cumplir/sincronizar: adopta lo cumplido en el portal

@@ -1777,10 +1777,20 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
         estado: "CREADA",
         mensajeError: resultado.error ?? "El RNDC rechazo el cumplido.",
       });
+      // Antes de mostrar el error se revisa en el RNDC todo lo pendiente del
+      // viaje (remesas y manifiesto): si ya estaba cumplido (por ejemplo en el
+      // portal), se adopta y el rechazo no importa.
+      const adoptados = await revisarCumplidosTrasError(viaje.id);
+      const remesas = await viajeRemesas.findByViaje(viaje.id);
+      if (remesas.find((r) => r.id === remesa.id)?.estado === "CUMPLIDA") {
+        return res.json({ viaje: await viajes.findById(viaje.id), remesas, adoptados });
+      }
       return res.status(422).json({
         error: resultado.error ?? "El RNDC rechazo el cumplido.",
         codigoError: resultado.codigoError,
-        remesas: await viajeRemesas.findByViaje(viaje.id),
+        remesas,
+        viaje: await viajes.findById(viaje.id),
+        adoptados,
       });
     }
 
@@ -2170,6 +2180,20 @@ async function sincronizarCumplidos(viajeId: number): Promise<string[]> {
 }
 
 /**
+ * Despues de un rechazo del cumplido (remesa o manifiesto) revisa en el RNDC
+ * todo lo pendiente del viaje con sincronizarCumplidos. Si el RNDC no
+ * responde, no cambia nada: el error original es el que se muestra.
+ */
+async function revisarCumplidosTrasError(viajeId: number): Promise<string[]> {
+  try {
+    return await sincronizarCumplidos(viajeId);
+  } catch (exc) {
+    console.warn(`No se pudieron revisar los cumplidos del viaje ${viajeId} en el RNDC:`, (exc as Error).message);
+    return [];
+  }
+}
+
+/**
  * POST /api/despacho/:id/cumplir/sincronizar: adopta lo cumplido en el portal
  * (sincronizarCumplidos) y devuelve lo adoptado, el viaje y sus remesas. Si el
  * RNDC no responde, devuelve el error sin fallar: la ventana sigue con lo local.
@@ -2306,7 +2330,13 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
         codigoError: resultado.codigoError,
         errorCrudo: resultado.errorCrudo,
       });
-      return res.status(422).json({ ...actualizado, remesas });
+      // Igual que con las remesas: se revisa en el RNDC todo lo pendiente; si
+      // el manifiesto ya estaba cumplido, se adopta en vez de mostrar el error.
+      const adoptados = await revisarCumplidosTrasError(viajeId);
+      const tras = await viajes.findById(viajeId);
+      const remesasTras = await viajeRemesas.findByViaje(viajeId);
+      if (tras?.estado === "CUMPLIDO") return res.json({ ...tras, remesas: remesasTras, adoptados });
+      return res.status(422).json({ ...(tras ?? actualizado), remesas: remesasTras, adoptados });
     }
 
     const final = await viajes.update(viajeId, {

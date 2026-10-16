@@ -105,6 +105,13 @@ export interface FilaCuadro {
   placa: string;
   flota: Flota;
   conductor: string | null;
+  /**
+   * Ruta para consultar ("SOACHA CUNDINAMARCA → CALI VALLE DEL CAUCA"). Con
+   * manifiesto sale del RNDC y no se edita; sin manifiesto es rutaManual.
+   */
+  ruta: string | null;
+  /** Ruta escrita a mano (solo viajes sin manifiesto). */
+  rutaManual: string | null;
   empresa: string;
   viajeId: number | null;
   viajeRemesaId: number | null;
@@ -225,14 +232,37 @@ export function estadoDe(
   return { estado: "EN_RUTA", estadoFactura, todoPagado };
 }
 
+/**
+ * Nombre de un municipio a partir de su codigo DIVIPOLA (expresion SQL):
+ * primero el catalogo de municipios; si no se importo, la ciudad de algun
+ * tercero de ese municipio. El RNDC devuelve los de Antioquia sin el cero
+ * inicial (5308000), por eso se comparan a 8 digitos.
+ */
+const nombreMunicipio = (codigo: string) => `COALESCE(
+    (SELECT nombre FROM municipios WHERE codigo = ${codigo} LIMIT 1),
+    (SELECT MAX(ciudad) FROM terceros WHERE LPAD(codMunicipioRndc, 8, '0') = ${codigo}),
+    ${codigo})`;
+
+/**
+ * Origen y destino de la remesa segun el manifiesto: los del TMS salen de la
+ * plantilla de la remesa; los traidos del portal, de lo que reporto el RNDC.
+ */
+const CODIGO_ORIGEN = "LPAD(COALESCE(pl.municipioOrigen, vj.origenRndc), 8, '0')";
+const CODIGO_DESTINO = "LPAD(COALESCE(pl.municipioDestino, vj.destinoRndc), 8, '0')";
+
 export const SELECT_CUADRO = `
   SELECT c.*, COALESCE(ve.flota, 'TERCERO') AS flota,
+         ${nombreMunicipio(CODIGO_ORIGEN)} AS rutaOrigen,
+         ${nombreMunicipio(CODIGO_DESTINO)} AS rutaDestino,
          uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor, up.nombre AS papelesRevisadoPor,
          COALESCE(a.total, 0) AS totalAnticipos, COALESCE(a.sinPagar, 0) AS anticiposSinPagar,
          COALESCE(n.cuantas, 0) AS notas,
          (SELECT texto FROM cuadro_notas WHERE cuadroViajeId = c.id ORDER BY id DESC LIMIT 1) AS ultimaNota
     FROM cuadro_viajes c
     LEFT JOIN vehiculos ve ON ve.id = c.vehiculoId
+    LEFT JOIN viajes vj ON vj.id = c.viajeId
+    LEFT JOIN viaje_remesas vrr ON vrr.id = c.viajeRemesaId
+    LEFT JOIN plantillas_viaje pl ON pl.id = vrr.plantillaId
     LEFT JOIN usuarios uc ON uc.id = c.revisadoContabilidadPorId
     LEFT JOIN usuarios ug ON ug.id = c.revisadoGerenciaPorId
     LEFT JOIN usuarios up ON up.id = c.papelesRevisadoPorId
@@ -256,6 +286,12 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     placa: r.placa,
     flota: (r.flota ?? "TERCERO") as Flota,
     conductor: r.conductor,
+    ruta: r.viajeId
+      ? r.rutaOrigen || r.rutaDestino
+        ? `${r.rutaOrigen ?? "?"} → ${r.rutaDestino ?? "?"}`
+        : null
+      : r.rutaManual ?? null,
+    rutaManual: r.rutaManual ?? null,
     empresa: r.empresa,
     viajeId: r.viajeId,
     viajeRemesaId: r.viajeRemesaId,
@@ -312,6 +348,8 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   fecha: "fecha",
   placa: "texto",
   conductor: "texto",
+  // Solo los viajes sin manifiesto (los demas la toman del RNDC).
+  rutaManual: "texto",
   empresa: "texto",
   manifiesto: "texto",
   remision: "texto",

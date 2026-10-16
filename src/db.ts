@@ -843,6 +843,9 @@ export async function initSchema(): Promise<void> {
     // Conductor que dice el manifiesto. El cuadro muestra el habitual del
     // vehiculo en la flota (conductor); este queda como referencia.
     ["cuadro_viajes", "conductorManifiesto", "VARCHAR(150)"],
+    // Ruta escrita a mano en los viajes sin manifiesto ("SOACHA - CALI"). Los
+    // que tienen manifiesto muestran la del RNDC y no usan esta columna.
+    ["cuadro_viajes", "rutaManual", "VARCHAR(200)"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],
