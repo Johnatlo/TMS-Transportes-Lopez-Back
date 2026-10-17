@@ -456,7 +456,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/despacho/:id/datos-rndc` | Todos los datos que el viaje envia (o enviaria) al RNDC, sin enviar nada. Para revisarlos antes de reintentar. |
 | `POST` | `/api/despacho/:id/reintentar` | Reintenta un viaje que quedo a medias, despues de corregir lo necesario. |
 | `GET` | `/api/despacho/:id/anulacion` | Vista previa: que pasos se van a ejecutar, que motivos acepta el RNDC y como va el tope mensual de anulaciones de manifiestos. |
-| `POST` | `/api/despacho/:id/anular` | Anula un viaje en el RNDC, en el orden que exige: 1. cumplido inicial de cada remesa (54): lo genera el satelital y pide el numero del manifiesto, asi que va mientras este exista; 2. el manifiesto (32); 3. cada remesa (9): el RNDC no deja anular una remesa ligada a un manifiesto vigente (ANR030). |
+| `POST` | `/api/despacho/:id/anular` | Anula un viaje en el RNDC, en el orden que exige: 0. si el viaje ya estaba cumplido: el cumplido del manifiesto (29) y luego el de cada remesa cumplida (28). Con el manifiesto cumplido el RNDC no deja anular el cumplido de una remesa (ACR070), y una remesa cumplida no se puede anular (Manual 6.1); 1. cumplido inicial de cada remesa (54): lo genera el satelital y pide el numero del manifiesto, asi que va mientras este exista; 2. el manifiesto (32); 3. cada remesa (9): el RNDC no deja anular una remesa ligada a un manifiesto vigente (ANR030). |
 | `POST` | `/api/despacho/remesas/:remesaId/cumplir` | Cumplido de una remesa (proceso 5): reporta los kilos entregados y la hora real de entrada al cargue y al descargue. El RNDC completa la llegada y la salida con el cumplido inicial que genera el GPS [Guia Cumplido 2.3]. |
 | `GET` | `/api/despacho/remesas/:remesaId/gps` | Tiempos que ya reporto el GPS, para mostrarlos bloqueados al cumplir. |
 | `GET` | `/api/despacho/remesas/:remesaId/cumplido` | Lo que quedo registrado en el cumplido de una remesa: kilos entregados y los seis tiempos, leidos del RNDC (la verdad, incluso si se cumplio en el portal). Si el RNDC no responde, lo que se envio desde este sistema. |
@@ -503,7 +503,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_581 funciones, componentes, métodos y rutas en 41 archivos._
+_584 funciones, componentes, métodos y rutas en 41 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -520,7 +520,7 @@ _581 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/repo.ts`](#srcrepots) (94)
-- [`src/rndc/builders.ts`](#srcrndcbuildersts) (43)
+- [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
 - [`src/rndc/conexion.ts`](#srcrndcconexionts) (4)
 - [`src/rndc/consultas.ts`](#srcrndcconsultasts) (16)
@@ -533,7 +533,7 @@ _581 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (31)
-- [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
+- [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (11)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
@@ -1784,6 +1784,10 @@ _581 funciones, componentes, métodos y rutas en 41 archivos._
 >  - La poliza de carga es siempre la misma (la de la empresa), asi que los
 >    campos de seguro no se envian por webservice. Sus nombres de etiqueta no
 >    aparecen en ningun XML de ejemplo oficial y no vale la pena adivinarlos.
+
+- **`construirDatosAnularCumplidoManifiesto(numManifiesto, motivo, observaciones)`** · _función_
+  Datos del proceso 29 (anular el cumplido de un manifiesto): numero del
+  manifiesto, motivo (D u O) y observaciones (maximo 200 caracteres).
 
 - **`construirDatosAnularCumplidoRemesa(consecutivoRemesa, motivo, observaciones)`** · _función_
   Datos del proceso 28 (anular el cumplido de una remesa): consecutivo de la
@@ -3103,6 +3107,13 @@ _581 funciones, componentes, métodos y rutas en 41 archivos._
   existe), solo se anulan los cumplidos iniciales que existen y siguen
   vigentes; sin consulta, se intenta en todas las remesas (como antes).
 
+- **`cumplidoManifiestoExiste(numero)`** · _función_
+  true si el RNDC todavia tiene el cumplido del manifiesto (consulta de solo
+  lectura). Si no se puede consultar, se asume que si (no se salta el error).
+
+- **`cumplidoRemesaExiste(consecutivo)`** · _función_
+  Igual para el cumplido de una remesa.
+
 - **`mesDe(fecha)`** · _función_
   Mes "AAAA-MM" de una fecha (para el tope mensual de anulaciones).
 
@@ -3112,11 +3123,19 @@ _581 funciones, componentes, métodos y rutas en 41 archivos._
 
 - **`POST /:id/anular`** · _ruta HTTP_
   Anula un viaje en el RNDC, en el orden que exige:
+    0. si el viaje ya estaba cumplido: el cumplido del manifiesto (29) y
+       luego el de cada remesa cumplida (28). Con el manifiesto cumplido el
+       RNDC no deja anular el cumplido de una remesa (ACR070), y una remesa
+       cumplida no se puede anular (Manual 6.1);
     1. cumplido inicial de cada remesa (54): lo genera el satelital y pide el
        numero del manifiesto, asi que va mientras este exista;
     2. el manifiesto (32);
     3. cada remesa (9): el RNDC no deja anular una remesa ligada a un
        manifiesto vigente (ANR030).
+
+  Si el cumplido del manifiesto no se puede anular (por ejemplo, ya esta
+  facturado o el titular lo acepto), el viaje vuelve a CUMPLIDO con el error:
+  no se toco nada en el RNDC.
 
   Cada paso exitoso se guarda en el momento. Si uno falla, el viaje queda en
   ANULACION_ERROR y al volver a llamar se retoma desde ahi.

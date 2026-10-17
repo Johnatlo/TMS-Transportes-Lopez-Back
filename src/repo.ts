@@ -253,6 +253,8 @@ export interface Viaje {
   anuladoPorId: number | null;
   /** Cumplido del manifiesto (proceso 6). */
   radicadoCumplido: string | null;
+  /** Radicado de la anulacion del cumplido del manifiesto (proceso 29), si se anulo para anular el viaje. */
+  radicadoAnulacionCumplidoManifiesto?: string | null;
   fechaCumplido: Date | null;
   cumplidoPorId: number | null;
   /** Nombres de esos usuarios (vienen del JOIN; no son columnas de viajes). */

@@ -887,6 +887,9 @@ export async function initSchema(): Promise<void> {
     // Ruta escrita a mano en los viajes sin manifiesto ("SOACHA - CALI"). Los
     // que tienen manifiesto muestran la del RNDC y no usan esta columna.
     ["cuadro_viajes", "rutaManual", "VARCHAR(200)"],
+    // Radicado de la anulacion del cumplido del manifiesto (proceso 29), al
+    // anular un viaje que ya estaba cumplido.
+    ["viajes", "radicadoAnulacionCumplidoManifiesto", "VARCHAR(30)"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],

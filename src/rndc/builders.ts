@@ -52,6 +52,29 @@ export const PROCESO_ID_CUMPLIR_MANIFIESTO = "6"; // Cumplir Manifiesto de Carga
 // (2026-10-05, remesa 00010012, radicado 900000019). Con el manifiesto ya
 // cumplido responde ACR070 ("no ha sido cumplido").
 export const PROCESO_ID_ANULAR_CUMPLIDO_REMESA = "28";
+// Anular cumplido de manifiesto: "29: Anular Cumplido de Manifiesto" [GUIA Uso
+// del Web Service en el RNDC V5, pag. 10]; entrada consecutivo del manifiesto
+// y motivo [MANUAL RNDC 2026, 6.1.2]. Etiquetas y motivos verificados en
+// pruebas (2026-10-17, manifiesto 00010013, radicado 900000047): las mismas
+// del proceso 28 con NUMMANIFIESTOCARGA; motivos [D, O] (ACM040). El RNDC no lo
+// acepta si el valor a pagar ya esta facturado o el titular acepto el cumplido.
+export const PROCESO_ID_ANULAR_CUMPLIDO_MANIFIESTO = "29";
+
+/**
+ * Datos del proceso 29 (anular el cumplido de un manifiesto): numero del
+ * manifiesto, motivo (D u O) y observaciones (maximo 200 caracteres).
+ */
+export function construirDatosAnularCumplidoManifiesto(
+  numManifiesto: string,
+  motivo: string,
+  observaciones: string
+): Record<string, unknown> {
+  return {
+    NUMMANIFIESTOCARGA: numManifiesto,
+    CODMOTIVOANULACIONCUMPLIDO: motivo,
+    OBSERVACIONES: observaciones.slice(0, 200),
+  };
+}
 
 /**
  * Datos del proceso 28 (anular el cumplido de una remesa): consecutivo de la

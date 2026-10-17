@@ -71,6 +71,8 @@ import {
   construirDatosCumplidoManifiesto,
   construirDatosAnularCumplidoRemesa,
   PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
+  PROCESO_ID_ANULAR_CUMPLIDO_MANIFIESTO,
+  construirDatosAnularCumplidoManifiesto,
   valorFinalCumplido,
   TARIFA_RETENCION_FUENTE_DEFECTO,
   baseRetenciones,
@@ -1361,6 +1363,8 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
  */
 const ESTADOS_ANULABLES = [
   "CONFIRMADO",
+  // Cumplido: primero se anulan los cumplidos (manifiesto y remesas).
+  "CUMPLIDO",
   "MANIFIESTO_ERROR",
   "REMESA_ERROR",
   "VALIDACION_ERROR",
@@ -1388,7 +1392,7 @@ async function consultarEstadoParaAnular(viaje: Viaje, remesas: ViajeRemesa[]): 
         viaje.radicadoAnulacion = a.radicado;
       }
     }
-    for (const r of remesas.filter((x) => x.estado === "CREADA" && x.consecutivoRemesa)) {
+    for (const r of remesas.filter((x) => ["CREADA", "CUMPLIDA"].includes(x.estado) && x.consecutivoRemesa)) {
       const [ci, aci, ar] = await Promise.all([
         r.radicadoCumplidoInicial ? Promise.resolve(null) : leerCumplidoInicial(lector, cred, r.consecutivoRemesa!),
         r.radicadoAnulacionCumplido ? Promise.resolve(null) : leerAnulacionCumplidoInicial(lector, cred, r.consecutivoRemesa!),
@@ -1417,11 +1421,18 @@ async function consultarEstadoParaAnular(viaje: Viaje, remesas: ViajeRemesa[]): 
  */
 function planDeAnulacion(viaje: Viaje, remesas: ViajeRemesa[], consultado = false) {
   const manifiestoVigente = !!viaje.numeroManifiestoRndc && !viaje.radicadoAnulacion;
-  const remesasVigentes = remesas.filter((r) => r.estado === "CREADA");
+  // Una remesa cumplida tambien esta vigente: primero se anula su cumplido.
+  const remesasVigentes = remesas.filter((r) => r.estado === "CREADA" || r.estado === "CUMPLIDA");
   return {
     manifiestoVigente,
     remesasVigentes,
     consultado,
+    // El cumplido del manifiesto se anula primero: con el manifiesto cumplido
+    // el RNDC no deja anular el cumplido de las remesas (ACR070).
+    cumplidoManifiestoVigente:
+      manifiestoVigente && !!viaje.radicadoCumplido && !viaje.radicadoAnulacionCumplidoManifiesto,
+    // Una remesa cumplida no se puede anular (Manual 6.1): antes, su cumplido (28).
+    cumplidosRemesaPorAnular: remesasVigentes.filter((r) => r.estado === "CUMPLIDA"),
     // El cumplido inicial solo existe si hubo manifiesto (lo genera el
     // monitoreo del manifiesto), y el proceso 54 pide su numero.
     cumplidosPorAnular: manifiestoVigente
@@ -1432,6 +1443,29 @@ function planDeAnulacion(viaje: Viaje, remesas: ViajeRemesa[], consultado = fals
     // Nada creado en el RNDC: la "anulacion" es solo local (descartar).
     soloLocal: !manifiestoVigente && remesasVigentes.length === 0,
   };
+}
+
+/**
+ * true si el RNDC todavia tiene el cumplido del manifiesto (consulta de solo
+ * lectura). Si no se puede consultar, se asume que si (no se salta el error).
+ */
+async function cumplidoManifiestoExiste(numero: string): Promise<boolean> {
+  if (config.rndc.simular) return true;
+  try {
+    return !!(await leerCumplidoManifiesto(clienteLectura(), credencialesRndc(), numero));
+  } catch {
+    return true;
+  }
+}
+
+/** Igual para el cumplido de una remesa. */
+async function cumplidoRemesaExiste(consecutivo: string): Promise<boolean> {
+  if (config.rndc.simular) return true;
+  try {
+    return !!(await leerTiemposCumplidoRemesa(clienteLectura(), credencialesRndc(), consecutivo))?.radicado;
+  } catch {
+    return true;
+  }
 }
 
 /** Mes "AAAA-MM" de una fecha (para el tope mensual de anulaciones). */
@@ -1465,6 +1499,8 @@ despachoRouter.get("/:id/anulacion", async (req, res) => {
     anulable: ESTADOS_ANULABLES.includes(viaje.estado),
     estado: viaje.estado,
     pasos: [
+      ...(plan.cumplidoManifiestoVigente ? [`Anular el cumplido del manifiesto ${viaje.consecutivoManifiesto} (proceso 29)`] : []),
+      ...plan.cumplidosRemesaPorAnular.map((r) => `Anular el cumplido de la remesa ${r.consecutivoRemesa} (proceso 28)`),
       ...plan.cumplidosPorAnular.map((r) => `Anular cumplido inicial de la remesa ${r.consecutivoRemesa} (proceso 54)`),
       ...(plan.manifiestoVigente ? [`Anular manifiesto ${viaje.consecutivoManifiesto} (proceso 32)`] : []),
       ...plan.remesasVigentes.map((r) => `Anular remesa ${r.consecutivoRemesa} (proceso 9)`),
@@ -1482,11 +1518,19 @@ despachoRouter.get("/:id/anulacion", async (req, res) => {
 
 /**
  * Anula un viaje en el RNDC, en el orden que exige:
+ *   0. si el viaje ya estaba cumplido: el cumplido del manifiesto (29) y
+ *      luego el de cada remesa cumplida (28). Con el manifiesto cumplido el
+ *      RNDC no deja anular el cumplido de una remesa (ACR070), y una remesa
+ *      cumplida no se puede anular (Manual 6.1);
  *   1. cumplido inicial de cada remesa (54): lo genera el satelital y pide el
  *      numero del manifiesto, asi que va mientras este exista;
  *   2. el manifiesto (32);
  *   3. cada remesa (9): el RNDC no deja anular una remesa ligada a un
  *      manifiesto vigente (ANR030).
+ *
+ * Si el cumplido del manifiesto no se puede anular (por ejemplo, ya esta
+ * facturado o el titular lo acepto), el viaje vuelve a CUMPLIDO con el error:
+ * no se toco nada en el RNDC.
  *
  * Cada paso exitoso se guarda en el momento. Si uno falla, el viaje queda en
  * ANULACION_ERROR y al volver a llamar se retoma desde ahi.
@@ -1509,14 +1553,10 @@ despachoRouter.post("/:id/anular", async (req, res) => {
     });
   }
 
-  const cumplidas = (await viajeRemesas.findByViaje(viajeId)).filter((r) =>
-    ["CUMPLIDA", "CUMPLIENDO"].includes(r.estado)
-  );
-  if (cumplidas.length > 0) {
+  const cumpliendo = (await viajeRemesas.findByViaje(viajeId)).filter((r) => r.estado === "CUMPLIENDO");
+  if (cumpliendo.length > 0) {
     return res.status(409).json({
-      error:
-        `La remesa ${cumplidas.map((r) => r.consecutivoRemesa).join(", ")} ya tiene cumplido en el RNDC ` +
-        "y una remesa cumplida no se puede anular. Primero hay que anular el cumplido en el portal.",
+      error: `La remesa ${cumpliendo.map((r) => r.consecutivoRemesa).join(", ")} se esta cumpliendo en este momento. Espera el resultado.`,
     });
   }
 
@@ -1574,6 +1614,62 @@ despachoRouter.post("/:id/anular", async (req, res) => {
     const credenciales = credencialesRndc();
     const cliente = clienteRegistro();
     const avisos: string[] = [];
+
+    // 0a. Cumplido del manifiesto (29). Si el RNDC ya no lo tiene (anulado en
+    // el portal), se sigue. Si falla, nada cambio: el viaje vuelve a su estado.
+    if (plan.cumplidoManifiestoVigente) {
+      const resultado = await cliente.enviar(
+        construirXmlMensaje(
+          credenciales,
+          PROCESO_ID_ANULAR_CUMPLIDO_MANIFIESTO,
+          construirDatosAnularCumplidoManifiesto(viaje.consecutivoManifiesto!, motivoCumplido, obs)
+        ),
+        PROCESO_ID_ANULAR_CUMPLIDO_MANIFIESTO
+      );
+      const yaNoEsta = !resultado.ok && !(await cumplidoManifiestoExiste(viaje.consecutivoManifiesto!));
+      if (!resultado.ok && !yaNoEsta) {
+        const actualizado = await viajes.update(viajeId, {
+          estado: viaje.estado,
+          mensajeError:
+            `No se pudo anular el cumplido del manifiesto ${viaje.consecutivoManifiesto}: ${resultado.error}. ` +
+            "No se anulo nada. El RNDC no deja anularlo si el valor a pagar ya esta facturado o el titular acepto el cumplido.",
+          codigoError: resultado.codigoError,
+          errorCrudo: resultado.errorCrudo,
+        });
+        return res.status(422).json({ ...actualizado, remesas: await viajeRemesas.findByViaje(viajeId) });
+      }
+      await viajes.update(viajeId, {
+        radicadoAnulacionCumplidoManifiesto: resultado.ok ? resultado.radicado : "ANULADO EN EL RNDC",
+      });
+    }
+
+    // 0b. Cumplido de cada remesa cumplida (28). Quedan CREADA y siguen.
+    for (const r of plan.cumplidosRemesaPorAnular) {
+      const resultado = await cliente.enviar(
+        construirXmlMensaje(
+          credenciales,
+          PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
+          construirDatosAnularCumplidoRemesa(r.consecutivoRemesa!, motivoCumplido, obs)
+        ),
+        PROCESO_ID_ANULAR_CUMPLIDO_REMESA
+      );
+      const yaNoEsta = !resultado.ok && !(await cumplidoRemesaExiste(r.consecutivoRemesa!));
+      if (!resultado.ok && !yaNoEsta) {
+        return await fallar(
+          `${plan.cumplidoManifiestoVigente ? `Ya se anulo el cumplido del manifiesto ${viaje.consecutivoManifiesto}. ` : ""}` +
+            `No se pudo anular el cumplido de la remesa ${r.consecutivoRemesa}: ${resultado.error}. ` +
+            "Corrige y vuelve a anular: se retoma desde aqui.",
+          resultado
+        );
+      }
+      await viajeRemesas.update(r.id, {
+        estado: "CREADA",
+        radicadoCumplido: null,
+        fechaCumplido: null,
+        radicadoAnulacionCumplidoRemesa: resultado.ok ? resultado.radicado : null,
+      });
+      r.estado = "CREADA";
+    }
 
     // 1. Cumplido inicial (54). No bloqueante: ver comentario de la ruta.
     for (const r of plan.cumplidosPorAnular) {
