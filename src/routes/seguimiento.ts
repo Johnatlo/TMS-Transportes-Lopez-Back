@@ -2,6 +2,7 @@ import { Router } from "express";
 import { ErrorCuadro } from "../cuadro";
 import { seguimiento } from "../seguimiento";
 import { responder } from "./cuadro";
+import { importarCartera, propuestaCartera } from "../importaciones";
 
 /**
  * Seguimiento de papeles, facturacion y cartera (ver src/seguimiento.ts).
@@ -32,9 +33,35 @@ seguimientoRouter.post("/papeles/:id", async (req, res) => {
   });
 });
 
-/** GET /api/seguimiento/cartera: facturas por cobrar, totales por cliente y facturados sin datos. */
-seguimientoRouter.get("/cartera", async (_req, res) => {
-  res.json(await seguimiento.cartera());
+/**
+ * GET /api/seguimiento/cartera?dueno=: facturas por cobrar, totales por cliente
+ * y facturados sin datos. Con dueno (MAURICIO, CELSO, MILLER, LUISA o
+ * TERCEROS), solo la parte de los vehiculos de ese dueno.
+ */
+seguimientoRouter.get("/cartera", async (req, res) => {
+  res.json(await seguimiento.cartera(req.query.dueno ? String(req.query.dueno) : undefined));
+});
+
+/** PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). */
+seguimientoRouter.put("/cartera/anticipo", async (req, res) => {
+  await responder(res, async () => {
+    await seguimiento.guardarAnticipoCliente(req.body ?? {});
+    return { ok: true };
+  });
+});
+
+/**
+ * POST /api/seguimiento/cartera/importar/previa: propone como cargar cada
+ * factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a
+ * sus viajes. No guarda nada.
+ */
+seguimientoRouter.post("/cartera/importar/previa", async (req, res) => {
+  await responder(res, () => propuestaCartera(req.body?.facturas));
+});
+
+/** POST /api/seguimiento/cartera/importar: carga las facturas confirmadas ({ facturas }). */
+seguimientoRouter.post("/cartera/importar", async (req, res) => {
+  await responder(res, () => importarCartera(req.body?.facturas));
 });
 
 /** PUT /api/seguimiento/cartera/plazos: plazo y contacto de cobro de un cliente. */

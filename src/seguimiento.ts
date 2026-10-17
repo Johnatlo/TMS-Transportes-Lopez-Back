@@ -26,6 +26,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
 import { cuadro, dia, ErrorCuadro, ESTADOS_PAPELES, hoyColombia, papelesListos, sumarDias } from "./cuadro";
 import type { EstadoPapeles, FilaCuadro } from "./cuadro";
+import { grupoDe, GRUPOS_DUENO } from "./duenos";
+import type { GrupoDueno } from "./duenos";
 
 /** Dias de credito si el cliente no tiene plazo configurado. */
 export const DIAS_CREDITO_DEFECTO = 30;
@@ -151,6 +153,27 @@ export interface ViajeFactura {
   manifiesto: string | null;
   remision: string | null;
   valorFlete: number | null;
+  /** Socio dueno del vehiculo o TERCEROS (filtro por dueno). */
+  dueno: GrupoDueno;
+}
+
+/** Valor de una placa dentro de una factura (antes del anticipo del cliente). */
+export interface PlacaFactura {
+  placa: string;
+  dueno: GrupoDueno;
+  valor: number;
+}
+
+/**
+ * Saldo de cartera sin viaje (cartera_saldos): factura pendiente de antes de
+ * septiembre de 2026, cargada con su valor por placa.
+ */
+export interface SaldoCartera {
+  facturaNumero: string;
+  empresa: string;
+  fechaFactura: string;
+  fechaVence: string | null;
+  placas: PlacaFactura[];
 }
 
 /** Una factura por cobrar (puede cubrir varios viajes). */
@@ -165,10 +188,21 @@ export interface FacturaCartera {
   venceManual: boolean;
   /** Positivo: dias vencida. Negativo: dias que faltan. */
   diasVencida: number;
+  /** Lo que el cliente debe: valorBruto - anticipoCliente. */
   valor: number;
+  /** Valor de los viajes (o de las placas, en un saldo) antes del anticipo del cliente. */
+  valorBruto: number;
+  /** Anticipo o abono que el cliente ya pago de esta factura. */
+  anticipoCliente: number;
+  /** true: saldo de antes de septiembre cargado sin viajes. */
+  sinViaje: boolean;
   /** Viajes sin valor de flete: el total de la factura esta incompleto. */
   viajesSinValor: number;
   viajes: ViajeFactura[];
+  /** Valor por placa (de los viajes, o del saldo). */
+  placas: PlacaFactura[];
+  /** Lo que debe el cliente repartido por dueno de los vehiculos (suma `valor`). */
+  porDueno: Partial<Record<GrupoDueno, number>>;
   ultimaGestion: GestionCobro | null;
   /** Ultimo compromiso de pago del cliente. */
   compromisoPago: string | null;
@@ -207,57 +241,133 @@ export function alertaFactura(vence: string, compromisoPago: string | null, hoy:
 }
 
 /**
+ * Reparte lo que debe el cliente (neto) entre los duenos de las placas, en
+ * proporcion al valor de cada placa: si hubo anticipo del cliente, cada dueno
+ * carga su parte. Los redondeos se ajustan en el grupo mas grande para que la
+ * suma de exactamente el neto.
+ */
+export function repartirPorDueno(placas: PlacaFactura[], neto: number): Partial<Record<GrupoDueno, number>> {
+  const bruto = placas.reduce((s, p) => s + p.valor, 0);
+  const reparto: Partial<Record<GrupoDueno, number>> = {};
+  if (bruto <= 0 || neto <= 0) return reparto;
+  for (const p of placas) reparto[p.dueno] = (reparto[p.dueno] ?? 0) + Math.round((p.valor * neto) / bruto);
+  const grupos = Object.keys(reparto) as GrupoDueno[];
+  const diferencia = neto - grupos.reduce((s, g) => s + reparto[g]!, 0);
+  if (diferencia) {
+    const mayor = grupos.sort((a, b) => reparto[b]! - reparto[a]!)[0];
+    reparto[mayor] = reparto[mayor]! + diferencia;
+  }
+  return reparto;
+}
+
+/**
  * Agrupa por factura (numero + empresa) los viajes facturados con numero y
- * fecha que aun no se han cobrado, y calcula vencimiento y alerta de cada una.
- * Las facturas mas vencidas primero.
+ * fecha que aun no se han cobrado, les suma los saldos sin viaje pendientes,
+ * resta el anticipo del cliente de cada factura y calcula vencimiento y
+ * alerta. Las facturas mas vencidas primero.
  */
 export function agruparCartera(
   filas: FilaCuadro[],
   plazos: Map<string, number>,
   gestiones: Map<string, GestionCobro>,
-  hoy: string
+  hoy: string,
+  extras: { saldos?: SaldoCartera[]; anticipos?: Map<string, number> } = {}
 ): FacturaCartera[] {
+  const anticipos = extras.anticipos ?? new Map<string, number>();
   const grupos = new Map<string, FilaCuadro[]>();
   for (const f of filas) {
     if (f.anulado || f.facturaFechaPago || !f.facturaNumero || !f.facturaFecha) continue;
     const llave = `${f.facturaNumero}|${f.empresa}`;
     grupos.set(llave, [...(grupos.get(llave) ?? []), f]);
   }
-  const facturas: FacturaCartera[] = [];
-  for (const [llave, viajes] of grupos) {
-    const { facturaNumero, empresa } = viajes[0];
-    // Si los viajes tienen fechas distintas, cuenta la mas antigua.
-    const facturaFecha = viajes.map((v) => v.facturaFecha!).sort()[0];
-    const diasCredito = plazos.get(empresa) ?? DIAS_CREDITO_DEFECTO;
-    // La fecha pago cliente escrita en el cuadro manda; si no hay, se calcula.
-    const venceEscrito = viajes.map((v) => v.facturaVence).filter((v): v is string => !!v).sort()[0];
-    const vence = venceEscrito ?? sumarDias(facturaFecha, diasCredito);
+
+  /** Arma la factura con lo comun a viajes y saldos. */
+  const factura = (
+    llave: string,
+    base: { facturaNumero: string; empresa: string; facturaFecha: string; venceEscrito: string | null },
+    placas: PlacaFactura[],
+    resto: Pick<FacturaCartera, "sinViaje" | "viajesSinValor" | "viajes">
+  ): FacturaCartera => {
+    const diasCredito = plazos.get(base.empresa) ?? DIAS_CREDITO_DEFECTO;
+    // La fecha pago cliente escrita manda; si no hay, se calcula.
+    const vence = base.venceEscrito ?? sumarDias(base.facturaFecha, diasCredito);
     const ultimaGestion = gestiones.get(llave) ?? null;
     const compromisoPago = ultimaGestion?.compromisoPago ?? null;
-    facturas.push({
-      facturaNumero: facturaNumero!,
-      empresa,
-      facturaFecha,
+    const valorBruto = placas.reduce((s, p) => s + p.valor, 0);
+    const anticipoCliente = anticipos.get(llave) ?? 0;
+    const valor = Math.max(0, valorBruto - anticipoCliente);
+    return {
+      facturaNumero: base.facturaNumero,
+      empresa: base.empresa,
+      facturaFecha: base.facturaFecha,
       diasCredito,
       vence,
-      venceManual: !!venceEscrito,
+      venceManual: !!base.venceEscrito,
       diasVencida: diasEntre(vence, hoy),
-      valor: viajes.reduce((s, v) => s + (v.valorFlete ?? 0), 0),
-      viajesSinValor: viajes.filter((v) => v.valorFlete === null).length,
-      viajes: viajes.map((v) => ({
-        id: v.id,
-        fecha: v.fecha,
-        placa: v.placa,
-        manifiesto: v.manifiesto,
-        remision: v.remision,
-        valorFlete: v.valorFlete,
-      })),
+      valor,
+      valorBruto,
+      anticipoCliente,
+      ...resto,
+      placas,
+      porDueno: repartirPorDueno(placas, valor),
       ultimaGestion,
       compromisoPago,
       alerta: alertaFactura(vence, compromisoPago, hoy, !!ultimaGestion && diaColombia(ultimaGestion.creadaEn) === hoy),
-    });
+    };
+  };
+
+  const facturas: FacturaCartera[] = [];
+  for (const [llave, viajes] of grupos) {
+    const { facturaNumero, empresa } = viajes[0];
+    facturas.push(
+      factura(
+        llave,
+        {
+          facturaNumero: facturaNumero!,
+          empresa,
+          // Si los viajes tienen fechas distintas, cuenta la mas antigua.
+          facturaFecha: viajes.map((v) => v.facturaFecha!).sort()[0],
+          venceEscrito: viajes.map((v) => v.facturaVence).filter((v): v is string => !!v).sort()[0] ?? null,
+        },
+        viajes.map((v) => ({ placa: v.placa, dueno: grupoDe(v.dueno), valor: v.valorFlete ?? 0 })),
+        {
+          sinViaje: false,
+          viajesSinValor: viajes.filter((v) => v.valorFlete === null).length,
+          viajes: viajes.map((v) => ({
+            id: v.id,
+            fecha: v.fecha,
+            placa: v.placa,
+            manifiesto: v.manifiesto,
+            remision: v.remision,
+            valorFlete: v.valorFlete,
+            dueno: grupoDe(v.dueno),
+          })),
+        }
+      )
+    );
+  }
+  for (const s of extras.saldos ?? []) {
+    facturas.push(
+      factura(
+        `${s.facturaNumero}|${s.empresa}`,
+        { facturaNumero: s.facturaNumero, empresa: s.empresa, facturaFecha: s.fechaFactura, venceEscrito: s.fechaVence },
+        s.placas,
+        { sinViaje: true, viajesSinValor: 0, viajes: [] }
+      )
+    );
   }
   return facturas.sort((a, b) => b.diasVencida - a.diasVencida || a.facturaNumero.localeCompare(b.facturaNumero));
+}
+
+/**
+ * Solo la parte de un dueno: las facturas con vehiculos suyos, cada una con
+ * lo que le toca (porDueno) como valor. Asi los totales y las edades de
+ * cartera quedan por dueno.
+ */
+export function carteraDeDueno(facturas: FacturaCartera[], grupo: GrupoDueno): FacturaCartera[] {
+  return facturas
+    .filter((f) => (f.porDueno[grupo] ?? 0) > 0)
+    .map((f) => ({ ...f, valor: f.porDueno[grupo]! }));
 }
 
 /** Totales por cliente con edades de vencimiento (0, 1-30, 31-60, 61-90, +90 dias). */
@@ -430,17 +540,85 @@ export const seguimiento = {
    * por cliente, y los viajes facturados que no tienen numero o fecha (no
    * pueden calcular su vencimiento).
    */
-  async cartera() {
+  async cartera(dueno?: string) {
     const hoy = hoyColombia();
-    const [filas, plazos, gestiones] = await Promise.all([cuadro.listar(), this.plazos(), this.ultimasGestiones()]);
-    const facturas = agruparCartera(filas, new Map(plazos.map((p) => [p.empresa, p.diasCredito])), gestiones, hoy);
+    const [filas, plazos, gestiones, saldos, anticipos] = await Promise.all([
+      cuadro.listar(),
+      this.plazos(),
+      this.ultimasGestiones(),
+      this.saldosPendientes(),
+      this.anticiposCliente(),
+    ]);
+    const todas = agruparCartera(filas, new Map(plazos.map((p) => [p.empresa, p.diasCredito])), gestiones, hoy, {
+      saldos,
+      anticipos,
+    });
+    // Filtro por dueno: solo la parte de sus vehiculos en cada factura.
+    const grupo = GRUPOS_DUENO.find((g) => g === String(dueno ?? "").toUpperCase());
+    const facturas = grupo ? carteraDeDueno(todas, grupo) : todas;
     return {
       hoy,
+      dueno: grupo ?? null,
       facturas,
       clientes: resumirPorCliente(facturas),
       sinDatos: filas.filter((f) => !f.anulado && !f.facturaFechaPago && (f.facturado || f.facturaNumero || f.facturaFecha) && (!f.facturaNumero || !f.facturaFecha)),
       plazos,
     };
+  },
+
+  /**
+   * Saldos sin viaje que el cliente aun no paga, con su valor por placa y el
+   * dueno de cada placa (segun el vehiculo del catalogo; si no esta, tercero).
+   */
+  async saldosPendientes(): Promise<SaldoCartera[]> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT s.id, s.facturaNumero, s.empresa, s.fechaFactura, s.fechaVence, p.placa, p.valor,
+              (SELECT ve.dueno FROM vehiculos ve WHERE REPLACE(ve.placa, '-', '') = REPLACE(p.placa, '-', '') LIMIT 1) AS dueno
+         FROM cartera_saldos s
+         LEFT JOIN cartera_saldos_placas p ON p.saldoId = s.id
+        WHERE s.fechaPago IS NULL
+        ORDER BY s.id, p.id`
+    );
+    const porId = new Map<number, SaldoCartera>();
+    for (const r of rows) {
+      const saldo: SaldoCartera = porId.get(r.id) ?? {
+        facturaNumero: r.facturaNumero,
+        empresa: r.empresa,
+        fechaFactura: dia(r.fechaFactura)!,
+        fechaVence: dia(r.fechaVence),
+        placas: [],
+      };
+      if (r.placa) saldo.placas.push({ placa: r.placa, dueno: grupoDe(r.dueno), valor: Number(r.valor) });
+      porId.set(r.id, saldo);
+    }
+    return [...porId.values()];
+  },
+
+  /** Anticipo del cliente de cada factura, por llave "numero|empresa". */
+  async anticiposCliente(): Promise<Map<string, number>> {
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT facturaNumero, empresa, valor FROM cartera_anticipos_cliente");
+    return new Map(rows.map((r) => [`${r.facturaNumero}|${r.empresa}`, Number(r.valor)]));
+  },
+
+  /**
+   * Guarda el anticipo (o abono) que el cliente ya pago de una factura; 0 o
+   * vacio lo quita. Se resta de lo que debe en la cartera.
+   */
+  async guardarAnticipoCliente(d: Record<string, unknown>): Promise<void> {
+    const facturaNumero = String(d.facturaNumero ?? "").trim();
+    const empresa = String(d.empresa ?? "").trim();
+    if (!facturaNumero || !empresa) throw new ErrorCuadro("Falta la factura.");
+    const valor = d.valor === null || d.valor === undefined || String(d.valor).trim() === "" ? 0 : Number(d.valor);
+    if (!Number.isFinite(valor) || valor < 0) throw new ErrorCuadro("El anticipo debe ser un valor positivo.");
+    if (valor === 0) {
+      await pool.query("DELETE FROM cartera_anticipos_cliente WHERE facturaNumero = ? AND empresa = ?", [facturaNumero, empresa]);
+      return;
+    }
+    await pool.query(
+      `INSERT INTO cartera_anticipos_cliente (facturaNumero, empresa, valor) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE valor = VALUES(valor)`,
+      [facturaNumero, empresa, Math.round(valor)]
+    );
   },
 
   /** Gestiones de cobro de una factura, la mas reciente primero. */
@@ -484,14 +662,28 @@ export const seguimiento = {
         WHERE facturaNumero = ? AND empresa = ? AND facturaFechaPago IS NULL AND anulado = 0`,
       [fecha, facturaNumero, empresa]
     );
-    return res.affectedRows;
+    // Si es un saldo sin viaje, queda pagado el saldo.
+    const [saldo] = await pool.query<ResultSetHeader>(
+      "UPDATE cartera_saldos SET fechaPago = ? WHERE facturaNumero = ? AND empresa = ? AND fechaPago IS NULL",
+      [fecha, facturaNumero, empresa]
+    );
+    return res.affectedRows + saldo.affectedRows;
   },
 
   /** Alertas de la campana de seguimiento: papeles, facturacion y cartera. */
   async alertas() {
     const hoy = hoyColombia();
-    const [filas, plazos, gestiones] = await Promise.all([cuadro.listar(), this.plazos(), this.ultimasGestiones()]);
-    const facturas = agruparCartera(filas, new Map(plazos.map((p) => [p.empresa, p.diasCredito])), gestiones, hoy);
+    const [filas, plazos, gestiones, saldos, anticipos] = await Promise.all([
+      cuadro.listar(),
+      this.plazos(),
+      this.ultimasGestiones(),
+      this.saldosPendientes(),
+      this.anticiposCliente(),
+    ]);
+    const facturas = agruparCartera(filas, new Map(plazos.map((p) => [p.empresa, p.diasCredito])), gestiones, hoy, {
+      saldos,
+      anticipos,
+    });
     const alertas = alertasDe(filas, facturas, hoy, SEGUIMIENTO_DESDE);
     return {
       hoy,

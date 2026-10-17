@@ -36,6 +36,7 @@ import {
   type NuevaPlantilla,
 } from "../repo";
 import { clienteSicetac, credencialesRndc } from "../rndc/conexion";
+import { DUENOS } from "../duenos";
 
 export const catalogoRouter = Router();
 
@@ -251,10 +252,18 @@ catalogoRouter.put("/vehiculos/:id", async (req, res) => {
     "placa", "placaRemolque", "marca", "configuracion", "capacidadKg", "pesoVehiculoVacio",
     "codTipoCarroceria", "propietarioNit", "codTipoIdTenedor", "numIdTenedor", "nombreTenedor",
     "fechaVencSoat", "fechaVencTecnomecanica", "aplicaFopat", "nitMonitoreoFlota", "activo",
-    "cedulaConductorHabitual", "flota",
+    "cedulaConductorHabitual", "flota", "dueno",
   ]);
   if ("flota" in datos && !["LOPEZ", "MYC", "TERCERO"].includes(String(datos.flota))) {
     return res.status(422).json({ error: "La flota es LOPEZ, MYC o TERCERO." });
+  }
+  // Dueno para la cartera: un socio o vacio (tercero).
+  if ("dueno" in datos) {
+    const dueno = String(datos.dueno ?? "").trim().toUpperCase();
+    if (dueno && !(DUENOS as readonly string[]).includes(dueno)) {
+      return res.status(422).json({ error: `El dueno es ${DUENOS.join(", ")} o vacio (tercero).` });
+    }
+    datos.dueno = dueno || null;
   }
   if ("placa" in datos) datos.placa = mayusculas(datos.placa);
   if ("placaRemolque" in datos) datos.placaRemolque = mayusculas(datos.placaRemolque);

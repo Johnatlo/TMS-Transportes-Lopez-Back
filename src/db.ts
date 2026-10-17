@@ -9,6 +9,7 @@
 import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import "dotenv/config";
+import { PLACAS_POR_DUENO } from "./duenos";
 
 export const pool = mysql.createPool({
   host: process.env.DB_HOST ?? "localhost",
@@ -510,6 +511,43 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Saldos de cartera sin viaje: facturas pendientes de antes de que los
+  // viajes estuvieran en el sistema (antes de septiembre de 2026), cargadas
+  // una sola vez desde el Excel "Cartera Total" con su valor por placa. Desde
+  // septiembre todo va por el cuadro pagos (factura en cada viaje).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cartera_saldos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      facturaNumero VARCHAR(30) NOT NULL,
+      empresa VARCHAR(200) NOT NULL,
+      fechaFactura DATE NOT NULL,
+      fechaVence DATE,
+      fechaPago DATE,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_saldo_factura (facturaNumero, empresa)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cartera_saldos_placas (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      saldoId INT NOT NULL,
+      placa VARCHAR(15) NOT NULL,
+      valor DOUBLE NOT NULL,
+      INDEX idx_saldo_placa (saldoId),
+      CONSTRAINT fk_saldo_placa FOREIGN KEY (saldoId) REFERENCES cartera_saldos(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Anticipo (o abono) que el cliente ya pago de una factura: se resta de lo
+  // que debe. Llave: numero de factura + empresa, igual que la cartera.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cartera_anticipos_cliente (
+      facturaNumero VARCHAR(30) NOT NULL,
+      empresa VARCHAR(200) NOT NULL,
+      valor DOUBLE NOT NULL,
+      PRIMARY KEY (facturaNumero, empresa)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Sesiones abiertas. Se guarda el HASH del token (no el token): quien lea
   // esta tabla no puede suplantar a nadie.
   await pool.query(`
@@ -843,6 +881,9 @@ export async function initSchema(): Promise<void> {
     // Conductor que dice el manifiesto. El cuadro muestra el habitual del
     // vehiculo en la flota (conductor); este queda como referencia.
     ["cuadro_viajes", "conductorManifiesto", "VARCHAR(150)"],
+    // Dueno del vehiculo para separar la cartera (MAURICIO, CELSO, MILLER o
+    // LUISA). NULL = tercero.
+    ["vehiculos", "dueno", "VARCHAR(20)"],
     // Ruta escrita a mano en los viajes sin manifiesto ("SOACHA - CALI"). Los
     // que tienen manifiesto muestran la del RNDC y no usan esta columna.
     ["cuadro_viajes", "rutaManual", "VARCHAR(200)"],
@@ -887,6 +928,11 @@ export async function initSchema(): Promise<void> {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'conductorManifiesto'`
   );
   const conductorManifiestoEsNuevo = (conManifiesto as unknown[]).length === 0;
+  const [conDueno] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'dueno'`
+  );
+  const duenoEsNuevo = (conDueno as unknown[]).length === 0;
 
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(
@@ -920,6 +966,14 @@ export async function initSchema(): Promise<void> {
   // Correccion unica al crear conductorManifiesto: se guarda el conductor que
   // trajo cada manifiesto y, donde nadie lo cambio a mano, el cuadro pasa a
   // mostrar el conductor habitual del vehiculo en la flota.
+  // Carga unica al crear el dueno: las placas de cada socio segun el Excel
+  // "Cartera Total". Despues se cambia en Flota.
+  if (duenoEsNuevo) {
+    for (const [dueno, placas] of Object.entries(PLACAS_POR_DUENO)) {
+      await pool.query("UPDATE vehiculos SET dueno = ? WHERE REPLACE(placa, '-', '') IN (?)", [dueno, placas]);
+    }
+  }
+
   if (conductorManifiestoEsNuevo) {
     await pool.query(
       `UPDATE cuadro_viajes cv JOIN viajes v ON v.id = cv.viajeId

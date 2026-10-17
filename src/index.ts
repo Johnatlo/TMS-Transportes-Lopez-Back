@@ -44,7 +44,8 @@ async function main() {
 
   // credentials: la sesion viaja en una cookie.
   app.use(cors({ origin: config.corsOrigin, credentials: true }));
-  app.use(express.json());
+  // 2 MB: la carga inicial desde Excel (cartera, anticipos) manda cientos de filas.
+  app.use(express.json({ limit: "2mb" }));
 
   app.get("/api/health", (_req, res) => {
     res.json({

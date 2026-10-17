@@ -425,6 +425,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/cuadro/bombas` | Crea una bomba ({ nombre, ciudad }). Devuelve su id. |
 | `PUT` | `/api/cuadro/bombas/:bombaId` | Cambia nombre, ciudad o activa; devuelve la lista. |
 | `GET` | `/api/cuadro/anticipos` | Todos los tramos de anticipo (ida y vuelta), lo mas reciente primero. |
+| `POST` | `/api/cuadro/anticipos/importar/previa` | Propone el viaje de cada fila del Excel de anticipos ({ filas }). No guarda nada. |
+| `POST` | `/api/cuadro/anticipos/importar` | Carga las filas confirmadas ({ filas: [{ ...fila, viajeId }] }). |
 | `GET` | `/api/cuadro/anticipos/resumen` | Deuda, pagado, abonado por el socio, pendiente y cupo con la bomba. |
 | `PUT` | `/api/cuadro/anticipos/parametros` | Cupo de credito con la bomba y precio y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }). Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id. |
 | `GET` | `/api/cuadro/abonos-socio` | Abonos del socio a la bomba, con sus viajes. |
@@ -478,7 +480,10 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/seguimiento/alertas` | Alertas de papeles, facturacion y cartera. |
 | `GET` | `/api/seguimiento/papeles` | Viajes sin factura con su alerta de papeles y de facturacion. |
 | `POST` | `/api/seguimiento/papeles/:id` | Registra lo que se supo de los papeles ({ estadoPapeles?, papelesTiene?, papelesCompletos?, papelesFaltan?, nota? }). Devuelve el viaje del cuadro actualizado (404 si no existe). |
-| `GET` | `/api/seguimiento/cartera` | Facturas por cobrar, totales por cliente y facturados sin datos. |
+| `GET` | `/api/seguimiento/cartera` | Facturas por cobrar, totales por cliente y facturados sin datos. Con dueno (MAURICIO, CELSO, MILLER, LUISA o TERCEROS), solo la parte de los vehiculos de ese dueno. |
+| `PUT` | `/api/seguimiento/cartera/anticipo` | Anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). |
+| `POST` | `/api/seguimiento/cartera/importar/previa` | Propone como cargar cada factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a sus viajes. No guarda nada. |
+| `POST` | `/api/seguimiento/cartera/importar` | Carga las facturas confirmadas ({ facturas }). |
 | `PUT` | `/api/seguimiento/cartera/plazos` | Plazo y contacto de cobro de un cliente. |
 | `GET` | `/api/seguimiento/cartera/gestiones` | Gestiones de cobro de una factura. |
 | `POST` | `/api/seguimiento/cartera/gestiones` | Anota una gestion de cobro ({ facturaNumero, empresa, texto, compromisoPago? }). Devuelve las de esa factura. |
@@ -498,7 +503,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_556 funciones, componentes, métodos y rutas en 39 archivos._
+_581 funciones, componentes, métodos y rutas en 41 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -509,8 +514,10 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
 - [`src/correo.ts`](#srccorreots) (9)
 - [`src/cuadro.ts`](#srccuadrots) (31)
 - [`src/db.ts`](#srcdbts) (3)
+- [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
 - [`src/fechas.ts`](#srcfechasts) (1)
+- [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (43)
@@ -525,9 +532,9 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (22)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (29)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (31)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (45)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (8)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (11)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -538,7 +545,7 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (23)
+- [`src/seguimiento.ts`](#srcseguimientots) (28)
 
 ### `src/alertas.ts`
 
@@ -1189,6 +1196,14 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
   coinciden, todas quedan iguales (solo se tocan las distintas, que suelen ser
   las nuevas y pequenas). Si algo falla se avisa y el sistema sigue.
 
+### `src/duenos.ts`
+
+> Duenos de los vehiculos, para separar la cartera por socio (filtro de
+> Cartera). Cada vehiculo tiene su dueno en vehiculos.dueno; NULL = tercero.
+
+- **`grupoDe(dueno)`** · _función_
+  Grupo del vehiculo a partir de su dueno (vacio o desconocido = terceros).
+
 ### `src/facturacion.ts`
 
 > Envio a facturacion: el cuadro que se le manda a la contadora (que factura
@@ -1254,6 +1269,94 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
 
 - **`fechaHoraColombia(valor)`** · _función_
   Fecha y hora escritas en Colombia. Si ya trae zona (ISO con Z u offset), se respeta.
+
+### `src/importaciones.ts`
+
+> Carga inicial desde los Excel de la empresa (una sola vez, con revision):
+>
+> - Cartera ("Cartera Total"): las facturas de antes de septiembre de 2026
+>   quedan como saldos sin viaje (cartera_saldos) con su valor por placa; las
+>   de septiembre en adelante se ligan a sus viajes del cuadro pagos (numero,
+>   fecha y vencimiento de factura en cada viaje) para seguir el flujo normal.
+> - Anticipos (hoja de las EDS): cada fila es un anticipo de un viaje; se
+>   crea el tanqueo y su tramo en el viaje elegido.
+>
+> El navegador lee el Excel y manda las filas. Primero se pide la propuesta
+> (proponerCartera / proponerAnticipos: que viaje parece ser cada linea y que
+> tan seguro es) y la persona corrige en pantalla las dudosas; luego se
+> confirma (importarCartera / importarAnticipos). Reimportar no duplica.
+
+- **`limpio(s)`** · _función_
+  Mayusculas, sin tildes ni puntuacion.
+
+- **`mismoCliente(corto, empresa)`** · _función_
+  true si el nombre corto del Excel corresponde a la empresa del cuadro: el
+  nombre completo contenido (sin espacios: "VILLA PAPEL" = "VILLAPAPEL") o
+  alguna palabra significativa (4+ letras) en comun.
+
+- **`candidato(v, cliente)`** · _función_
+  Viaje del cuadro como candidato de una linea, marcando si es del mismo cliente.
+
+- **`anticipoDe(f)`** · _función_
+  Anticipo del cliente implicito: lo que suman las placas menos lo que se debe.
+
+- **`proponerCartera(facturas, viajes)`** · _función_
+  Propone como cargar cada factura:
+  - Antes del corte (septiembre): saldo sin viaje.
+  - Desde el corte: ligada a viajes. Para cada placa se buscan sus viajes del
+    cuadro de los 75 dias anteriores a la factura que no esten anulados, ni
+    pagados, ni facturados con otro numero. Primero los que ya tienen este
+    numero (reimportacion); si no, el mas reciente del mismo cliente que no se
+    haya propuesto ya para otra factura. Si una placa no tiene ningun viaje,
+    la factura se propone como saldo (sus viajes no estan en el sistema).
+
+- **`fechaONull(v)`** · _función_
+  Fecha "AAAA-MM-DD" o null.
+
+- **`importarCartera(facturas)`** · _función_
+  Carga las facturas confirmadas en una transaccion:
+  - SALDO: crea o reemplaza el saldo (numero + cliente) con sus placas.
+  - VIAJES: pone numero, fecha y vencimiento de factura en cada viaje (y lo
+    marca facturado). Si el viaje no tenia flete, queda el valor del Excel
+    como flete fijo (repartido si la placa tiene varios viajes).
+  - El anticipo del cliente queda con la llave de la cartera (numero + cliente
+    del saldo, o + empresa de los viajes).
+  Valida que cada linea de una factura por viajes tenga viaje, que ningun
+  viaje quede en dos facturas y que no este facturado con otro numero.
+
+- **`dias(a, b)`** · _función_
+  Dias entre dos fechas "AAAA-MM-DD" (b - a).
+
+- **`llaveAnticipo(placa, fecha, efectivo, combustible)`** · _función_
+  Llave para reconocer un anticipo ya cargado.
+
+- **`proponerAnticipos(filas, viajes, existentes)`** · _función_
+  Propone el viaje de cada anticipo entre los de la misma placa desde 3 dias
+  antes hasta 20 despues del anticipo, en dos pasadas por fecha:
+  1. Cada anticipo toma el viaje libre mas cercano de su mismo cliente.
+  2. Los que quedaron sin viaje toman el mas cercano que siga libre (dos
+     anticipos de la misma placa el mismo dia suelen ser ida y regreso: el
+     segundo va al viaje siguiente); si no queda ninguno libre, el mas
+     cercano aunque ya tenga otro anticipo.
+  "Mas cercano": mejor el mismo dia o despues (el anticipo se da al cargar).
+  Seguro si es del mismo cliente y a lo sumo 2 dias despues, o si es el unico
+  viaje de la placa ese dia.
+
+- **`anticiposExistentes()`** · _función_
+  Cuantos anticipos ya cargados hay de cada llave (placa, fecha, efectivo, combustible).
+
+- **`importarAnticipos(filas, usuarioId)`** · _función_
+  Carga los anticipos confirmados en una transaccion: por cada uno, la bomba
+  (se crea si no existe), el tanqueo con la factura de la bomba y el tramo de
+  IDA en el viaje con efectivo, combustible, galones, descuento y fecha de
+  pago a la bomba. Se saltan tantos de cada llave como ya haya en la base
+  (reimportar no duplica; dos filas iguales del mismo Excel si se cargan).
+
+- **`propuestaCartera(facturas)`** · _función_
+  Propuesta de la cartera con los viajes actuales del cuadro.
+
+- **`propuestaAnticipos(filas)`** · _función_
+  Propuesta de los anticipos con los viajes actuales del cuadro.
 
 ### `src/index.ts`
 
@@ -2772,6 +2875,13 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
 - **`GET /anticipos`** · _ruta HTTP_
   GET /api/cuadro/anticipos: todos los tramos de anticipo (ida y vuelta), lo mas reciente primero.
 
+- **`POST /anticipos/importar/previa`** · _ruta HTTP_
+  POST /api/cuadro/anticipos/importar/previa: propone el viaje de cada fila del
+  Excel de anticipos ({ filas }). No guarda nada.
+
+- **`POST /anticipos/importar`** · _ruta HTTP_
+  POST /api/cuadro/anticipos/importar: carga las filas confirmadas ({ filas: [{ ...fila, viajeId }] }).
+
 - **`GET /anticipos/resumen`** · _ruta HTTP_
   GET /api/cuadro/anticipos/resumen: deuda, pagado, abonado por el socio, pendiente y cupo con la bomba.
 
@@ -3171,7 +3281,20 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
   Devuelve el viaje del cuadro actualizado (404 si no existe).
 
 - **`GET /cartera`** · _ruta HTTP_
-  GET /api/seguimiento/cartera: facturas por cobrar, totales por cliente y facturados sin datos.
+  GET /api/seguimiento/cartera?dueno=: facturas por cobrar, totales por cliente
+  y facturados sin datos. Con dueno (MAURICIO, CELSO, MILLER, LUISA o
+  TERCEROS), solo la parte de los vehiculos de ese dueno.
+
+- **`PUT /cartera/anticipo`** · _ruta HTTP_
+  PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }).
+
+- **`POST /cartera/importar/previa`** · _ruta HTTP_
+  POST /api/seguimiento/cartera/importar/previa: propone como cargar cada
+  factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a
+  sus viajes. No guarda nada.
+
+- **`POST /cartera/importar`** · _ruta HTTP_
+  POST /api/seguimiento/cartera/importar: carga las facturas confirmadas ({ facturas }).
 
 - **`PUT /cartera/plazos`** · _ruta HTTP_
   PUT /api/seguimiento/cartera/plazos: plazo y contacto de cobro de un cliente.
@@ -3541,10 +3664,22 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
   que ya se anoto una gestion de cobro (`gestionHoy`) no avisa. Antes del
   vencimiento no hay alerta.
 
-- **`agruparCartera(filas, plazos, gestiones, hoy)`** · _función_
+- **`repartirPorDueno(placas, neto)`** · _función_
+  Reparte lo que debe el cliente (neto) entre los duenos de las placas, en
+  proporcion al valor de cada placa: si hubo anticipo del cliente, cada dueno
+  carga su parte. Los redondeos se ajustan en el grupo mas grande para que la
+  suma de exactamente el neto.
+
+- **`agruparCartera(filas, plazos, gestiones, hoy, extras)`** · _función_
   Agrupa por factura (numero + empresa) los viajes facturados con numero y
-  fecha que aun no se han cobrado, y calcula vencimiento y alerta de cada una.
-  Las facturas mas vencidas primero.
+  fecha que aun no se han cobrado, les suma los saldos sin viaje pendientes,
+  resta el anticipo del cliente de cada factura y calcula vencimiento y
+  alerta. Las facturas mas vencidas primero.
+
+- **`carteraDeDueno(facturas, grupo)`** · _función_
+  Solo la parte de un dueno: las facturas con vehiculos suyos, cada una con
+  lo que le toca (porDueno) como valor. Asi los totales y las edades de
+  cartera quedan por dueno.
 
 - **`resumirPorCliente(facturas)`** · _función_
   Totales por cliente con edades de vencimiento (0, 1-30, 31-60, 61-90, +90 dias).
@@ -3577,10 +3712,21 @@ _556 funciones, componentes, métodos y rutas en 39 archivos._
   - **`seguimiento.ultimasGestiones()`** · _método_
     Ultima gestion de cobro de cada factura, por llave "numero|empresa".
 
-  - **`seguimiento.cartera()`** · _método_
+  - **`seguimiento.cartera(dueno)`** · _método_
     Cartera completa: facturas por cobrar con vencimiento y alerta, totales
     por cliente, y los viajes facturados que no tienen numero o fecha (no
     pueden calcular su vencimiento).
+
+  - **`seguimiento.saldosPendientes()`** · _método_
+    Saldos sin viaje que el cliente aun no paga, con su valor por placa y el
+    dueno de cada placa (segun el vehiculo del catalogo; si no esta, tercero).
+
+  - **`seguimiento.anticiposCliente()`** · _método_
+    Anticipo del cliente de cada factura, por llave "numero|empresa".
+
+  - **`seguimiento.guardarAnticipoCliente(d)`** · _método_
+    Guarda el anticipo (o abono) que el cliente ya pago de una factura; 0 o
+    vacio lo quita. Se resta de lo que debe en la cartera.
 
   - **`seguimiento.gestiones(facturaNumero, empresa)`** · _método_
     Gestiones de cobro de una factura, la mas reciente primero.

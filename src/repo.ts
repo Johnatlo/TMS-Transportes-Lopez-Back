@@ -48,6 +48,8 @@ export interface Vehiculo {
   cedulaConductorHabitual: string | null;
   /** LOPEZ o MYC (flota propia) o TERCERO. */
   flota?: "LOPEZ" | "MYC" | "TERCERO";
+  /** Socio dueno (MAURICIO, CELSO, MILLER o LUISA) para separar la cartera; null = tercero. */
+  dueno?: string | null;
   /** Link de la plataforma GPS de este vehiculo (si no, el de su empresa de monitoreo). */
   gpsUrl?: string | null;
   /** Usuario de la plataforma GPS. */
@@ -595,6 +597,7 @@ export const vehiculos = {
       aplicaFopat: "booleano",
       nitMonitoreoFlota: "texto",
       flota: "texto",
+      dueno: "texto",
       gpsUrl: "texto",
       gpsUsuario: "texto",
       activo: "booleano",

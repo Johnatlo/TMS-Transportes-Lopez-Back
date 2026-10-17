@@ -2,6 +2,7 @@ import { Router, type Response } from "express";
 import { bombas, cuadro, ErrorCuadro } from "../cuadro";
 import { facturacion } from "../facturacion";
 import { anticipos } from "../anticipos";
+import { importarAnticipos, propuestaAnticipos } from "../importaciones";
 
 /**
  * Cuadro pagos de viajes (ver src/cuadro.ts). Montado en /api/cuadro con
@@ -47,6 +48,17 @@ cuadroRouter.put("/bombas/:bombaId", async (req, res) => {
 /** GET /api/cuadro/anticipos: todos los tramos de anticipo (ida y vuelta), lo mas reciente primero. */
 cuadroRouter.get("/anticipos", async (_req, res) => {
   res.json(await anticipos.cuadro());
+});
+/**
+ * POST /api/cuadro/anticipos/importar/previa: propone el viaje de cada fila del
+ * Excel de anticipos ({ filas }). No guarda nada.
+ */
+cuadroRouter.post("/anticipos/importar/previa", async (req, res) => {
+  await responder(res, () => propuestaAnticipos(req.body?.filas));
+});
+/** POST /api/cuadro/anticipos/importar: carga las filas confirmadas ({ filas: [{ ...fila, viajeId }] }). */
+cuadroRouter.post("/anticipos/importar", async (req, res) => {
+  await responder(res, () => importarAnticipos(req.body?.filas, req.usuario?.id ?? null));
 });
 /** GET /api/cuadro/anticipos/resumen: deuda, pagado, abonado por el socio, pendiente y cupo con la bomba. */
 cuadroRouter.get("/anticipos/resumen", async (_req, res) => {

@@ -16,6 +16,7 @@ function viaje(cambios: Partial<Base> = {}): Base {
     vehiculoId: 1,
     placa: "SKN250",
     flota: "TERCERO",
+    dueno: null,
     conductor: null,
     ruta: null,
     rutaManual: null,

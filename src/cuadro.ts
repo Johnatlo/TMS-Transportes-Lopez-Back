@@ -104,6 +104,8 @@ export interface FilaCuadro {
   vehiculoId: number | null;
   placa: string;
   flota: Flota;
+  /** Socio dueno del vehiculo (MAURICIO, CELSO, MILLER, LUISA); null = tercero. Para la cartera. */
+  dueno: string | null;
   conductor: string | null;
   /**
    * Ruta para consultar ("SOACHA CUNDINAMARCA → CALI VALLE DEL CAUCA"). Con
@@ -251,7 +253,7 @@ const CODIGO_ORIGEN = "LPAD(COALESCE(pl.municipioOrigen, vj.origenRndc), 8, '0')
 const CODIGO_DESTINO = "LPAD(COALESCE(pl.municipioDestino, vj.destinoRndc), 8, '0')";
 
 export const SELECT_CUADRO = `
-  SELECT c.*, COALESCE(ve.flota, 'TERCERO') AS flota,
+  SELECT c.*, COALESCE(ve.flota, 'TERCERO') AS flota, ve.dueno,
          ${nombreMunicipio(CODIGO_ORIGEN)} AS rutaOrigen,
          ${nombreMunicipio(CODIGO_DESTINO)} AS rutaDestino,
          uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor, up.nombre AS papelesRevisadoPor,
@@ -285,6 +287,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     vehiculoId: r.vehiculoId,
     placa: r.placa,
     flota: (r.flota ?? "TERCERO") as Flota,
+    dueno: r.dueno ?? null,
     conductor: r.conductor,
     ruta: r.viajeId
       ? r.rutaOrigen || r.rutaDestino
