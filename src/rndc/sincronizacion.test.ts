@@ -8,6 +8,7 @@ import {
   fechaHoraCitaRndc,
   fechaIngresoRndc,
   leerDocumentos,
+  manifiestoSinLetra,
   partesConsecutivoRemesa,
   tramosMensuales,
 } from "./sincronizacion";
@@ -79,5 +80,14 @@ describe("lectura de la respuesta", () => {
 
   test("respuesta sin documentos (RNDC11) no trae nada", () => {
     expect(leerDocumentos("<root><ErrorMSG>Error RNDC11: Documento no encontrado</ErrorMSG></root>")).toEqual([]);
+  });
+});
+
+describe("manifiesto re-expedido con letra", () => {
+  test("00006579A es el 00006579 re-expedido; sin letra no aplica", () => {
+    expect(manifiestoSinLetra("00006579A")).toBe("00006579");
+    expect(manifiestoSinLetra("00006670a")).toBe("00006670");
+    expect(manifiestoSinLetra("00006579")).toBeNull();
+    expect(manifiestoSinLetra("00006579AB")).toBeNull();
   });
 });

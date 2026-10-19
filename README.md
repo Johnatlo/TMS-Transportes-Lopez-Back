@@ -505,7 +505,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_592 funciones, componentes, métodos y rutas en 41 archivos._
+_596 funciones, componentes, métodos y rutas en 41 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -531,7 +531,7 @@ _592 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/rndc/pdf.ts`](#srcrndcpdfts) (4)
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
-- [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (22)
+- [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (31)
@@ -2578,6 +2578,14 @@ _592 funciones, componentes, métodos y rutas en 41 archivos._
 - **`tramosMensuales(desde, hasta)`** · _función_
   Tramos de hasta un mes entre dos fechas: una consulta por tramo, para no pesar al RNDC.
 
+- **`manifiestoSinLetra(numero)`** · _función_
+  Numero de un manifiesto re-expedido sin su letra final: "00006579A" ->
+  "00006579". Cuando un manifiesto se anula y se vuelve a expedir, el RNDC le
+  agrega una letra y la remesa sigue con el numero original (verificado en
+  produccion 2026-10-19: 00006549A, 00006579A y 00006670A llevan las remesas
+  00006549, 00006579 y 00006670; los manifiestos sin letra estan anulados).
+  null si el numero no termina en letra.
+
 - **`partesConsecutivoRemesa(consecutivo)`** · _función_
   "00006692B" -> { base: "00006692", orden: 3 }: la remesa A es la 2, la B la 3.
 
@@ -2606,6 +2614,17 @@ _592 funciones, componentes, métodos y rutas en 41 archivos._
 - **`crearRemesaPortal(viajeId, r, resumen)`** · _función_
   Crea una remesa del portal ligada a su viaje (si su consecutivo no existe ya).
 
+- **`viajeParaRemesa(base)`** · _función_
+  Viaje al que va una remesa del portal: el manifiesto con su numero si esta
+  vigente; si se anulo, el re-expedido con letra (00006579 -> 00006579A); si
+  no hay otro, el anulado (como antes).
+
+- **`reubicarRemesasDeReexpedidos(resumen)`** · _función_
+  Remesas que quedaron en un manifiesto anulado cuando ya hay uno vigente
+  re-expedido con letra (antes la sincronizacion las pegaba al anulado y el
+  vigente quedaba sin remesas, fuera del cuadro pagos): pasan al vigente, con
+  su fila del cuadro. No toca viajes que se estan enviando.
+
 - **`viajePorManifiesto(numero)`** · _función_
   Viaje del TMS por numero de manifiesto, con la placa con que se expidio.
 
@@ -2615,6 +2634,12 @@ _592 funciones, componentes, métodos y rutas en 41 archivos._
 - **`sincronizarRango(cliente, cred, desde, hasta)`** · _función_
   Trae del RNDC todo lo registrado entre dos fechas y lo refleja en el TMS.
   Ver la cabecera del modulo. Devuelve lo que cambio.
+
+- **`buscarRemesasFaltantes(cliente, cred, resumen)`** · _función_
+  Manifiestos vigentes sin ninguna remesa en el TMS (no salen en el cuadro
+  pagos): se pide al RNDC (tipo 3, solo lectura) la remesa con el numero del
+  manifiesto, o sin su letra si es re-expedido (00006549A -> 00006549). Pasa
+  cuando la remesa se registro antes del rango que se sincroniza.
 
 - **`crearViajeAnulado(a)`** · _función_
   Viaje anulado en el RNDC que el TMS no conocia. Solo se sabe lo que guarda

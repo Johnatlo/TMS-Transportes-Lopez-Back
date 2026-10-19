@@ -27,6 +27,7 @@ import { config } from "../config";
 import { RndcClient } from "./client";
 import { escapeTexto, type CredencialesRndc } from "./builders";
 import { clienteLectura, credencialesRndc } from "./conexion";
+import { consultarDocumentoPropio, leerTiemposCumplidoRemesa } from "./consultas";
 
 /** Estados en los que el viaje se esta enviando: la sincronizacion no lo toca. */
 const ESTADOS_EN_CURSO = ["PENDIENTE", "REINTENTANDO", "ANULANDO", "CUMPLIENDO"];
@@ -54,6 +55,8 @@ export interface ResumenSincronizacion {
   anulacionesCumplidoInicial: number;
   /** Remesas anuladas en el RNDC sin manifiesto (en el RNDC ni en el TMS): solo se informan. */
   remesasAnuladasSinViaje: string[];
+  /** Remesas que estaban en un manifiesto anulado y pasaron al re-expedido con letra. */
+  remesasReubicadas: string[];
   conflictos: string[];
 }
 
@@ -97,6 +100,19 @@ export function tramosMensuales(desde: Date, hasta: Date): Array<[Date, Date]> {
     ini = fin;
   }
   return tramos;
+}
+
+/**
+ * Numero de un manifiesto re-expedido sin su letra final: "00006579A" ->
+ * "00006579". Cuando un manifiesto se anula y se vuelve a expedir, el RNDC le
+ * agrega una letra y la remesa sigue con el numero original (verificado en
+ * produccion 2026-10-19: 00006549A, 00006579A y 00006670A llevan las remesas
+ * 00006549, 00006579 y 00006670; los manifiestos sin letra estan anulados).
+ * null si el numero no termina en letra.
+ */
+export function manifiestoSinLetra(numero: string): string | null {
+  const m = /^(\d+)[A-Z]$/i.exec(numero.trim());
+  return m ? m[1] : null;
 }
 
 /** "00006692B" -> { base: "00006692", orden: 3 }: la remesa A es la 2, la B la 3. */
@@ -270,6 +286,49 @@ async function crearRemesaPortal(viajeId: number, r: Registro, resumen: ResumenS
   resumen.remesasNuevas.push(r.consecutivoremesa);
 }
 
+/**
+ * Viaje al que va una remesa del portal: el manifiesto con su numero si esta
+ * vigente; si se anulo, el re-expedido con letra (00006579 -> 00006579A); si
+ * no hay otro, el anulado (como antes).
+ */
+async function viajeParaRemesa(base: string) {
+  const filas = await q(
+    `SELECT v.id, v.estado, v.numeroManifiestoRndc, v.consecutivoManifiesto
+       FROM viajes v
+      WHERE v.consecutivoManifiesto = ? OR v.consecutivoManifiesto REGEXP ?
+      ORDER BY (v.estado <> 'ANULADO') DESC, (v.consecutivoManifiesto = ?) DESC, v.consecutivoManifiesto DESC
+      LIMIT 1`,
+    [base, `^${base}[A-Za-z]$`, base]
+  );
+  return filas[0] as { id: number; estado: string; numeroManifiestoRndc: string | null } | undefined;
+}
+
+/**
+ * Remesas que quedaron en un manifiesto anulado cuando ya hay uno vigente
+ * re-expedido con letra (antes la sincronizacion las pegaba al anulado y el
+ * vigente quedaba sin remesas, fuera del cuadro pagos): pasan al vigente, con
+ * su fila del cuadro. No toca viajes que se estan enviando.
+ */
+async function reubicarRemesasDeReexpedidos(resumen: ResumenSincronizacion) {
+  const filas = await q(
+    `SELECT vr.id, vr.consecutivoRemesa, n.id AS nuevoId, n.consecutivoManifiesto AS nuevo, n.estado AS estadoNuevo
+       FROM viaje_remesas vr
+       JOIN viajes a ON a.id = vr.viajeId AND a.estado = 'ANULADO'
+       JOIN viajes n ON n.estado <> 'ANULADO'
+                    AND n.consecutivoManifiesto REGEXP CONCAT('^', a.consecutivoManifiesto, '[A-Za-z]$')
+      WHERE vr.estado <> 'ANULADA'
+      ORDER BY vr.id, n.consecutivoManifiesto DESC`
+  );
+  const hechas = new Set<number>();
+  for (const f of filas as Array<RowDataPacket & { id: number; consecutivoRemesa: string; nuevoId: number; nuevo: string; estadoNuevo: string }>) {
+    if (hechas.has(f.id) || ESTADOS_EN_CURSO.includes(f.estadoNuevo)) continue;
+    hechas.add(f.id);
+    await q("UPDATE viaje_remesas SET viajeId = ? WHERE id = ?", [f.nuevoId, f.id]);
+    await q("UPDATE cuadro_viajes SET viajeId = ?, manifiesto = ?, anulado = 0 WHERE viajeRemesaId = ?", [f.nuevoId, f.nuevo, f.id]);
+    resumen.remesasReubicadas.push(`${f.consecutivoRemesa} -> ${f.nuevo}`);
+  }
+}
+
 /** Viaje del TMS por numero de manifiesto, con la placa con que se expidio. */
 async function viajePorManifiesto(numero: string) {
   const filas = await q(
@@ -299,7 +358,7 @@ export async function sincronizarRango(cliente: RndcClient, cred: CredencialesRn
   const resumen: ResumenSincronizacion = {
     desde: fechaConsulta(desde), hasta: fechaConsulta(hasta), manifiestosNuevos: [], remesasNuevas: [], adoptados: [],
     cumplidos: [], remesasCumplidas: [], anulados: [], remesasAnuladas: [], cumplidosIniciales: 0,
-    anulacionesCumplidoInicial: 0, remesasAnuladasSinViaje: [], conflictos: [],
+    anulacionesCumplidoInicial: 0, remesasAnuladasSinViaje: [], remesasReubicadas: [], conflictos: [],
   };
   const consultar = (proc: string, vars: string[]) => consultarTramos(cliente, cred, proc, vars, desde, hasta);
 
@@ -314,7 +373,15 @@ export async function sincronizarRango(cliente: RndcClient, cred: CredencialesRn
   for (const m of manifiestos) {
     const local = await viajePorManifiesto(m.nummanifiestocarga);
     if (!local) {
-      await crearViajePortal(m, remesasPorBase.get(m.nummanifiestocarga) ?? [], resumen);
+      let propias = remesasPorBase.get(m.nummanifiestocarga) ?? [];
+      // Re-expedido con letra: sus remesas tienen el numero sin letra, si el
+      // manifiesto original no sigue vigente en el TMS.
+      const original = manifiestoSinLetra(m.nummanifiestocarga);
+      if (propias.length === 0 && original) {
+        const anterior = await viajePorManifiesto(original);
+        if (!anterior || anterior.estado === "ANULADO") propias = remesasPorBase.get(original) ?? [];
+      }
+      await crearViajePortal(m, propias, resumen);
       continue;
     }
     if (ESTADOS_EN_CURSO.includes(local.estado)) continue;
@@ -347,8 +414,9 @@ export async function sincronizarRango(cliente: RndcClient, cred: CredencialesRn
       }
       continue;
     }
-    // Remesa del portal cuyo manifiesto ya existe en el TMS (por ejemplo, expedido en otro rango).
-    const viaje = await viajePorManifiesto(partesConsecutivoRemesa(r.consecutivoremesa).base);
+    // Remesa del portal cuyo manifiesto ya existe en el TMS (por ejemplo, expedido
+    // en otro rango): el vigente con su numero o, si se anulo, el re-expedido con letra.
+    const viaje = await viajeParaRemesa(partesConsecutivoRemesa(r.consecutivoremesa).base);
     if (viaje && !ESTADOS_EN_CURSO.includes(viaje.estado)) await crearRemesaPortal(viaje.id, r, resumen);
   }
 
@@ -428,7 +496,50 @@ export async function sincronizarRango(cliente: RndcClient, cred: CredencialesRn
     await q("UPDATE viaje_remesas SET estado = 'ANULADA', radicadoAnulacion = ?, mensajeError = NULL WHERE id = ?", [a.ingresoid, local.id]);
     resumen.remesasAnuladas.push(a.consecutivoremesa);
   }
+
+  // 5. Remesas en un manifiesto anulado que se re-expidio con letra.
+  await reubicarRemesasDeReexpedidos(resumen);
+  // 6. Manifiestos vigentes que siguen sin remesas: su remesa pudo quedar
+  //    fuera del rango (registrada antes que el manifiesto re-expedido).
+  await buscarRemesasFaltantes(cliente, cred, resumen);
   return resumen;
+}
+
+/**
+ * Manifiestos vigentes sin ninguna remesa en el TMS (no salen en el cuadro
+ * pagos): se pide al RNDC (tipo 3, solo lectura) la remesa con el numero del
+ * manifiesto, o sin su letra si es re-expedido (00006549A -> 00006549). Pasa
+ * cuando la remesa se registro antes del rango que se sincroniza.
+ */
+async function buscarRemesasFaltantes(cliente: RndcClient, cred: CredencialesRndc, resumen: ResumenSincronizacion) {
+  const huerfanos = (await q(
+    `SELECT v.id, v.consecutivoManifiesto FROM viajes v
+      WHERE v.estado IN ('CONFIRMADO', 'CUMPLIDO') AND v.consecutivoManifiesto IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM viaje_remesas vr WHERE vr.viajeId = v.id)`
+  )) as Array<RowDataPacket & { id: number; consecutivoManifiesto: string }>;
+  for (const v of huerfanos) {
+    const numero = manifiestoSinLetra(v.consecutivoManifiesto) ?? v.consecutivoManifiesto;
+    const xml = await consultarDocumentoPropio(cliente, cred, "3", VARIABLES.remesas, "CONSECUTIVOREMESA", numero);
+    for (const r of xml ? leerDocumentos(xml) : []) {
+      if (!r.consecutivoremesa) continue;
+      const antes = resumen.remesasNuevas.length;
+      await crearRemesaPortal(v.id, r, resumen);
+      if (resumen.remesasNuevas.length === antes) continue;
+      resumen.remesasReubicadas.push(`${r.consecutivoremesa} -> ${v.consecutivoManifiesto}`);
+      // Su cumplido tambien pudo quedar fuera del rango: se pregunta de una vez.
+      const cumplido = await leerTiemposCumplidoRemesa(cliente, cred, r.consecutivoremesa).catch(() => null);
+      if (cumplido?.radicado) {
+        await q(
+          `UPDATE viaje_remesas SET estado = 'CUMPLIDA', radicadoCumplido = ?, fechaCumplido = NOW(),
+                  mensajeError = 'Cumplida en el RNDC (sincronizacion automatica).'
+            WHERE consecutivoRemesa = ? AND estado = 'CREADA'`,
+          [cumplido.radicado, r.consecutivoremesa]
+        );
+        resumen.remesasCumplidas.push(r.consecutivoremesa);
+      }
+    }
+    await new Promise((listo) => setTimeout(listo, 500));
+  }
 }
 
 /**
