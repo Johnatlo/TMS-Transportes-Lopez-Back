@@ -6,7 +6,7 @@ vi.mock("./db", () => ({ pool: {} }));
 import { CLIENTE_FLUJO_LARGO, datosAHeredar, estadoDe, sumarDias } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 
-type Base = Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado">;
+type Base = Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa">;
 
 /** Viaje recien cargado; cada prueba cambia lo que necesita. */
 function viaje(cambios: Partial<Base> = {}): Base {
@@ -31,6 +31,9 @@ function viaje(cambios: Partial<Base> = {}): Base {
     tarifaKilo: null,
     valorFijo: null,
     fleteAdicional: null,
+    anticipoEmpresa: null,
+    anticipoEmpresaFechaPago: null,
+    anticipoEmpresaNoAplica: false,
     valorFlete: null,
     fechaDescargue: "2026-10-06",
     estadoPapeles: "EN_RUTA",

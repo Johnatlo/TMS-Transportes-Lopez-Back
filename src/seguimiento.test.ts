@@ -3,15 +3,17 @@ import { describe, expect, test, vi } from "vitest";
 // Estas pruebas no tocan la base de datos.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { estadoDe } from "./cuadro";
+import { estadoAnticipoEmpresa, estadoDe } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 import {
   agruparCartera,
+  alertaAnticipoEmpresa,
   alertaFactura,
   alertaFacturacion,
   alertaPapeles,
   alertasDe,
   diasEntre,
+  resumirAnticiposEmpresa,
   resumirPorCliente,
 } from "./seguimiento";
 
@@ -40,6 +42,9 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     tarifaKilo: 100,
     valorFijo: null,
     fleteAdicional: null,
+    anticipoEmpresa: null,
+    anticipoEmpresaFechaPago: null,
+    anticipoEmpresaNoAplica: false,
     valorFlete: 3_400_000,
     fechaDescargue: "2026-10-09",
     estadoPapeles: "CONDUCTOR" as const,
@@ -72,7 +77,7 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     enviadoFacturarEn: null,
     ...cambios,
   };
-  return { ...base, ...estadoDe(base) };
+  return { ...base, ...estadoDe(base), estadoAnticipoEmpresa: estadoAnticipoEmpresa(base) };
 }
 
 describe("diasEntre", () => {
@@ -257,5 +262,40 @@ describe("lista de alertas", () => {
     const alertas = alertasDe(filas, [], HOY);
     expect(alertas.map((a) => a.cuadroId)).toEqual([2, 1]);
     expect(alertas[0].nivel).toBe("urgente");
+  });
+});
+
+describe("anticipo que da la empresa (Zorro, Aburra Limpio, sin manifiesto)", () => {
+  test("lo llevan los clientes del Zorro y Aburra Limpio, y los viajes sin manifiesto salvo los urbanos", () => {
+    expect(fila({ empresa: "BODEGAS DE RECICLAJES SAS" }).estadoAnticipoEmpresa).toBe("FALTA_REGISTRAR");
+    expect(fila({ empresa: "ECOAMBIENTAL RECICLAJE S.A.S." }).estadoAnticipoEmpresa).toBe("FALTA_REGISTRAR");
+    expect(fila({ empresa: "RECICLAJES BOGOTA N.S. S.A.S." }).estadoAnticipoEmpresa).toBe("FALTA_REGISTRAR");
+    expect(fila({ empresa: "CORPORACION ABURRA LIMPIO" }).estadoAnticipoEmpresa).toBe("FALTA_REGISTRAR");
+    expect(fila({ empresa: "CARTONES AMERICA" }).estadoAnticipoEmpresa).toBe("NO_APLICA");
+    expect(fila({ empresa: "CARTONES AMERICA", viajeId: null }).estadoAnticipoEmpresa).toBe("FALTA_REGISTRAR");
+    expect(fila({ empresa: "CORAME URBANO", viajeId: null }).estadoAnticipoEmpresa).toBe("NO_APLICA");
+    expect(fila({ empresa: "PAPELES", viajeId: null, rutaManual: "URBANO BOGOTA" }).estadoAnticipoEmpresa).toBe("NO_APLICA");
+  });
+
+  test("por cobrar hasta que tiene fecha de pago; 'no aplica' quita la alerta", () => {
+    const base = { empresa: "CORPORACION ABURRA LIMPIO" };
+    expect(fila({ ...base, anticipoEmpresa: 1_500_000 }).estadoAnticipoEmpresa).toBe("POR_COBRAR");
+    expect(fila({ ...base, anticipoEmpresa: 1_500_000, anticipoEmpresaFechaPago: "2026-10-18" }).estadoAnticipoEmpresa).toBe("PAGADO");
+    expect(fila({ ...base, anticipoEmpresaNoAplica: true }).estadoAnticipoEmpresa).toBe("NO_APLICA");
+    expect(alertaAnticipoEmpresa(fila(base))?.motivos[0]).toMatch(/Falta registrar/);
+    expect(alertaAnticipoEmpresa(fila({ ...base, anticipoEmpresa: 1_500_000 }))?.motivos[0]).toMatch(/debe el anticipo/);
+    expect(alertaAnticipoEmpresa(fila({ ...base, anticipoEmpresa: 1_500_000, anticipoEmpresaFechaPago: "2026-10-18" }))).toBeNull();
+    // Antes de la fecha de inicio del seguimiento no avisa.
+    expect(alertaAnticipoEmpresa(fila({ ...base, fecha: "2026-09-10" }), "2026-10-01")).toBeNull();
+  });
+
+  test("resumen por empresa para cobrar", () => {
+    const resumen = resumirAnticiposEmpresa([
+      fila({ id: 1, empresa: "CORPORACION ABURRA LIMPIO", anticipoEmpresa: 1_000_000 }),
+      fila({ id: 2, empresa: "CORPORACION ABURRA LIMPIO", anticipoEmpresa: 500_000, anticipoEmpresaFechaPago: "2026-10-18" }),
+      fila({ id: 3, empresa: "CORPORACION ABURRA LIMPIO" }),
+      fila({ id: 4, empresa: "CARTONES AMERICA" }),
+    ]);
+    expect(resumen).toEqual([{ empresa: "CORPORACION ABURRA LIMPIO", faltaRegistrar: 1, viajesPorCobrar: 1, porCobrar: 1_000_000, pagado: 500_000 }]);
   });
 });

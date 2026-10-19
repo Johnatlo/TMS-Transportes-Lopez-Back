@@ -42,6 +42,19 @@ seguimientoRouter.get("/cartera", async (req, res) => {
   res.json(await seguimiento.cartera(req.query.dueno ? String(req.query.dueno) : undefined));
 });
 
+/**
+ * GET /api/seguimiento/anticipos-empresas: viajes con anticipo que da la
+ * empresa (Zorro, Aburra Limpio, sin manifiesto) y lo que debe cada cliente.
+ */
+seguimientoRouter.get("/anticipos-empresas", async (_req, res) => {
+  res.json(await seguimiento.anticiposEmpresas());
+});
+
+/** POST /api/seguimiento/anticipos-empresas/pago: la empresa pago el anticipo de esos viajes ({ ids, fecha }). */
+seguimientoRouter.post("/anticipos-empresas/pago", async (req, res) => {
+  await responder(res, async () => ({ pagados: await seguimiento.pagarAnticiposEmpresa(req.body ?? {}) }));
+});
+
 /** PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). */
 seguimientoRouter.put("/cartera/anticipo", async (req, res) => {
   await responder(res, async () => {

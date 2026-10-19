@@ -890,6 +890,14 @@ export async function initSchema(): Promise<void> {
     // Radicado de la anulacion del cumplido del manifiesto (proceso 29), al
     // anular un viaje que ya estaba cumplido.
     ["viajes", "radicadoAnulacionCumplidoManifiesto", "VARCHAR(30)"],
+    // Anticipo que da la empresa (cliente) en algunos viajes: los del Zorro
+    // (Ecoambiental, Reciclajes Bogota, Bodegas de Reciclaje), Aburra Limpio y
+    // los viajes sin manifiesto. Es aparte de los anticipos de la bomba; la
+    // empresa lo debe hasta que se registra la fecha en que lo pago.
+    ["cuadro_viajes", "anticipoEmpresa", "DOUBLE"],
+    ["cuadro_viajes", "anticipoEmpresaFechaPago", "DATE"],
+    // El viaje no lleva anticipo de la empresa (por ejemplo, un urbano).
+    ["cuadro_viajes", "anticipoEmpresaNoAplica", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],

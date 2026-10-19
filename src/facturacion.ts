@@ -11,7 +11,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { cuadro, ErrorCuadro } from "./cuadro";
+import { cuadro, ErrorCuadro, TARIFA_KILO_MAXIMA } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 
 export type TipoTarifa = "TON" | "FIJO" | "POR" | "POR3";
@@ -175,6 +175,12 @@ export const facturacion = {
         if (!id) throw new ErrorCuadro("Falta el viaje.");
         const fijo = String(f.tipo ?? "TON").toUpperCase() === "FIJO";
         const valorTon = numero(f.valorTon);
+        // Mismo tope que en el cuadro: mas de 1.000 $/kg es un error de digitacion.
+        if (!fijo && valorTon !== null && valorTon / 1000 > TARIFA_KILO_MAXIMA) {
+          throw new ErrorCuadro(
+            `Viaje ${id}: ${valorTon.toLocaleString("es-CO")} por tonelada es demasiado (mas de ${TARIFA_KILO_MAXIMA.toLocaleString("es-CO")} $/kg). Revisa el valor por tonelada.`
+          );
+        }
         const total = numero(f.total);
         const [res] = await conexion.query<ResultSetHeader>(
           `UPDATE cuadro_viajes SET

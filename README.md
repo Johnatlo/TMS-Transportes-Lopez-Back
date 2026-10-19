@@ -481,6 +481,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/seguimiento/papeles` | Viajes sin factura con su alerta de papeles y de facturacion. |
 | `POST` | `/api/seguimiento/papeles/:id` | Registra lo que se supo de los papeles ({ estadoPapeles?, papelesTiene?, papelesCompletos?, papelesFaltan?, nota? }). Devuelve el viaje del cuadro actualizado (404 si no existe). |
 | `GET` | `/api/seguimiento/cartera` | Facturas por cobrar, totales por cliente y facturados sin datos. Con dueno (MAURICIO, CELSO, MILLER, LUISA o TERCEROS), solo la parte de los vehiculos de ese dueno. |
+| `GET` | `/api/seguimiento/anticipos-empresas` | Viajes con anticipo que da la empresa (Zorro, Aburra Limpio, sin manifiesto) y lo que debe cada cliente. |
+| `POST` | `/api/seguimiento/anticipos-empresas/pago` | La empresa pago el anticipo de esos viajes ({ ids, fecha }). |
 | `PUT` | `/api/seguimiento/cartera/anticipo` | Anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). |
 | `POST` | `/api/seguimiento/cartera/importar/previa` | Propone como cargar cada factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a sus viajes. No guarda nada. |
 | `POST` | `/api/seguimiento/cartera/importar` | Carga las facturas confirmadas ({ facturas }). |
@@ -503,7 +505,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_584 funciones, componentes, métodos y rutas en 41 archivos._
+_592 funciones, componentes, métodos y rutas en 41 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -512,7 +514,7 @@ _584 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (31)
+- [`src/cuadro.ts`](#srccuadrots) (33)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
@@ -534,7 +536,7 @@ _584 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (31)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (11)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (13)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -545,7 +547,7 @@ _584 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (28)
+- [`src/seguimiento.ts`](#srcseguimientots) (32)
 
 ### `src/alertas.ts`
 
@@ -1016,6 +1018,12 @@ _584 funciones, componentes, métodos y rutas en 41 archivos._
   - Los papeles, si la nueva sigue EN_RUTA y la anulada ya habia avanzado.
   - "Facturado", si la anulada ya estaba facturada.
   Lo que sale del manifiesto (placa, conductor, peso, fecha) es el de la nueva.
+
+- **`requiereAnticipoEmpresa(f)`** · _función_
+  true si el viaje lleva anticipo de la empresa (ver CLIENTES_CON_ANTICIPO).
+
+- **`estadoAnticipoEmpresa(f)`** · _función_
+  Estado del anticipo de la empresa de un viaje.
 
 - **`num(v)`** · _función_
   Numero de MySQL (DECIMAL llega como texto) a number; null se conserva.
@@ -3304,6 +3312,13 @@ _584 funciones, componentes, métodos y rutas en 41 archivos._
   y facturados sin datos. Con dueno (MAURICIO, CELSO, MILLER, LUISA o
   TERCEROS), solo la parte de los vehiculos de ese dueno.
 
+- **`GET /anticipos-empresas`** · _ruta HTTP_
+  GET /api/seguimiento/anticipos-empresas: viajes con anticipo que da la
+  empresa (Zorro, Aburra Limpio, sin manifiesto) y lo que debe cada cliente.
+
+- **`POST /anticipos-empresas/pago`** · _ruta HTTP_
+  POST /api/seguimiento/anticipos-empresas/pago: la empresa pago el anticipo de esos viajes ({ ids, fecha }).
+
 - **`PUT /cartera/anticipo`** · _ruta HTTP_
   PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }).
 
@@ -3703,6 +3718,14 @@ _584 funciones, componentes, métodos y rutas en 41 archivos._
 - **`resumirPorCliente(facturas)`** · _función_
   Totales por cliente con edades de vencimiento (0, 1-30, 31-60, 61-90, +90 dias).
 
+- **`alertaAnticipoEmpresa(f, desde)`** · _función_
+  Alerta del anticipo que da la empresa (clientes del Zorro, Aburra Limpio y
+  viajes sin manifiesto): avisa todos los dias hasta que se escriben el valor
+  y la fecha en que la empresa lo pago. Sin alerta antes de `desde`.
+
+- **`resumirAnticiposEmpresa(filas)`** · _función_
+  Resumen por cliente de los viajes con anticipo de la empresa (mas por cobrar primero).
+
 - **`alertasDe(filas, facturas, hoy, desde)`** · _función_
   Todas las alertas: urgentes primero, luego papeles, facturacion y cartera.
 
@@ -3746,6 +3769,14 @@ _584 funciones, componentes, métodos y rutas en 41 archivos._
   - **`seguimiento.guardarAnticipoCliente(d)`** · _método_
     Guarda el anticipo (o abono) que el cliente ya pago de una factura; 0 o
     vacio lo quita. Se resta de lo que debe en la cartera.
+
+  - **`seguimiento.anticiposEmpresas()`** · _método_
+    Anticipos que dan las empresas: los viajes que lo llevan (o a los que se
+    les escribio), con su estado, y el resumen por cliente para cobrar.
+
+  - **`seguimiento.pagarAnticiposEmpresa(d)`** · _método_
+    Registra que la empresa pago el anticipo de varios viajes ({ ids, fecha }).
+    Solo los que tienen valor escrito y aun no tienen fecha de pago.
 
   - **`seguimiento.gestiones(facturaNumero, empresa)`** · _método_
     Gestiones de cobro de una factura, la mas reciente primero.

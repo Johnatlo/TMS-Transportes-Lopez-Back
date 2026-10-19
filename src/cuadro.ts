@@ -93,6 +93,49 @@ export function datosAHeredar(anulada: FilaHeredable, nueva: FilaHeredable): Rec
 /** El flujo largo de papeles (parqueadero, Don Alexander) es solo de este cliente. */
 export const CLIENTE_FLUJO_LARGO = /CORAME|CARTONES\s+AMERICA/i;
 
+/**
+ * Clientes que dan anticipo en sus viajes: los del Zorro (Ecoambiental,
+ * Reciclajes Bogota, Bodegas de Reciclaje), que lo abona a la bomba, y Aburra
+ * Limpio. Ademas, todo viaje sin manifiesto lo lleva, salvo los urbanos.
+ */
+export const CLIENTES_CON_ANTICIPO = /ECOAMBIENTAL|RECICLAJES?\s+BOGOTA|BODEGAS?\s+DE\s+RECICLAJE|ABURRA\s+LIMPIO/i;
+
+/**
+ * Tarifa por kilo mas alta que se acepta. Las de la matriz van de unos 13 a
+ * 320 $/kg; una de miles es casi seguro la tarifa por tonelada escrita como
+ * por kilo (paso con la factura 7387: un viaje de 1.100 millones).
+ */
+export const TARIFA_KILO_MAXIMA = 1000;
+
+/**
+ * Anticipo que da la empresa en un viaje:
+ * - NO_APLICA: el cliente no da anticipo (o se marco que no aplica).
+ * - FALTA_REGISTRAR: lo da y aun no se ha escrito cuanto.
+ * - POR_COBRAR: escrito y la empresa aun no lo paga.
+ * - PAGADO: con fecha de pago.
+ */
+export type EstadoAnticipoEmpresa = "NO_APLICA" | "FALTA_REGISTRAR" | "POR_COBRAR" | "PAGADO";
+
+/** true si el viaje lleva anticipo de la empresa (ver CLIENTES_CON_ANTICIPO). */
+export function requiereAnticipoEmpresa(
+  f: Pick<FilaCuadro, "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica">
+): boolean {
+  if (f.anulado || f.anticipoEmpresaNoAplica) return false;
+  if (CLIENTES_CON_ANTICIPO.test(f.empresa)) return true;
+  // Sin manifiesto: lo lleva salvo que sea urbano.
+  return !f.viajeId && !/URBANO/i.test(`${f.empresa} ${f.rutaManual ?? ""} ${f.ruta ?? ""}`);
+}
+
+/** Estado del anticipo de la empresa de un viaje. */
+export function estadoAnticipoEmpresa(
+  f: Pick<FilaCuadro, "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica" | "anticipoEmpresa" | "anticipoEmpresaFechaPago">
+): EstadoAnticipoEmpresa {
+  if (f.anulado) return "NO_APLICA";
+  // Si ya se escribio un valor, cuenta aunque el cliente no este en la lista.
+  if (f.anticipoEmpresa !== null && f.anticipoEmpresa > 0) return f.anticipoEmpresaFechaPago ? "PAGADO" : "POR_COBRAR";
+  return requiereAnticipoEmpresa(f) ? "FALTA_REGISTRAR" : "NO_APLICA";
+}
+
 /** Estado del viaje por sus papeles; ANULADO y PAGADO (todo pagado) reemplazan a los demas. */
 export type EstadoCuadro = "ANULADO" | "PAGADO" | "RADICADOS" | "RADICADO" | "SIN_RADICAR" | "EN_RUTA";
 /** Estado de la factura, aparte del de los papeles. */
@@ -129,6 +172,14 @@ export interface FilaCuadro {
    * tarifas POR (300.000, 2 clientes) y POR3 (600.000, 3 clientes).
    */
   fleteAdicional: number | null;
+  /** Anticipo que da la empresa (cliente) en este viaje; aparte de los de la bomba. */
+  anticipoEmpresa: number | null;
+  /** Fecha en que la empresa pago ese anticipo; sin fecha, lo debe. */
+  anticipoEmpresaFechaPago: string | null;
+  /** Se marco que el viaje no lleva anticipo de la empresa (un urbano, por ejemplo). */
+  anticipoEmpresaNoAplica: boolean;
+  /** Estado del anticipo de la empresa (ver estadoAnticipoEmpresa). */
+  estadoAnticipoEmpresa: EstadoAnticipoEmpresa;
   /** KILO: kilos (los facturados si los hay) x tarifa + adicional. FIJO: el valor fijo. */
   valorFlete: number | null;
   /** Peso que se factura: el real o el minimo pactado con el cliente (34000, 32000...). */
@@ -217,7 +268,7 @@ export const sumarDias = (fecha: string, dias: number) => {
  *   "facturado sin datos".
  */
 export function estadoDe(
-  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado">
+  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa">
 ): { estado: EstadoCuadro; estadoFactura: EstadoFactura; todoPagado: boolean } {
   const todoPagado = !f.anulado && !!f.facturaFechaPago;
   const estadoFactura: EstadoFactura =
@@ -306,6 +357,9 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     tarifaKilo: num(r.tarifaKilo),
     valorFijo: num(r.valorFijo),
     fleteAdicional: num(r.fleteAdicional),
+    anticipoEmpresa: num(r.anticipoEmpresa),
+    anticipoEmpresaFechaPago: dia(r.anticipoEmpresaFechaPago),
+    anticipoEmpresaNoAplica: !!r.anticipoEmpresaNoAplica,
     valorFlete:
       r.tipoFlete === "FIJO"
         ? num(r.valorFijo)
@@ -343,7 +397,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     papelesRevisadoPor: r.papelesRevisadoPor ?? null,
   };
   if (base.flota === "TERCERO" && base.fechaDescargue) base.venceSaldo = sumarDias(base.fechaDescargue, DIAS_PAGO_TERCEROS);
-  return { ...base, ...estadoDe(base) };
+  return { ...base, ...estadoDe(base), estadoAnticipoEmpresa: estadoAnticipoEmpresa(base) };
 }
 
 /** Campos que se pueden editar de una fila, con su tipo. */
@@ -363,6 +417,9 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   tarifaKilo: "numero",
   valorFijo: "numero",
   fleteAdicional: "numero",
+  anticipoEmpresa: "numero",
+  anticipoEmpresaFechaPago: "fecha",
+  anticipoEmpresaNoAplica: "booleano",
   fechaDescargue: "fecha",
   estadoPapeles: "texto",
   flujoCorame: "booleano",
@@ -413,6 +470,14 @@ function validar(datos: Record<string, unknown>) {
   if ("estadoPapeles" in datos && !(ESTADOS_PAPELES as string[]).includes(String(datos.estadoPapeles))) {
     throw new ErrorCuadro("Estado de papeles no valido.");
   }
+  if ("tarifaKilo" in datos && Number(datos.tarifaKilo) > TARIFA_KILO_MAXIMA) {
+    throw new ErrorCuadro(
+      `La tarifa es por KILO: ${Number(datos.tarifaKilo).toLocaleString("es-CO")} $/kg es demasiado (el maximo es ${TARIFA_KILO_MAXIMA.toLocaleString("es-CO")}). ` +
+        `Si es la tarifa por tonelada, dividela por 1.000 (por ejemplo 168.000 por tonelada = 168 por kilo).`
+    );
+  }
+  // Booleano real: "false" como texto se guardaria como 1.
+  if ("anticipoEmpresaNoAplica" in datos) datos.anticipoEmpresaNoAplica = datos.anticipoEmpresaNoAplica === true || datos.anticipoEmpresaNoAplica === 1 || datos.anticipoEmpresaNoAplica === "true";
   if ("placa" in datos) datos.placa = String(datos.placa ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if ("empresa" in datos) datos.empresa = String(datos.empresa ?? "").trim().toUpperCase();
 }

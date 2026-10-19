@@ -398,7 +398,56 @@ export function resumirPorCliente(facturas: FacturaCartera[]): ResumenCliente[] 
   return [...porCliente.values()].sort((a, b) => b.total - a.total);
 }
 
-export type TipoAlerta = "PAPELES" | "FACTURACION" | "CARTERA";
+export type TipoAlerta = "PAPELES" | "FACTURACION" | "CARTERA" | "ANTICIPO_EMPRESA";
+
+/**
+ * Alerta del anticipo que da la empresa (clientes del Zorro, Aburra Limpio y
+ * viajes sin manifiesto): avisa todos los dias hasta que se escriben el valor
+ * y la fecha en que la empresa lo pago. Sin alerta antes de `desde`.
+ */
+export function alertaAnticipoEmpresa(f: FilaCuadro, desde = ""): AlertaFila | null {
+  if (f.fecha < desde) return null;
+  if (f.estadoAnticipoEmpresa === "FALTA_REGISTRAR") {
+    return { nivel: "atencion", motivos: ["Falta registrar el anticipo que da la empresa y la fecha en que lo pago."], comunicarse: false };
+  }
+  if (f.estadoAnticipoEmpresa === "POR_COBRAR") {
+    return {
+      nivel: "atencion",
+      motivos: [`La empresa debe el anticipo de ${Math.round(f.anticipoEmpresa ?? 0).toLocaleString("es-CO")}: registra la fecha en que lo pague.`],
+      comunicarse: false,
+    };
+  }
+  return null;
+}
+
+/** Totales del anticipo de la empresa por cliente (para cobrar). */
+export interface ResumenAnticipoEmpresa {
+  empresa: string;
+  /** Viajes a los que aun no se les escribe el anticipo. */
+  faltaRegistrar: number;
+  /** Viajes con anticipo escrito y sin pagar, y cuanto suman. */
+  viajesPorCobrar: number;
+  porCobrar: number;
+  /** Lo que ya pago. */
+  pagado: number;
+}
+
+/** Resumen por cliente de los viajes con anticipo de la empresa (mas por cobrar primero). */
+export function resumirAnticiposEmpresa(filas: FilaCuadro[]): ResumenAnticipoEmpresa[] {
+  const porEmpresa = new Map<string, ResumenAnticipoEmpresa>();
+  for (const f of filas) {
+    if (f.estadoAnticipoEmpresa === "NO_APLICA") continue;
+    const r = porEmpresa.get(f.empresa) ?? { empresa: f.empresa, faltaRegistrar: 0, viajesPorCobrar: 0, porCobrar: 0, pagado: 0 };
+    if (f.estadoAnticipoEmpresa === "FALTA_REGISTRAR") r.faltaRegistrar++;
+    if (f.estadoAnticipoEmpresa === "POR_COBRAR") {
+      r.viajesPorCobrar++;
+      r.porCobrar += f.anticipoEmpresa ?? 0;
+    }
+    if (f.estadoAnticipoEmpresa === "PAGADO") r.pagado += f.anticipoEmpresa ?? 0;
+    porEmpresa.set(f.empresa, r);
+  }
+  return [...porEmpresa.values()].sort((a, b) => b.porCobrar - a.porCobrar || b.faltaRegistrar - a.faltaRegistrar);
+}
 
 /** Una alerta de la campana de seguimiento. */
 export interface AlertaSeguimiento {
@@ -423,6 +472,8 @@ export function alertasDe(filas: FilaCuadro[], facturas: FacturaCartera[], hoy: 
     if (p) lista.push({ tipo: "PAPELES", nivel: p.nivel, titulo: titulo(f), motivos: p.motivos, cuadroId: f.id });
     const fa = alertaFacturacion(f, hoy, desde);
     if (fa) lista.push({ tipo: "FACTURACION", nivel: fa.nivel, titulo: titulo(f), motivos: fa.motivos, cuadroId: f.id });
+    const ae = alertaAnticipoEmpresa(f, desde);
+    if (ae) lista.push({ tipo: "ANTICIPO_EMPRESA", nivel: ae.nivel, titulo: titulo(f), motivos: ae.motivos, cuadroId: f.id });
   }
   for (const fc of facturas) {
     if (!fc.alerta) continue;
@@ -435,7 +486,7 @@ export function alertasDe(filas: FilaCuadro[], facturas: FacturaCartera[], hoy: 
       empresa: fc.empresa,
     });
   }
-  const orden: Record<TipoAlerta, number> = { PAPELES: 0, FACTURACION: 1, CARTERA: 2 };
+  const orden: Record<TipoAlerta, number> = { PAPELES: 0, FACTURACION: 1, CARTERA: 2, ANTICIPO_EMPRESA: 3 };
   return lista.sort((a, b) => (a.nivel === b.nivel ? orden[a.tipo] - orden[b.tipo] : a.nivel === "urgente" ? -1 : 1));
 }
 
@@ -619,6 +670,35 @@ export const seguimiento = {
        ON DUPLICATE KEY UPDATE valor = VALUES(valor)`,
       [facturaNumero, empresa, Math.round(valor)]
     );
+  },
+
+  /**
+   * Anticipos que dan las empresas: los viajes que lo llevan (o a los que se
+   * les escribio), con su estado, y el resumen por cliente para cobrar.
+   */
+  async anticiposEmpresas() {
+    const filas = (await cuadro.listar()).filter((f) => f.estadoAnticipoEmpresa !== "NO_APLICA" || f.anticipoEmpresaNoAplica);
+    return {
+      viajes: filas.filter((f) => !f.anulado),
+      empresas: resumirAnticiposEmpresa(filas),
+    };
+  },
+
+  /**
+   * Registra que la empresa pago el anticipo de varios viajes ({ ids, fecha }).
+   * Solo los que tienen valor escrito y aun no tienen fecha de pago.
+   */
+  async pagarAnticiposEmpresa(d: Record<string, unknown>): Promise<number> {
+    const ids = (Array.isArray(d.ids) ? d.ids : []).map(Number).filter((x) => x > 0);
+    const fecha = String(d.fecha ?? "").slice(0, 10);
+    if (ids.length === 0) throw new ErrorCuadro("Elige al menos un viaje.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha en que pago la empresa.");
+    const [res] = await pool.query<ResultSetHeader>(
+      `UPDATE cuadro_viajes SET anticipoEmpresaFechaPago = ?
+        WHERE id IN (?) AND anticipoEmpresa > 0 AND anticipoEmpresaFechaPago IS NULL`,
+      [fecha, ids]
+    );
+    return res.affectedRows;
   },
 
   /** Gestiones de cobro de una factura, la mas reciente primero. */
