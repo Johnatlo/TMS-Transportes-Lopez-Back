@@ -139,7 +139,7 @@ export function estadoPagoTercero(
 /** Viaje de un tercero con su liquidacion. */
 export type ViajeTercero = FilaCuadro &
   LiquidacionTercero & {
-    /** Tenedor del vehiculo (terceros, conductores o propietario); si no se conoce, "CC ..." o la placa. */
+    /** Titular del vehiculo (Flota, terceros, conductores o propietario); si no se conoce, "CC ..." o la placa. */
     tercero: string;
     estadoPagoTercero: EstadoPagoTercero;
     /** ICA por mil que se sugiere por el cliente (para el formulario). */
@@ -177,6 +177,30 @@ export function resumirTerceros(viajes: ViajeTercero[]): ResumenTercero[] {
   return [...grupos.values()].sort((a, b) => b.porPagar - a.porPagar || a.tercero.localeCompare(b.tercero));
 }
 
+/** Un tercero leido de la Matriz Terceros: nombre, cedula (si la trae) y placas. */
+export interface NombreTercero {
+  nombre: string;
+  cedula: string | null;
+  placas: string[];
+}
+
+/** A que vehiculos de Flota se le pondria el nombre de un tercero de la matriz. */
+export interface NombreTerceroPropuesto extends NombreTercero {
+  vehiculos: Array<{ id: number; placa: string; nombreActual: string | null; por: "PLACA" | "CEDULA" }>;
+}
+
+/** Normaliza la lista que llega del navegador (nombres recortados, placas sin guion). */
+function leerNombres(lista: unknown): NombreTercero[] {
+  if (!Array.isArray(lista)) throw new ErrorCuadro("Falta la lista de terceros.");
+  return lista
+    .map((t) => ({
+      nombre: String(t?.nombre ?? "").replace(/\s+/g, " ").trim().slice(0, 150),
+      cedula: String(t?.cedula ?? "").replace(/\D/g, "") || null,
+      placas: (Array.isArray(t?.placas) ? t.placas : []).map((p: unknown) => String(p).toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean),
+    }))
+    .filter((t) => t.nombre);
+}
+
 /** Repositorio del pago a terceros. */
 export const terceros = {
   /**
@@ -194,8 +218,11 @@ export const terceros = {
            FROM cuadro_anticipos GROUP BY cuadroViajeId`
       ),
       pool.query<RowDataPacket[]>(
-        // El tenedor casi nunca esta en terceros; si maneja su carro, esta en conductores.
+        // Primero el nombre del titular de Flota (se llena desde la Matriz
+        // Terceros); el tenedor casi nunca esta en terceros, y si maneja su
+        // carro esta en conductores.
         `SELECT v.id, COALESCE(
+                  NULLIF(TRIM(v.nombreTenedor), ''),
                   (SELECT MIN(nombre) FROM terceros WHERE nit = v.numIdTenedor),
                   (SELECT MIN(nombre) FROM conductores WHERE cedula = v.numIdTenedor),
                   (SELECT MIN(nombre) FROM terceros WHERE nit = v.propietarioNit),
@@ -219,6 +246,47 @@ export const terceros = {
         };
       });
     return { viajes, terceros: resumirTerceros(viajes) };
+  },
+
+  /**
+   * Propone a que vehiculos terceros (sin socio dueno) se le pone cada nombre
+   * de la matriz: por placa y, si ninguna placa coincide, por la cedula del
+   * tenedor. Un vehiculo va con un solo nombre (gana la placa). No guarda.
+   */
+  async proponerNombres(lista: unknown): Promise<NombreTerceroPropuesto[]> {
+    const nombres = leerNombres(lista);
+    const [vehiculos] = await pool.query<RowDataPacket[]>(
+      "SELECT id, placa, numIdTenedor, nombreTenedor FROM vehiculos WHERE dueno IS NULL"
+    );
+    const usados = new Set<number>();
+    const propuestas: NombreTerceroPropuesto[] = nombres.map((t) => ({ ...t, vehiculos: [] }));
+    for (const p of propuestas) {
+      for (const v of vehiculos.filter((v) => p.placas.includes(v.placa) && !usados.has(v.id))) {
+        usados.add(v.id);
+        p.vehiculos.push({ id: v.id, placa: v.placa, nombreActual: v.nombreTenedor ?? null, por: "PLACA" });
+      }
+    }
+    for (const p of propuestas.filter((p) => p.cedula)) {
+      for (const v of vehiculos.filter((v) => v.numIdTenedor === p.cedula && !usados.has(v.id))) {
+        usados.add(v.id);
+        p.vehiculos.push({ id: v.id, placa: v.placa, nombreActual: v.nombreTenedor ?? null, por: "CEDULA" });
+      }
+    }
+    return propuestas;
+  },
+
+  /** Pone el nombre de la matriz como titular de los vehiculos propuestos. Devuelve cuantos cambio. */
+  async importarNombres(lista: unknown): Promise<{ actualizados: number }> {
+    let actualizados = 0;
+    for (const p of await this.proponerNombres(lista)) {
+      if (p.vehiculos.length === 0) continue;
+      const [res] = await pool.query<ResultSetHeader>(
+        "UPDATE vehiculos SET nombreTenedor = ? WHERE id IN (?) AND NOT (nombreTenedor <=> ?)",
+        [p.nombre, p.vehiculos.map((v) => v.id), p.nombre]
+      );
+      actualizados += res.affectedRows;
+    }
+    return { actualizados };
   },
 
   /**

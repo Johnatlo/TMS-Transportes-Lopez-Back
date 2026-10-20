@@ -65,6 +65,20 @@ seguimientoRouter.get("/terceros", async (_req, res) => {
   res.json(await terceros.listar());
 });
 
+/**
+ * POST /api/seguimiento/terceros/nombres/previa: a que vehiculos se le pone
+ * cada nombre de la Matriz Terceros ({ terceros: [{ nombre, cedula, placas }] }).
+ * No guarda.
+ */
+seguimientoRouter.post("/terceros/nombres/previa", async (req, res) => {
+  await responder(res, () => terceros.proponerNombres(req.body?.terceros));
+});
+
+/** POST /api/seguimiento/terceros/nombres: pone esos nombres como titular de los vehiculos. */
+seguimientoRouter.post("/terceros/nombres", async (req, res) => {
+  await responder(res, () => terceros.importarNombres(req.body?.terceros));
+});
+
 /** POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). */
 seguimientoRouter.post("/terceros/pago", async (req, res) => {
   await responder(res, async () => ({ pagados: await terceros.pagar(req.body ?? {}) }));

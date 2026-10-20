@@ -484,6 +484,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/seguimiento/anticipos-empresas` | Viajes con anticipo que da la empresa (Zorro, Aburra Limpio, sin manifiesto) y lo que debe cada cliente. |
 | `POST` | `/api/seguimiento/anticipos-empresas/pago` | La empresa pago el anticipo de esos viajes ({ ids, fecha }). |
 | `GET` | `/api/seguimiento/terceros` | Viajes de vehiculos terceros con lo que se les paga (valor pactado - anticipos - retenciones si aplican) y el resumen por tercero. |
+| `POST` | `/api/seguimiento/terceros/nombres/previa` | A que vehiculos se le pone cada nombre de la Matriz Terceros ({ terceros: [{ nombre, cedula, placas }] }). No guarda. |
+| `POST` | `/api/seguimiento/terceros/nombres` | Pone esos nombres como titular de los vehiculos. |
 | `POST` | `/api/seguimiento/terceros/pago` | Se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). |
 | `PUT` | `/api/seguimiento/cartera/anticipo` | Anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). |
 | `POST` | `/api/seguimiento/cartera/importar/previa` | Propone como cargar cada factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a sus viajes. No guarda nada. |
@@ -507,7 +509,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_606 funciones, componentes, métodos y rutas en 42 archivos._
+_611 funciones, componentes, métodos y rutas en 42 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -538,7 +540,7 @@ _606 funciones, componentes, métodos y rutas en 42 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (31)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (15)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (17)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -550,7 +552,7 @@ _606 funciones, componentes, métodos y rutas en 42 archivos._
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
 - [`src/seguimiento.ts`](#srcseguimientots) (32)
-- [`src/terceros.ts`](#srctercerosts) (8)
+- [`src/terceros.ts`](#srctercerosts) (11)
 
 ### `src/alertas.ts`
 
@@ -3352,6 +3354,14 @@ _606 funciones, componentes, métodos y rutas en 42 archivos._
   les paga (valor pactado - anticipos - retenciones si aplican) y el resumen
   por tercero.
 
+- **`POST /terceros/nombres/previa`** · _ruta HTTP_
+  POST /api/seguimiento/terceros/nombres/previa: a que vehiculos se le pone
+  cada nombre de la Matriz Terceros ({ terceros: [{ nombre, cedula, placas }] }).
+  No guarda.
+
+- **`POST /terceros/nombres`** · _ruta HTTP_
+  POST /api/seguimiento/terceros/nombres: pone esos nombres como titular de los vehiculos.
+
 - **`POST /terceros/pago`** · _ruta HTTP_
   POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }).
 
@@ -3863,12 +3873,23 @@ _606 funciones, componentes, métodos y rutas en 42 archivos._
 - **`resumirTerceros(viajes)`** · _función_
   Agrupa los viajes por tercero (exportado para las pruebas). Los que mas se deben primero.
 
+- **`leerNombres(lista)`** · _función_
+  Normaliza la lista que llega del navegador (nombres recortados, placas sin guion).
+
 - **`terceros`** · _módulo_
   Repositorio del pago a terceros.
 
   - **`terceros.listar()`** · _método_
     Viajes de vehiculos terceros (flota TERCERO y sin socio dueno), no
     anulados, con su liquidacion, y el resumen por tercero.
+
+  - **`terceros.proponerNombres(lista)`** · _método_
+    Propone a que vehiculos terceros (sin socio dueno) se le pone cada nombre
+    de la matriz: por placa y, si ninguna placa coincide, por la cedula del
+    tenedor. Un vehiculo va con un solo nombre (gana la placa). No guarda.
+
+  - **`terceros.importarNombres(lista)`** · _método_
+    Pone el nombre de la matriz como titular de los vehiculos propuestos. Devuelve cuantos cambio.
 
   - **`terceros.pagar(d)`** · _método_
     Registra el pago al tercero de varios viajes ({ ids, fecha, cuentaCobro? }):
