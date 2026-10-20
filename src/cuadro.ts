@@ -19,6 +19,7 @@ import { pool } from "./db";
 // anticipos.ts tambien importa de aqui; solo se usan dentro de funciones, asi
 // que el ciclo no molesta (cuando se llaman, los dos modulos ya cargaron).
 import { anticipos } from "./anticipos";
+import { viernesDePago } from "./terceros";
 
 /**
  * Donde van los papeles: en ruta, ya descargo, con el conductor, parqueadero,
@@ -31,9 +32,6 @@ export const ESTADOS_PAPELES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDU
 export const papelesListos = (e: string) => e === "RADICADO" || e === "RADICADOS";
 
 export type Flota = "LOPEZ" | "MYC" | "TERCERO";
-
-/** Dias para pagarle el saldo a un tercero despues de entregar el viaje. */
-export const DIAS_PAGO_TERCEROS = 15;
 
 /**
  * Dias dentro de los cuales un manifiesto nuevo de la misma placa y empresa se
@@ -201,9 +199,32 @@ export interface FilaCuadro {
   facturaVence: string | null;
   /** "Fecha pago factura": cuando el cliente pago. Con ella el viaje queda todo pagado. */
   facturaFechaPago: string | null;
+  /** Terceros: fecha en que se le pago al tercero. */
   fechaPagoSaldo: string | null;
-  /** Terceros: fecha de descargue + 15 dias. Flota propia: null. */
+  /**
+   * Terceros: viernes en que se le paga (ver viernesDePago en src/terceros.ts)
+   * o la fecha escrita a mano. Flota propia y socios: null.
+   */
   venceSaldo: string | null;
+  /** Valor por tonelada pactado con el tercero en este viaje. */
+  valorTerceroTon: number | null;
+  /** Valor fijo pactado con el tercero (manda sobre el de por tonelada). */
+  valorTerceroFijo: number | null;
+  /** Adicional por transferencia: tercer anticipo al tercero, aparte de efectivo y combustible. */
+  anticipoTransferencia: number | null;
+  anticipoTransferenciaFecha: string | null;
+  /** Enlace al comprobante de la transferencia (no se suben archivos). */
+  anticipoTransferenciaLink: string | null;
+  /** Cuando el tercero entrego los documentos del viaje. */
+  fechaEntregaDocsTercero: string | null;
+  /** Numero de la cuenta de cobro del tercero ("AR-138"). */
+  cuentaCobroTercero: string | null;
+  /** Al pagar se descuentan retefuente, ICA, FOPAT y poliza. */
+  aplicaDescuentosTercero: boolean;
+  /** ICA por mil del viaje; null = el sugerido por el cliente. */
+  icaTerceroPorMil: number | null;
+  /** Fecha de pago escrita a mano; null = el viernes que toca. */
+  fechaPagoTerceroProgramada: string | null;
   revisadoContabilidadPor: string | null;
   revisadoContabilidadEn: string | null;
   revisadoGerenciaPor: string | null;
@@ -381,6 +402,16 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     facturaFechaPago: dia(r.facturaFechaPago),
     fechaPagoSaldo: dia(r.fechaPagoSaldo),
     venceSaldo: null as string | null,
+    valorTerceroTon: num(r.valorTerceroTon),
+    valorTerceroFijo: num(r.valorTerceroFijo),
+    anticipoTransferencia: num(r.anticipoTransferencia),
+    anticipoTransferenciaFecha: dia(r.anticipoTransferenciaFecha),
+    anticipoTransferenciaLink: r.anticipoTransferenciaLink ?? null,
+    fechaEntregaDocsTercero: dia(r.fechaEntregaDocsTercero),
+    cuentaCobroTercero: r.cuentaCobroTercero ?? null,
+    aplicaDescuentosTercero: !!r.aplicaDescuentosTercero,
+    icaTerceroPorMil: num(r.icaTerceroPorMil),
+    fechaPagoTerceroProgramada: dia(r.fechaPagoTerceroProgramada),
     revisadoContabilidadPor: r.revisadoContabilidadPor ?? null,
     revisadoContabilidadEn: r.revisadoContabilidadEn ? new Date(r.revisadoContabilidadEn).toISOString() : null,
     revisadoGerenciaPor: r.revisadoGerenciaPor ?? null,
@@ -396,7 +427,10 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     papelesRevisadoEn: r.papelesRevisadoEn ? new Date(r.papelesRevisadoEn).toISOString() : null,
     papelesRevisadoPor: r.papelesRevisadoPor ?? null,
   };
-  if (base.flota === "TERCERO" && base.fechaDescargue) base.venceSaldo = sumarDias(base.fechaDescargue, DIAS_PAGO_TERCEROS);
+  // Terceros (sin socio dueno): el viernes que toca o la fecha escrita a mano.
+  if (base.flota === "TERCERO" && !base.dueno) {
+    base.venceSaldo = base.fechaPagoTerceroProgramada ?? (base.fechaDescargue ? viernesDePago(base.fechaDescargue) : null);
+  }
   return { ...base, ...estadoDe(base), estadoAnticipoEmpresa: estadoAnticipoEmpresa(base) };
 }
 
@@ -430,6 +464,16 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   facturaVence: "fecha",
   facturaFechaPago: "fecha",
   fechaPagoSaldo: "fecha",
+  valorTerceroTon: "numero",
+  valorTerceroFijo: "numero",
+  anticipoTransferencia: "numero",
+  anticipoTransferenciaFecha: "fecha",
+  anticipoTransferenciaLink: "texto",
+  fechaEntregaDocsTercero: "fecha",
+  cuentaCobroTercero: "texto",
+  aplicaDescuentosTercero: "booleano",
+  icaTerceroPorMil: "numero",
+  fechaPagoTerceroProgramada: "fecha",
 };
 
 /** Error de validacion del cuadro: la ruta lo responde como 422 con su mensaje. */
@@ -477,7 +521,17 @@ function validar(datos: Record<string, unknown>) {
     );
   }
   // Booleano real: "false" como texto se guardaria como 1.
-  if ("anticipoEmpresaNoAplica" in datos) datos.anticipoEmpresaNoAplica = datos.anticipoEmpresaNoAplica === true || datos.anticipoEmpresaNoAplica === 1 || datos.anticipoEmpresaNoAplica === "true";
+  for (const campo of ["anticipoEmpresaNoAplica", "aplicaDescuentosTercero"]) {
+    if (campo in datos) datos[campo] = datos[campo] === true || datos[campo] === 1 || datos[campo] === "true";
+  }
+  if ("icaTerceroPorMil" in datos && Number(datos.icaTerceroPorMil) > 20) {
+    throw new ErrorCuadro("El ICA va por mil (3,3 / 4 / 8 / 4,14): no puede pasar de 20.");
+  }
+  if ("anticipoTransferenciaLink" in datos && datos.anticipoTransferenciaLink) {
+    const link = String(datos.anticipoTransferenciaLink).trim();
+    if (!/^https?:\/\//i.test(link)) throw new ErrorCuadro("El comprobante debe ser un enlace (https://...).");
+    datos.anticipoTransferenciaLink = link.slice(0, 500);
+  }
   if ("placa" in datos) datos.placa = String(datos.placa ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if ("empresa" in datos) datos.empresa = String(datos.empresa ?? "").trim().toUpperCase();
 }

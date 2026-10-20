@@ -3,6 +3,7 @@ import { ErrorCuadro } from "../cuadro";
 import { seguimiento } from "../seguimiento";
 import { responder } from "./cuadro";
 import { importarCartera, propuestaCartera } from "../importaciones";
+import { terceros } from "../terceros";
 
 /**
  * Seguimiento de papeles, facturacion y cartera (ver src/seguimiento.ts).
@@ -53,6 +54,20 @@ seguimientoRouter.get("/anticipos-empresas", async (_req, res) => {
 /** POST /api/seguimiento/anticipos-empresas/pago: la empresa pago el anticipo de esos viajes ({ ids, fecha }). */
 seguimientoRouter.post("/anticipos-empresas/pago", async (req, res) => {
   await responder(res, async () => ({ pagados: await seguimiento.pagarAnticiposEmpresa(req.body ?? {}) }));
+});
+
+/**
+ * GET /api/seguimiento/terceros: viajes de vehiculos terceros con lo que se
+ * les paga (valor pactado - anticipos - retenciones si aplican) y el resumen
+ * por tercero.
+ */
+seguimientoRouter.get("/terceros", async (_req, res) => {
+  res.json(await terceros.listar());
+});
+
+/** POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). */
+seguimientoRouter.post("/terceros/pago", async (req, res) => {
+  await responder(res, async () => ({ pagados: await terceros.pagar(req.body ?? {}) }));
 });
 
 /** PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). */

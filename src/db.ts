@@ -898,6 +898,21 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "anticipoEmpresaFechaPago", "DATE"],
     // El viaje no lleva anticipo de la empresa (por ejemplo, un urbano).
     ["cuadro_viajes", "anticipoEmpresaNoAplica", "TINYINT(1) NOT NULL DEFAULT 0"],
+    // Pago a terceros (ver src/terceros.ts): valor pactado con el tercero
+    // (por tonelada o fijo), adicional por transferencia (con fecha y enlace
+    // al comprobante), entrega de documentos, cuenta de cobro, si se le
+    // descuentan las retenciones, su ICA por mil y la fecha de pago escrita a
+    // mano (si no, el viernes que toca). La fecha real es fechaPagoSaldo.
+    ["cuadro_viajes", "valorTerceroTon", "DOUBLE"],
+    ["cuadro_viajes", "valorTerceroFijo", "DOUBLE"],
+    ["cuadro_viajes", "anticipoTransferencia", "DOUBLE"],
+    ["cuadro_viajes", "anticipoTransferenciaFecha", "DATE"],
+    ["cuadro_viajes", "anticipoTransferenciaLink", "VARCHAR(500)"],
+    ["cuadro_viajes", "fechaEntregaDocsTercero", "DATE"],
+    ["cuadro_viajes", "cuentaCobroTercero", "VARCHAR(40)"],
+    ["cuadro_viajes", "aplicaDescuentosTercero", "TINYINT(1) NOT NULL DEFAULT 0"],
+    ["cuadro_viajes", "icaTerceroPorMil", "DOUBLE"],
+    ["cuadro_viajes", "fechaPagoTerceroProgramada", "DATE"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],

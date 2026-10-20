@@ -483,6 +483,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/seguimiento/cartera` | Facturas por cobrar, totales por cliente y facturados sin datos. Con dueno (MAURICIO, CELSO, MILLER, LUISA o TERCEROS), solo la parte de los vehiculos de ese dueno. |
 | `GET` | `/api/seguimiento/anticipos-empresas` | Viajes con anticipo que da la empresa (Zorro, Aburra Limpio, sin manifiesto) y lo que debe cada cliente. |
 | `POST` | `/api/seguimiento/anticipos-empresas/pago` | La empresa pago el anticipo de esos viajes ({ ids, fecha }). |
+| `GET` | `/api/seguimiento/terceros` | Viajes de vehiculos terceros con lo que se les paga (valor pactado - anticipos - retenciones si aplican) y el resumen por tercero. |
+| `POST` | `/api/seguimiento/terceros/pago` | Se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). |
 | `PUT` | `/api/seguimiento/cartera/anticipo` | Anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). |
 | `POST` | `/api/seguimiento/cartera/importar/previa` | Propone como cargar cada factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a sus viajes. No guarda nada. |
 | `POST` | `/api/seguimiento/cartera/importar` | Carga las facturas confirmadas ({ facturas }). |
@@ -505,7 +507,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_596 funciones, componentes, métodos y rutas en 41 archivos._
+_606 funciones, componentes, métodos y rutas en 42 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (23)
@@ -536,7 +538,7 @@ _596 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (31)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (13)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (15)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -548,6 +550,7 @@ _596 funciones, componentes, métodos y rutas en 41 archivos._
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
 - [`src/seguimiento.ts`](#srcseguimientots) (32)
+- [`src/terceros.ts`](#srctercerosts) (8)
 
 ### `src/alertas.ts`
 
@@ -3344,6 +3347,14 @@ _596 funciones, componentes, métodos y rutas en 41 archivos._
 - **`POST /anticipos-empresas/pago`** · _ruta HTTP_
   POST /api/seguimiento/anticipos-empresas/pago: la empresa pago el anticipo de esos viajes ({ ids, fecha }).
 
+- **`GET /terceros`** · _ruta HTTP_
+  GET /api/seguimiento/terceros: viajes de vehiculos terceros con lo que se
+  les paga (valor pactado - anticipos - retenciones si aplican) y el resumen
+  por tercero.
+
+- **`POST /terceros/pago`** · _ruta HTTP_
+  POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }).
+
 - **`PUT /cartera/anticipo`** · _ruta HTTP_
   PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }).
 
@@ -3818,5 +3829,50 @@ _596 funciones, componentes, métodos y rutas en 41 archivos._
 
 - **`mapearGestion(r)`** · _función_
   Fila de cartera_gestiones -> GestionCobro.
+
+### `src/terceros.ts`
+
+> Pago a terceros: lo que se le paga al dueno de un vehiculo tercero por cada
+> viaje. Reemplaza la "Matriz Terceros" de Excel (una hoja por tercero).
+>
+> Por viaje se pacta el valor con el tercero (por tonelada o fijo). De ahi se
+> descuentan los anticipos: el efectivo y el combustible de la bomba (los de
+> cuadro_anticipos) y el adicional por transferencia. Las retenciones
+> (retefuente 1 %, ICA, FOPAT 0,1 % y la poliza de 3.000) se muestran siempre;
+> solo se descuentan si se marca el viaje (aplicaDescuentosTercero), porque en
+> la matriz casi nunca se restan.
+>
+> Se le paga el viernes: si descargo lunes o martes, el de esa semana; de
+> miercoles en adelante, el de la semana siguiente. La fecha se puede cambiar
+> a mano (fechaPagoTerceroProgramada). Ya pagado, la fecha real es
+> fechaPagoSaldo.
+
+- **`icaSugerido(empresa)`** · _función_
+  ICA por mil que se sugiere para un cliente (0 si no esta en la lista: RECOLAM, APROREC...).
+
+- **`viernesDePago(fechaDescargue)`** · _función_
+  Viernes en que se le paga a un tercero ("AAAA-MM-DD"): lunes o martes ->
+  el viernes de esa semana; miercoles a domingo -> el de la semana siguiente.
+
+- **`liquidar(f, bomba)`** · _función_
+  Calcula lo que se le paga al tercero por un viaje (exportado para las pruebas).
+
+- **`estadoPagoTercero(f, l, hoy)`** · _función_
+  Estado del pago de un viaje al tercero (ver EstadoPagoTercero).
+
+- **`resumirTerceros(viajes)`** · _función_
+  Agrupa los viajes por tercero (exportado para las pruebas). Los que mas se deben primero.
+
+- **`terceros`** · _módulo_
+  Repositorio del pago a terceros.
+
+  - **`terceros.listar()`** · _método_
+    Viajes de vehiculos terceros (flota TERCERO y sin socio dueno), no
+    anulados, con su liquidacion, y el resumen por tercero.
+
+  - **`terceros.pagar(d)`** · _método_
+    Registra el pago al tercero de varios viajes ({ ids, fecha, cuentaCobro? }):
+    pone la fecha de pago (y el numero de la cuenta de cobro, si se escribe y
+    el viaje no lo tiene) en los que aun no estaban pagados.
 
 <!-- REFERENCIA:FIN -->
