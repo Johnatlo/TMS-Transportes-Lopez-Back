@@ -27,6 +27,8 @@ import { pool } from "./db";
 import { cuadro, dia, ErrorCuadro, ESTADOS_PAPELES, hoyColombia, papelesListos, sumarDias } from "./cuadro";
 import type { EstadoPapeles, FilaCuadro } from "./cuadro";
 import { grupoDe, GRUPOS_DUENO } from "./duenos";
+import { relacionesBomba } from "./relacionesBomba";
+import type { RelacionBomba } from "./relacionesBomba";
 import type { GrupoDueno } from "./duenos";
 
 /** Dias de credito si el cliente no tiene plazo configurado. */
@@ -398,7 +400,31 @@ export function resumirPorCliente(facturas: FacturaCartera[]): ResumenCliente[] 
   return [...porCliente.values()].sort((a, b) => b.total - a.total);
 }
 
-export type TipoAlerta = "PAPELES" | "FACTURACION" | "CARTERA" | "ANTICIPO_EMPRESA";
+export type TipoAlerta = "PAPELES" | "FACTURACION" | "CARTERA" | "ANTICIPO_EMPRESA" | "BOMBA";
+
+/** Dias antes del vencimiento de una factura de la bomba en que empieza a avisar. */
+export const DIAS_AVISO_BOMBA = 5;
+
+/**
+ * Alerta de una factura de la bomba sin pagar: urgente si ya vencio,
+ * atencion si vence en los proximos DIAS_AVISO_BOMBA dias. Sin vencimiento
+ * escrito o ya pagada, no avisa.
+ */
+export function alertaFacturaBomba(
+  r: Pick<RelacionBomba, "numero" | "total" | "fechaVencimiento" | "fechaPago">,
+  hoy: string
+): AlertaFila | null {
+  if (r.fechaPago || !r.fechaVencimiento) return null;
+  const valor = Math.round(r.total).toLocaleString("es-CO");
+  const fecha = r.fechaVencimiento.split("-").reverse().join("/");
+  if (r.fechaVencimiento < hoy) {
+    return { nivel: "urgente", motivos: [`Vencio el ${fecha}: hay que pagarle a la bomba ${valor}.`], comunicarse: false };
+  }
+  if (r.fechaVencimiento <= sumarDias(hoy, DIAS_AVISO_BOMBA)) {
+    return { nivel: "atencion", motivos: [`Vence el ${fecha}: pagarle a la bomba ${valor}.`], comunicarse: false };
+  }
+  return null;
+}
 
 /**
  * Alerta del anticipo que da la empresa (clientes del Zorro, Aburra Limpio y
@@ -480,7 +506,7 @@ export interface AlertaSeguimiento {
   motivos: string[];
   /** Fila del cuadro (papeles y facturacion). */
   cuadroId?: number;
-  /** Factura (cartera). */
+  /** Factura (cartera, o de la bomba). */
   facturaNumero?: string;
   empresa?: string;
 }
@@ -509,7 +535,7 @@ export function alertasDe(filas: FilaCuadro[], facturas: FacturaCartera[], hoy: 
       empresa: fc.empresa,
     });
   }
-  const orden: Record<TipoAlerta, number> = { PAPELES: 0, FACTURACION: 1, CARTERA: 2, ANTICIPO_EMPRESA: 3 };
+  const orden: Record<TipoAlerta, number> = { PAPELES: 0, FACTURACION: 1, CARTERA: 2, ANTICIPO_EMPRESA: 3, BOMBA: 4 };
   return lista.sort((a, b) => (a.nivel === b.nivel ? orden[a.tipo] - orden[b.tipo] : a.nivel === "urgente" ? -1 : 1));
 }
 
@@ -788,6 +814,13 @@ export const seguimiento = {
       anticipos,
     });
     const alertas = alertasDe(filas, facturas, hoy, SEGUIMIENTO_DESDE);
+    // Facturas de la bomba por pagar (con fecha de vencimiento).
+    for (const r of await relacionesBomba.listar()) {
+      const a = alertaFacturaBomba(r, hoy);
+      if (a) alertas.push({ tipo: "BOMBA", nivel: a.nivel, titulo: `Factura de la bomba ${r.numero}`, motivos: a.motivos, facturaNumero: r.numero });
+    }
+    // Las urgentes primero (las de la bomba entran al final).
+    alertas.sort((a, b) => (a.nivel === b.nivel ? 0 : a.nivel === "urgente" ? -1 : 1));
     return {
       hoy,
       urgentes: alertas.filter((a) => a.nivel === "urgente").length,

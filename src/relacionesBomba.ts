@@ -139,6 +139,8 @@ export interface RelacionBomba {
   id: number;
   numero: string;
   fecha: string;
+  /** Cuando vence la factura de la bomba (hay que pagarla antes). */
+  fechaVencimiento: string | null;
   total: number;
   fechaPago: string | null;
   nota: string | null;
@@ -208,6 +210,8 @@ export const relacionesBomba = {
     const fecha = String(d.fecha ?? "").slice(0, 10);
     if (!numero) throw new ErrorCuadro("Escribe el numero de la factura de la bomba.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha de la factura de la bomba.");
+    const vence = d.fechaVencimiento ? String(d.fechaVencimiento).slice(0, 10) : null;
+    if (vence && !/^\d{4}-\d{2}-\d{2}$/.test(vence)) throw new ErrorCuadro("La fecha de vencimiento no es valida.");
     const vales = leerVales(d.vales);
     const ids = vales.map((v) => v.tramoId).filter((x): x is number => !!x);
     if (new Set(ids).size !== ids.length) throw new ErrorCuadro("Un tanqueo quedo con dos vales: revisa la relacion.");
@@ -225,8 +229,8 @@ export const relacionesBomba = {
         if (ocupados[0]) throw new ErrorCuadro("Algun tanqueo ya esta cruzado con otra factura de la bomba.");
       }
       const [r] = await conexion.query<ResultSetHeader>(
-        "INSERT INTO bomba_relaciones (numero, fecha, total, nota, creadoPorId) VALUES (?, ?, ?, ?, ?)",
-        [numero, fecha, total, String(d.nota ?? "").trim().slice(0, 200) || null, usuarioId]
+        "INSERT INTO bomba_relaciones (numero, fecha, fechaVencimiento, total, nota, creadoPorId) VALUES (?, ?, ?, ?, ?, ?)",
+        [numero, fecha, vence, total, String(d.nota ?? "").trim().slice(0, 200) || null, usuarioId]
       );
       for (const v of vales) {
         await conexion.query(
@@ -268,6 +272,7 @@ export const relacionesBomba = {
       id: r.id,
       numero: r.numero,
       fecha: dia(r.fecha)!,
+      fechaVencimiento: dia(r.fechaVencimiento),
       total: Number(r.total),
       fechaPago: dia(r.fechaPago),
       nota: r.nota ?? null,
@@ -285,6 +290,13 @@ export const relacionesBomba = {
           tramoId: v.cuadroAnticipoId ?? null,
         })),
     }));
+  },
+
+  /** Cambia la fecha de vencimiento de una factura de la bomba (vacia la quita). */
+  async vencimiento(id: number, d: Record<string, unknown>): Promise<void> {
+    const fecha = d.fechaVencimiento ? String(d.fechaVencimiento).slice(0, 10) : null;
+    if (fecha && !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("La fecha de vencimiento no es valida.");
+    await pool.query("UPDATE bomba_relaciones SET fechaVencimiento = ? WHERE id = ?", [fecha, id]);
   },
 
   /** Se le pago a la bomba la factura: fecha de pago en la relacion y en sus tramos. */

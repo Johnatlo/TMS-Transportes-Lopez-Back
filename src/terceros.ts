@@ -204,7 +204,8 @@ function leerNombres(lista: unknown): NombreTercero[] {
 /** Repositorio del pago a terceros. */
 export const terceros = {
   /**
-   * Viajes de vehiculos terceros (flota TERCERO y sin socio dueno), no
+   * Viajes de vehiculos terceros (flota TERCERO y sin socio dueno), sin los
+   * reconocidos de Cartones America (no se le pagan al tercero), no
    * anulados, con su liquidacion, y el resumen por tercero.
    */
   async listar(): Promise<{ viajes: ViajeTercero[]; terceros: ResumenTercero[] }> {
@@ -234,7 +235,8 @@ export const terceros = {
     const nombres = new Map(duenos.map((d) => [Number(d.id), d.nombre ? String(d.nombre).trim() : null]));
     const hoy = hoyColombia();
     const viajes = filas
-      .filter((f) => !f.anulado && f.flota === "TERCERO" && !f.dueno)
+      // Sin los reconocidos de Cartones America: al tercero no se le pagan.
+      .filter((f) => !f.anulado && f.flota === "TERCERO" && !f.dueno && !f.concepto)
       .map((f) => {
         const l = liquidar(f, porViaje.get(f.id) ?? { efectivo: 0, combustible: 0 });
         return {

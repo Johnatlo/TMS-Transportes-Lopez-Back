@@ -105,6 +105,41 @@ export const CLIENTES_CON_ANTICIPO = /ECOAMBIENTAL|RECICLAJES?\s+BOGOTA|BODEGAS?
  */
 export const CLIENTES_ZORRO = /ECOAMBIENTAL|RECICLAJES?\s+BOGOTA|BODEGAS?\s+DE\s+RECICLAJE/i;
 
+/** NIT de Cartones America (CORAME), sin digito de verificacion: los viajes que cargan alla. */
+export const NIT_CARTONES_AMERICA = "860026759";
+/** Peso que Cartones America reconoce como minimo por viaje: completa hasta aqui. */
+export const PESO_MINIMO_CORAME = 32_000;
+/** Con este numero de clientes o mas en el mismo manifiesto, Cartones America reconoce 2 toneladas. */
+export const CLIENTES_RECONOCIDO_CORAME = 4;
+/** Lo que reconoce por llevar 4 o mas clientes. */
+export const KG_RECONOCIDO_CLIENTES = 2_000;
+
+/**
+ * Reconocidos de Cartones America (viajes sin manifiesto que se generan solos):
+ * - MAS4: el manifiesto lleva 4 o mas clientes: reconoce 2 toneladas.
+ * - COMPLETA32: sus remesas suman menos de 32.000 kg: reconoce lo que falta.
+ */
+export type TipoReconocido = "MAS4" | "COMPLETA32";
+export const CONCEPTO_RECONOCIDO: Record<TipoReconocido, string> = {
+  MAS4: "+4 TONELADAS CARTONES AMERICA",
+  COMPLETA32: "RECONOCIDO CORAME",
+};
+
+/**
+ * Que reconoce Cartones America por un viaje despachado desde alla (pueden
+ * ser los dos): 2.000 kg si lleva 4 o mas clientes, y lo que le falte para
+ * 32.000 kg si sus remesas suman menos. Lo de los 32.000 kg es solo para
+ * tractomulas (configuracion articulada: 2S, 3S...); un camion de 16
+ * toneladas no se completa. Sin configuracion conocida, se completa.
+ */
+export function reconocidosCorame(v: { clientes: number; pesoKg: number; configuracion?: string | null }): Array<{ tipo: TipoReconocido; pesoKg: number }> {
+  const r: Array<{ tipo: TipoReconocido; pesoKg: number }> = [];
+  const tractomula = !v.configuracion || /S/i.test(v.configuracion);
+  if (v.clientes >= CLIENTES_RECONOCIDO_CORAME) r.push({ tipo: "MAS4", pesoKg: KG_RECONOCIDO_CLIENTES });
+  if (tractomula && v.pesoKg > 0 && v.pesoKg < PESO_MINIMO_CORAME) r.push({ tipo: "COMPLETA32", pesoKg: Math.round(PESO_MINIMO_CORAME - v.pesoKg) });
+  return r;
+}
+
 /**
  * Tarifa por kilo mas alta que se acepta. Las de la matriz van de unos 13 a
  * 320 $/kg; una de miles es casi seguro la tarifa por tonelada escrita como
@@ -171,6 +206,10 @@ export interface FilaCuadro {
   ruta: string | null;
   /** Ruta escrita a mano (solo viajes sin manifiesto). */
   rutaManual: string | null;
+  /** Reconocido de Cartones America: "+4 TONELADAS CARTONES AMERICA" o "RECONOCIDO CORAME". */
+  concepto: string | null;
+  /** Manifiesto del viaje que origino el reconocido. */
+  reconocidoDe: string | null;
   empresa: string;
   viajeId: number | null;
   viajeRemesaId: number | null;
@@ -351,7 +390,8 @@ export const SELECT_CUADRO = `
          uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor, up.nombre AS papelesRevisadoPor,
          COALESCE(a.total, 0) AS totalAnticipos, COALESCE(a.sinPagar, 0) AS anticiposSinPagar,
          COALESCE(n.cuantas, 0) AS notas,
-         (SELECT texto FROM cuadro_notas WHERE cuadroViajeId = c.id ORDER BY id DESC LIMIT 1) AS ultimaNota
+         (SELECT texto FROM cuadro_notas WHERE cuadroViajeId = c.id ORDER BY id DESC LIMIT 1) AS ultimaNota,
+         (SELECT consecutivoManifiesto FROM viajes WHERE id = c.reconocidoDeViajeId) AS reconocidoDe
     FROM cuadro_viajes c
     LEFT JOIN vehiculos ve ON ve.id = c.vehiculoId
     LEFT JOIN tarifas_flete tf ON tf.id = c.tarifaFleteId
@@ -388,6 +428,8 @@ export function mapear(r: RowDataPacket): FilaCuadro {
         : null
       : r.rutaManual ?? null,
     rutaManual: r.rutaManual ?? null,
+    concepto: r.concepto ?? null,
+    reconocidoDe: r.reconocidoDe ?? null,
     empresa: r.empresa,
     viajeId: r.viajeId,
     viajeRemesaId: r.viajeRemesaId,
@@ -450,7 +492,8 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     papelesRevisadoPor: r.papelesRevisadoPor ?? null,
   };
   // Terceros (sin socio dueno): el viernes que toca o la fecha escrita a mano.
-  if (base.flota === "TERCERO" && !base.dueno) {
+  // Los reconocidos de Cartones America no se le pagan al tercero.
+  if (base.flota === "TERCERO" && !base.dueno && !base.concepto) {
     base.venceSaldo = base.fechaPagoTerceroProgramada ?? (base.fechaDescargue ? viernesDePago(base.fechaDescargue) : null);
   }
   return {
@@ -602,7 +645,77 @@ export const cuadro = {
         WHERE cv.anulado <> (v.estado = 'ANULADO')`
     );
     await this.reemplazarAnulados();
+    await this.generarReconocidosCorame();
     return res.affectedRows;
+  },
+
+  /**
+   * Reconocidos de Cartones America: por cada manifiesto despachado desde alla
+   * (alguna remesa con remitente Cartones America) se genera solo un viaje sin
+   * manifiesto por cada reconocido que le toque (ver reconocidosCorame):
+   * empresa CARTONES AMERICA, la fecha, la placa y el descargue del viaje, el
+   * peso reconocido y su concepto, sin anticipo de la empresa. Va con su
+   * propia factura y sus propias alertas, como cualquier viaje.
+   *
+   * Es idempotente (uno por manifiesto y tipo). Si el viaje cambia (peso,
+   * clientes) y el reconocido aun no se factura, se actualiza su peso; si ya
+   * no le toca o el manifiesto se anulo, queda anulado.
+   */
+  async generarReconocidosCorame(): Promise<void> {
+    const [viajes] = await pool.query<RowDataPacket[]>(
+      `SELECT v.id, v.estado IN ('CONFIRMADO', 'CUMPLIDO') AS vigente,
+              MIN(c.fecha) AS fecha, MIN(c.vehiculoId) AS vehiculoId, MIN(c.placa) AS placa, MIN(c.conductor) AS conductor,
+              COUNT(DISTINCT c.empresa) AS clientes, COALESCE(SUM(c.pesoKg), 0) AS pesoKg, MAX(c.fechaDescargue) AS fechaDescargue,
+              MIN(ve.configuracion) AS configuracion
+         FROM viajes v
+         JOIN cuadro_viajes c ON c.viajeId = v.id AND c.viajeRemesaId IS NOT NULL
+         LEFT JOIN vehiculos ve ON ve.id = c.vehiculoId
+        WHERE v.id IN (
+                SELECT vr.viajeId FROM viaje_remesas vr
+                  LEFT JOIN plantillas_viaje p ON p.id = vr.plantillaId
+                  LEFT JOIN terceros r ON r.id = p.remitenteId
+                 WHERE vr.estado <> 'ANULADA' AND COALESCE(r.nit, vr.remitenteNit) LIKE ?)
+        GROUP BY v.id`,
+      [`${NIT_CARTONES_AMERICA}%`]
+    );
+    const [existentes] = await pool.query<RowDataPacket[]>(
+      `SELECT id, reconocidoDeViajeId, reconocidoTipo, pesoKg, anulado, facturado, facturaNumero
+         FROM cuadro_viajes WHERE reconocidoDeViajeId IS NOT NULL`
+    );
+    const llave = (viajeId: number, tipo: string) => `${viajeId}|${tipo}`;
+    const porLlave = new Map(existentes.map((e) => [llave(e.reconocidoDeViajeId, e.reconocidoTipo), e]));
+    const deseados = new Set<string>();
+    for (const v of viajes) {
+      if (!Number(v.vigente)) continue;
+      for (const r of reconocidosCorame({ clientes: Number(v.clientes), pesoKg: Number(v.pesoKg), configuracion: v.configuracion })) {
+        const k = llave(v.id, r.tipo);
+        deseados.add(k);
+        const e = porLlave.get(k);
+        if (!e) {
+          await pool.query(
+            `INSERT IGNORE INTO cuadro_viajes
+               (fecha, vehiculoId, placa, conductor, empresa, pesoKg, fechaDescargue, flujoCorame,
+                anticipoEmpresaNoAplica, concepto, reconocidoDeViajeId, reconocidoTipo)
+             VALUES (?, ?, ?, ?, 'CARTONES AMERICA', ?, ?, 1, 1, ?, ?, ?)`,
+            [dia(v.fecha), v.vehiculoId, v.placa, v.conductor, r.pesoKg, dia(v.fechaDescargue), CONCEPTO_RECONOCIDO[r.tipo], v.id, r.tipo]
+          );
+          continue;
+        }
+        const sinFacturar = !Number(e.facturado) && !e.facturaNumero;
+        if (Number(e.anulado) || (sinFacturar && Number(e.pesoKg) !== r.pesoKg)) {
+          await pool.query(
+            `UPDATE cuadro_viajes SET anulado = 0, pesoKg = IF(?, ?, pesoKg), fechaDescargue = COALESCE(fechaDescargue, ?) WHERE id = ?`,
+            [sinFacturar ? 1 : 0, r.pesoKg, dia(v.fechaDescargue), e.id]
+          );
+        }
+      }
+    }
+    // Los que ya no tocan (manifiesto anulado, mas peso, menos clientes) quedan anulados.
+    for (const e of existentes) {
+      if (!deseados.has(llave(e.reconocidoDeViajeId, e.reconocidoTipo)) && !Number(e.anulado)) {
+        await pool.query("UPDATE cuadro_viajes SET anulado = 1 WHERE id = ?", [e.id]);
+      }
+    }
   },
 
   /**
@@ -770,6 +883,9 @@ export const cuadro = {
 
   /** Solo los viajes creados a mano (sin manifiesto) se pueden borrar. */
   async borrar(id: number): Promise<boolean> {
+    // Un reconocido de Cartones America se volveria a generar solo: no se borra.
+    const [rec] = await pool.query<RowDataPacket[]>("SELECT 1 FROM cuadro_viajes WHERE id = ? AND reconocidoDeViajeId IS NOT NULL", [id]);
+    if (rec[0]) throw new ErrorCuadro("Es un reconocido de Cartones America: se genera solo con su manifiesto y no se puede borrar.");
     const [res] = await pool.query<ResultSetHeader>("DELETE FROM cuadro_viajes WHERE id = ? AND viajeId IS NULL", [id]);
     return res.affectedRows > 0;
   },

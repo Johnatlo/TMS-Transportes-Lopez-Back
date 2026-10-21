@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 // El cuadro importa la conexion a MySQL; estas pruebas no tocan la base.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { CLIENTE_FLUJO_LARGO, datosAHeredar, estadoDe, sumarDias } from "./cuadro";
+import { CLIENTE_FLUJO_LARGO, datosAHeredar, estadoDe, reconocidosCorame, sumarDias } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 
 type Base = Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa" | "anticipoEmpresaABomba">;
@@ -20,6 +20,8 @@ function viaje(cambios: Partial<Base> = {}): Base {
     conductor: null,
     ruta: null,
     rutaManual: null,
+    concepto: null,
+    reconocidoDe: null,
     empresa: "CARTONES AMERICA",
     viajeId: 1,
     viajeRemesaId: 1,
@@ -181,5 +183,28 @@ describe("manifiesto anulado y vuelto a expedir: que hereda la fila nueva", () =
   test("el adicional por clientes (POR / POR3) pasa junto con la tarifa", () => {
     const anulada = { tipoFlete: "KILO", tarifaKilo: 195, valorFijo: null, fleteAdicional: 300_000 };
     expect(datosAHeredar(anulada, nueva)).toEqual({ tipoFlete: "KILO", tarifaKilo: 195, fleteAdicional: 300_000 });
+  });
+});
+
+describe("reconocidos de Cartones America", () => {
+  test("4 o mas clientes: 2 toneladas; menos de 32.000 kg: lo que falta", () => {
+    expect(reconocidosCorame({ clientes: 4, pesoKg: 32_000 })).toEqual([{ tipo: "MAS4", pesoKg: 2_000 }]);
+    expect(reconocidosCorame({ clientes: 1, pesoKg: 31_000 })).toEqual([{ tipo: "COMPLETA32", pesoKg: 1_000 }]);
+    // Los dos a la vez (manifiesto 00006852 tenia 3 clientes y 30.362 kg).
+    expect(reconocidosCorame({ clientes: 5, pesoKg: 30_362 })).toEqual([
+      { tipo: "MAS4", pesoKg: 2_000 },
+      { tipo: "COMPLETA32", pesoKg: 1_638 },
+    ]);
+  });
+
+  test("los 32.000 kg son solo de tractomula: un camion de 16 toneladas no se completa", () => {
+    expect(reconocidosCorame({ clientes: 1, pesoKg: 15_989, configuracion: "3" })).toEqual([]);
+    expect(reconocidosCorame({ clientes: 1, pesoKg: 30_000, configuracion: "3S3" })).toEqual([{ tipo: "COMPLETA32", pesoKg: 2_000 }]);
+    expect(reconocidosCorame({ clientes: 4, pesoKg: 15_000, configuracion: "3" })).toEqual([{ tipo: "MAS4", pesoKg: 2_000 }]);
+  });
+
+  test("3 clientes y 32.000 kg o mas: nada", () => {
+    expect(reconocidosCorame({ clientes: 3, pesoKg: 32_000 })).toEqual([]);
+    expect(reconocidosCorame({ clientes: 1, pesoKg: 34_999 })).toEqual([]);
   });
 });

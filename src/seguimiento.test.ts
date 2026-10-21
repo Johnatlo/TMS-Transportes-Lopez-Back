@@ -8,6 +8,7 @@ import type { FilaCuadro } from "./cuadro";
 import {
   agruparCartera,
   alertaAnticipoEmpresa,
+  alertaFacturaBomba,
   alertaFactura,
   alertaFacturacion,
   alertaPapeles,
@@ -31,6 +32,8 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     conductor: null,
     ruta: null,
     rutaManual: null,
+    concepto: null,
+    reconocidoDe: null,
     empresa: "CARTONES AMERICA",
     viajeId: 1,
     viajeRemesaId: 1,
@@ -323,5 +326,19 @@ describe("anticipo que da la empresa (Zorro, Aburra Limpio, sin manifiesto)", ()
     expect(alertaAnticipoEmpresa(fila({ empresa: "RECICLAJES BOGOTA N.S. S.A.S.", anticipoEmpresa: 2_000_000 }))?.motivos[0]).toMatch(/abonar a la bomba/);
     expect(alertaAnticipoEmpresa(fila({ empresa: "CORPORACION ABURRA LIMPIO", anticipoEmpresa: 2_000_000 }))?.motivos[0]).toMatch(/nos debe/);
     expect(resumirAnticiposEmpresa([fila({ empresa: "ECOAMBIENTAL RECICLAJE S.A.S." })])[0].aBomba).toBe(true);
+  });
+});
+
+describe("factura de la bomba por pagar", () => {
+  const factura = { numero: "AE5044797", total: 5_394_499, fechaVencimiento: "2026-10-23", fechaPago: null };
+  test("avisa 5 dias antes y es urgente cuando ya vencio", () => {
+    expect(alertaFacturaBomba(factura, "2026-10-17")).toBeNull();
+    expect(alertaFacturaBomba(factura, "2026-10-18")?.nivel).toBe("atencion");
+    expect(alertaFacturaBomba(factura, "2026-10-23")?.motivos[0]).toMatch(/Vence el 23\/10\/2026/);
+    expect(alertaFacturaBomba(factura, "2026-10-24")?.nivel).toBe("urgente");
+  });
+  test("pagada o sin vencimiento no avisa", () => {
+    expect(alertaFacturaBomba({ ...factura, fechaPago: "2026-10-20" }, "2026-10-24")).toBeNull();
+    expect(alertaFacturaBomba({ ...factura, fechaVencimiento: null }, "2026-10-24")).toBeNull();
   });
 });

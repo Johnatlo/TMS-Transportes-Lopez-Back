@@ -435,6 +435,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/cuadro/relaciones-bomba/previa` | Propone el tanqueo de cada vale ({ numero, vales }). No guarda. |
 | `POST` | `/api/cuadro/relaciones-bomba` | Guarda la relacion y cruza los tanqueos ({ numero, fecha, nota, vales }). |
 | `PUT` | `/api/cuadro/relaciones-bomba/:relacionId/pago` | Fecha de pago de la factura ({ fechaPago }; vacia la quita). |
+| `PUT` | `/api/cuadro/relaciones-bomba/:relacionId/vencimiento` | Fecha de vencimiento de la factura ({ fechaVencimiento }). |
 | `DELETE` | `/api/cuadro/relaciones-bomba/:relacionId` | Borra la relacion y deshace el cruce. |
 | `GET` | `/api/cuadro/abonos-socio` | Abonos del socio a la bomba, con sus viajes. |
 | `POST` | `/api/cuadro/abonos-socio` | Registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }). |
@@ -516,7 +517,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_637 funciones, componentes, métodos y rutas en 43 archivos._
+_642 funciones, componentes, métodos y rutas en 43 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -525,14 +526,14 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (33)
+- [`src/cuadro.ts`](#srccuadrots) (35)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
-- [`src/relacionesBomba.ts`](#srcrelacionesbombats) (11)
+- [`src/relacionesBomba.ts`](#srcrelacionesbombats) (12)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
@@ -546,7 +547,7 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (38)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (39)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (17)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -559,7 +560,7 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (32)
+- [`src/seguimiento.ts`](#srcseguimientots) (33)
 - [`src/terceros.ts`](#srctercerosts) (11)
 
 ### `src/alertas.ts`
@@ -1072,6 +1073,13 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
   - "Facturado", si la anulada ya estaba facturada.
   Lo que sale del manifiesto (placa, conductor, peso, fecha) es el de la nueva.
 
+- **`reconocidosCorame(v)`** · _función_
+  Que reconoce Cartones America por un viaje despachado desde alla (pueden
+  ser los dos): 2.000 kg si lleva 4 o mas clientes, y lo que le falte para
+  32.000 kg si sus remesas suman menos. Lo de los 32.000 kg es solo para
+  tractomulas (configuracion articulada: 2S, 3S...); un camion de 16
+  toneladas no se completa. Sin configuracion conocida, se completa.
+
 - **`requiereAnticipoEmpresa(f)`** · _función_
   true si el viaje lleva anticipo de la empresa (ver CLIENTES_CON_ANTICIPO).
   Los urbanos no llevan: los que se facturan con una tarifa URBANO de la
@@ -1146,6 +1154,18 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
     Trae al cuadro los viajes con manifiesto expedido (una fila por remesa) y
     marca como anulados los que se anularon. Es idempotente: la llave unica
     de viajeRemesaId impide repetirlos, y no toca lo que ya se diligencio.
+
+  - **`cuadro.generarReconocidosCorame()`** · _método_
+    Reconocidos de Cartones America: por cada manifiesto despachado desde alla
+    (alguna remesa con remitente Cartones America) se genera solo un viaje sin
+    manifiesto por cada reconocido que le toque (ver reconocidosCorame):
+    empresa CARTONES AMERICA, la fecha, la placa y el descargue del viaje, el
+    peso reconocido y su concepto, sin anticipo de la empresa. Va con su
+    propia factura y sus propias alertas, como cualquier viaje.
+
+    Es idempotente (uno por manifiesto y tipo). Si el viaje cambia (peso,
+    clientes) y el reconocido aun no se factura, se actualiza su peso; si ya
+    no le toca o el manifiesto se anulo, queda anulado.
 
   - **`cuadro.reemplazarAnulados()`** · _método_
     Un manifiesto anulado y vuelto a expedir es el MISMO viaje: en el cuadro
@@ -1486,6 +1506,9 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 
   - **`relacionesBomba.listar()`** · _método_
     Relaciones cruzadas, la mas reciente primero, con sus vales.
+
+  - **`relacionesBomba.vencimiento(id, d)`** · _método_
+    Cambia la fecha de vencimiento de una factura de la bomba (vacia la quita).
 
   - **`relacionesBomba.pagar(id, d)`** · _método_
     Se le pago a la bomba la factura: fecha de pago en la relacion y en sus tramos.
@@ -3058,6 +3081,9 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 - **`PUT /relaciones-bomba/:relacionId/pago`** · _ruta HTTP_
   PUT /api/cuadro/relaciones-bomba/:relacionId/pago: fecha de pago de la factura ({ fechaPago }; vacia la quita).
 
+- **`PUT /relaciones-bomba/:relacionId/vencimiento`** · _ruta HTTP_
+  PUT /api/cuadro/relaciones-bomba/:relacionId/vencimiento: fecha de vencimiento de la factura ({ fechaVencimiento }).
+
 - **`DELETE /relaciones-bomba/:relacionId`** · _ruta HTTP_
   DELETE /api/cuadro/relaciones-bomba/:relacionId: borra la relacion y deshace el cruce.
 
@@ -3892,6 +3918,11 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 
 - **`resumirPorCliente(facturas)`** · _función_
   Totales por cliente con edades de vencimiento (0, 1-30, 31-60, 61-90, +90 dias).
+
+- **`alertaFacturaBomba(r, hoy)`** · _función_
+  Alerta de una factura de la bomba sin pagar: urgente si ya vencio,
+  atencion si vence en los proximos DIAS_AVISO_BOMBA dias. Sin vencimiento
+  escrito o ya pagada, no avisa.
 
 - **`alertaAnticipoEmpresa(f, desde)`** · _función_
   Alerta del anticipo que da la empresa (clientes del Zorro, Aburra Limpio y

@@ -945,6 +945,15 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "aplicaDescuentosTercero", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["cuadro_viajes", "icaTerceroPorMil", "DOUBLE"],
     ["cuadro_viajes", "fechaPagoTerceroProgramada", "DATE"],
+    // Reconocidos de Cartones America (ver generarReconocidosCorame en
+    // src/cuadro.ts): viajes sin manifiesto que se generan solos por cada
+    // manifiesto despachado desde alla con 4 o mas clientes (+2 toneladas) o
+    // con menos de 32.000 kg (lo que falta). concepto es lo que dice la fila.
+    ["cuadro_viajes", "concepto", "VARCHAR(120)"],
+    ["cuadro_viajes", "reconocidoDeViajeId", "INT"],
+    ["cuadro_viajes", "reconocidoTipo", "VARCHAR(12)"],
+    // Fecha de vencimiento de la factura de la bomba: avisa cuando hay que pagarla.
+    ["bomba_relaciones", "fechaVencimiento", "DATE"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],
@@ -1045,6 +1054,15 @@ export async function initSchema(): Promise<void> {
           SET cv.conductor = ch.nombre
         WHERE cv.conductor <=> cv.conductorManifiesto OR cv.conductor IS NULL OR cv.conductor = ''`
     );
+  }
+
+  // Un solo reconocido de Cartones America por manifiesto y tipo.
+  const [indiceReconocido] = await pool.query(
+    `SELECT 1 FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND INDEX_NAME = 'uk_reconocido'`
+  );
+  if ((indiceReconocido as unknown[]).length === 0) {
+    await pool.query("ALTER TABLE cuadro_viajes ADD UNIQUE KEY uk_reconocido (reconocidoDeViajeId, reconocidoTipo)");
   }
 
   // Un numero de manifiesto no se puede repetir: es la ultima barrera contra

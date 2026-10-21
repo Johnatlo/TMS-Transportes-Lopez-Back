@@ -114,6 +114,13 @@ cuadroRouter.put("/relaciones-bomba/:relacionId/pago", async (req, res) => {
     return relacionesBomba.listar();
   });
 });
+/** PUT /api/cuadro/relaciones-bomba/:relacionId/vencimiento: fecha de vencimiento de la factura ({ fechaVencimiento }). */
+cuadroRouter.put("/relaciones-bomba/:relacionId/vencimiento", async (req, res) => {
+  await responder(res, async () => {
+    await relacionesBomba.vencimiento(Number(req.params.relacionId), req.body ?? {});
+    return relacionesBomba.listar();
+  });
+});
 /** DELETE /api/cuadro/relaciones-bomba/:relacionId: borra la relacion y deshace el cruce. */
 cuadroRouter.delete("/relaciones-bomba/:relacionId", async (req, res) => {
   await responder(res, async () => {
