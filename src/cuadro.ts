@@ -99,6 +99,13 @@ export const CLIENTE_FLUJO_LARGO = /CORAME|CARTONES\s+AMERICA/i;
 export const CLIENTES_CON_ANTICIPO = /ECOAMBIENTAL|RECICLAJES?\s+BOGOTA|BODEGAS?\s+DE\s+RECICLAJE|ABURRA\s+LIMPIO/i;
 
 /**
+ * Clientes del Zorro: son los unicos que abonan el anticipo directamente a la
+ * bomba (cuenta con la bomba, ver Anticipos). Los demas (Aburra Limpio, viajes
+ * sin manifiesto) nos pagan el anticipo a nosotros y no tocan la bomba.
+ */
+export const CLIENTES_ZORRO = /ECOAMBIENTAL|RECICLAJES?\s+BOGOTA|BODEGAS?\s+DE\s+RECICLAJE/i;
+
+/**
  * Tarifa por kilo mas alta que se acepta. Las de la matriz van de unos 13 a
  * 320 $/kg; una de miles es casi seguro la tarifa por tonelada escrita como
  * por kilo (paso con la factura 7387: un viaje de 1.100 millones).
@@ -114,11 +121,17 @@ export const TARIFA_KILO_MAXIMA = 1000;
  */
 export type EstadoAnticipoEmpresa = "NO_APLICA" | "FALTA_REGISTRAR" | "POR_COBRAR" | "PAGADO";
 
-/** true si el viaje lleva anticipo de la empresa (ver CLIENTES_CON_ANTICIPO). */
+/**
+ * true si el viaje lleva anticipo de la empresa (ver CLIENTES_CON_ANTICIPO).
+ * Los urbanos no llevan: los que se facturan con una tarifa URBANO de la
+ * matriz ("ABURRA LIMPIO URBANO", "RECICLAJES URBANO TOCANCIPA") y, sin
+ * manifiesto, los que dicen URBANO en la empresa o la ruta.
+ */
 export function requiereAnticipoEmpresa(
-  f: Pick<FilaCuadro, "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica">
+  f: Pick<FilaCuadro, "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica" | "tarifaFlete">
 ): boolean {
   if (f.anulado || f.anticipoEmpresaNoAplica) return false;
+  if (/URBANO/i.test(f.tarifaFlete ?? "")) return false;
   if (CLIENTES_CON_ANTICIPO.test(f.empresa)) return true;
   // Sin manifiesto: lo lleva salvo que sea urbano.
   return !f.viajeId && !/URBANO/i.test(`${f.empresa} ${f.rutaManual ?? ""} ${f.ruta ?? ""}`);
@@ -126,7 +139,10 @@ export function requiereAnticipoEmpresa(
 
 /** Estado del anticipo de la empresa de un viaje. */
 export function estadoAnticipoEmpresa(
-  f: Pick<FilaCuadro, "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica" | "anticipoEmpresa" | "anticipoEmpresaFechaPago">
+  f: Pick<
+    FilaCuadro,
+    "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica" | "anticipoEmpresa" | "anticipoEmpresaFechaPago" | "tarifaFlete"
+  >
 ): EstadoAnticipoEmpresa {
   if (f.anulado) return "NO_APLICA";
   // Si ya se escribio un valor, cuenta aunque el cliente no este en la lista.
@@ -178,12 +194,16 @@ export interface FilaCuadro {
   anticipoEmpresaNoAplica: boolean;
   /** Estado del anticipo de la empresa (ver estadoAnticipoEmpresa). */
   estadoAnticipoEmpresa: EstadoAnticipoEmpresa;
+  /** El anticipo de la empresa se abona a la bomba (clientes del Zorro); si no, nos lo pagan a nosotros. */
+  anticipoEmpresaABomba: boolean;
   /** KILO: kilos (los facturados si los hay) x tarifa + adicional. FIJO: el valor fijo. */
   valorFlete: number | null;
   /** Peso que se factura: el real o el minimo pactado con el cliente (34000, 32000...). */
   pesoFacturadoKg: number | null;
   /** Tarifa de la matriz de fletes con que se facturo. */
   tarifaFleteId: number | null;
+  /** Nombre de esa tarifa ("ABURRA LIMPIO URBANO"); con URBANO el viaje no lleva anticipo de la empresa. */
+  tarifaFlete: string | null;
   /** Nota de la factura para la contadora (remision, toneladas, valor, placa). */
   notaFactura: string | null;
   /** Cuando se envio en el cuadro de facturacion. */
@@ -289,7 +309,7 @@ export const sumarDias = (fecha: string, dias: number) => {
  *   "facturado sin datos".
  */
 export function estadoDe(
-  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa">
+  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa" | "anticipoEmpresaABomba">
 ): { estado: EstadoCuadro; estadoFactura: EstadoFactura; todoPagado: boolean } {
   const todoPagado = !f.anulado && !!f.facturaFechaPago;
   const estadoFactura: EstadoFactura =
@@ -325,7 +345,7 @@ const CODIGO_ORIGEN = "LPAD(COALESCE(pl.municipioOrigen, vj.origenRndc), 8, '0')
 const CODIGO_DESTINO = "LPAD(COALESCE(pl.municipioDestino, vj.destinoRndc), 8, '0')";
 
 export const SELECT_CUADRO = `
-  SELECT c.*, COALESCE(ve.flota, 'TERCERO') AS flota, ve.dueno,
+  SELECT c.*, COALESCE(ve.flota, 'TERCERO') AS flota, ve.dueno, tf.nombre AS tarifaFlete,
          ${nombreMunicipio(CODIGO_ORIGEN)} AS rutaOrigen,
          ${nombreMunicipio(CODIGO_DESTINO)} AS rutaDestino,
          uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor, up.nombre AS papelesRevisadoPor,
@@ -334,6 +354,7 @@ export const SELECT_CUADRO = `
          (SELECT texto FROM cuadro_notas WHERE cuadroViajeId = c.id ORDER BY id DESC LIMIT 1) AS ultimaNota
     FROM cuadro_viajes c
     LEFT JOIN vehiculos ve ON ve.id = c.vehiculoId
+    LEFT JOIN tarifas_flete tf ON tf.id = c.tarifaFleteId
     LEFT JOIN viajes vj ON vj.id = c.viajeId
     LEFT JOIN viaje_remesas vrr ON vrr.id = c.viajeRemesaId
     LEFT JOIN plantillas_viaje pl ON pl.id = vrr.plantillaId
@@ -389,6 +410,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
           : null,
     pesoFacturadoKg: num(r.pesoFacturadoKg),
     tarifaFleteId: r.tarifaFleteId ?? null,
+    tarifaFlete: r.tarifaFlete ?? null,
     notaFactura: r.notaFactura ?? null,
     enviadoFacturarEn: r.enviadoFacturarEn ? new Date(r.enviadoFacturarEn).toISOString() : null,
     fechaDescargue: dia(r.fechaDescargue),
@@ -431,7 +453,12 @@ export function mapear(r: RowDataPacket): FilaCuadro {
   if (base.flota === "TERCERO" && !base.dueno) {
     base.venceSaldo = base.fechaPagoTerceroProgramada ?? (base.fechaDescargue ? viernesDePago(base.fechaDescargue) : null);
   }
-  return { ...base, ...estadoDe(base), estadoAnticipoEmpresa: estadoAnticipoEmpresa(base) };
+  return {
+    ...base,
+    ...estadoDe(base),
+    estadoAnticipoEmpresa: estadoAnticipoEmpresa(base),
+    anticipoEmpresaABomba: CLIENTES_ZORRO.test(base.empresa),
+  };
 }
 
 /** Campos que se pueden editar de una fila, con su tipo. */

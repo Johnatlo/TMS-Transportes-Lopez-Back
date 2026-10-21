@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 // Estas pruebas no tocan la base de datos.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { estadoAnticipoEmpresa, estadoDe } from "./cuadro";
+import { CLIENTES_ZORRO, estadoAnticipoEmpresa, estadoDe } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 import {
   agruparCartera,
@@ -83,11 +83,12 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     papelesRevisadoPor: null,
     pesoFacturadoKg: null,
     tarifaFleteId: null,
+    tarifaFlete: null,
     notaFactura: null,
     enviadoFacturarEn: null,
     ...cambios,
   };
-  return { ...base, ...estadoDe(base), estadoAnticipoEmpresa: estadoAnticipoEmpresa(base) };
+  return { ...base, ...estadoDe(base), estadoAnticipoEmpresa: estadoAnticipoEmpresa(base), anticipoEmpresaABomba: CLIENTES_ZORRO.test(base.empresa) };
 }
 
 describe("diasEntre", () => {
@@ -306,6 +307,21 @@ describe("anticipo que da la empresa (Zorro, Aburra Limpio, sin manifiesto)", ()
       fila({ id: 3, empresa: "CORPORACION ABURRA LIMPIO" }),
       fila({ id: 4, empresa: "CARTONES AMERICA" }),
     ]);
-    expect(resumen).toEqual([{ empresa: "CORPORACION ABURRA LIMPIO", faltaRegistrar: 1, viajesPorCobrar: 1, porCobrar: 1_000_000, pagado: 500_000 }]);
+    expect(resumen).toEqual([{ empresa: "CORPORACION ABURRA LIMPIO", faltaRegistrar: 1, viajesPorCobrar: 1, porCobrar: 1_000_000, pagado: 500_000, aBomba: false }]);
+  });
+
+  test("los urbanos de la matriz no llevan anticipo, aunque el cliente si lo de", () => {
+    expect(fila({ empresa: "CORPORACION ABURRA LIMPIO", tarifaFlete: "ABURRA LIMPIO URBANO" }).estadoAnticipoEmpresa).toBe("NO_APLICA");
+    expect(fila({ empresa: "RECICLAJES BOGOTA N.S. S.A.S.", tarifaFlete: "RECICLAJES URBANO TOCANCIPA" }).estadoAnticipoEmpresa).toBe("NO_APLICA");
+    expect(fila({ empresa: "RECICLAJES BOGOTA N.S. S.A.S.", tarifaFlete: "RECICLAJES BOGOTA - CALI" }).estadoAnticipoEmpresa).toBe("FALTA_REGISTRAR");
+  });
+
+  test("solo el Zorro abona a la bomba; los demas nos pagan a nosotros", () => {
+    expect(fila({ empresa: "ECOAMBIENTAL RECICLAJE S.A.S." }).anticipoEmpresaABomba).toBe(true);
+    expect(fila({ empresa: "BODEGAS DE RECICLAJES SAS" }).anticipoEmpresaABomba).toBe(true);
+    expect(fila({ empresa: "CORPORACION ABURRA LIMPIO" }).anticipoEmpresaABomba).toBe(false);
+    expect(alertaAnticipoEmpresa(fila({ empresa: "RECICLAJES BOGOTA N.S. S.A.S.", anticipoEmpresa: 2_000_000 }))?.motivos[0]).toMatch(/abonar a la bomba/);
+    expect(alertaAnticipoEmpresa(fila({ empresa: "CORPORACION ABURRA LIMPIO", anticipoEmpresa: 2_000_000 }))?.motivos[0]).toMatch(/nos debe/);
+    expect(resumirAnticiposEmpresa([fila({ empresa: "ECOAMBIENTAL RECICLAJE S.A.S." })])[0].aBomba).toBe(true);
   });
 });

@@ -403,17 +403,31 @@ export type TipoAlerta = "PAPELES" | "FACTURACION" | "CARTERA" | "ANTICIPO_EMPRE
 /**
  * Alerta del anticipo que da la empresa (clientes del Zorro, Aburra Limpio y
  * viajes sin manifiesto): avisa todos los dias hasta que se escriben el valor
- * y la fecha en que la empresa lo pago. Sin alerta antes de `desde`.
+ * y la fecha en que se pago. El del Zorro lo abona a la bomba; el de los demas
+ * nos lo pagan a nosotros. Sin alerta antes de `desde`.
  */
 export function alertaAnticipoEmpresa(f: FilaCuadro, desde = ""): AlertaFila | null {
   if (f.fecha < desde) return null;
+  const valor = Math.round(f.anticipoEmpresa ?? 0).toLocaleString("es-CO");
   if (f.estadoAnticipoEmpresa === "FALTA_REGISTRAR") {
-    return { nivel: "atencion", motivos: ["Falta registrar el anticipo que da la empresa y la fecha en que lo pago."], comunicarse: false };
+    return {
+      nivel: "atencion",
+      motivos: [
+        f.anticipoEmpresaABomba
+          ? "Falta registrar el anticipo que el Zorro abona a la bomba y la fecha en que lo abono."
+          : "Falta registrar el anticipo que nos da la empresa y la fecha en que nos lo pago.",
+      ],
+      comunicarse: false,
+    };
   }
   if (f.estadoAnticipoEmpresa === "POR_COBRAR") {
     return {
       nivel: "atencion",
-      motivos: [`La empresa debe el anticipo de ${Math.round(f.anticipoEmpresa ?? 0).toLocaleString("es-CO")}: registra la fecha en que lo pague.`],
+      motivos: [
+        f.anticipoEmpresaABomba
+          ? `El Zorro debe abonar a la bomba el anticipo de ${valor}: registra la fecha en que lo abone.`
+          : `La empresa nos debe el anticipo de ${valor}: registra la fecha en que nos lo pague.`,
+      ],
       comunicarse: false,
     };
   }
@@ -430,6 +444,8 @@ export interface ResumenAnticipoEmpresa {
   porCobrar: number;
   /** Lo que ya pago. */
   pagado: number;
+  /** Cliente del Zorro: el anticipo se abona a la bomba (si no, nos lo pagan a nosotros). */
+  aBomba: boolean;
 }
 
 /** Resumen por cliente de los viajes con anticipo de la empresa (mas por cobrar primero). */
@@ -437,7 +453,14 @@ export function resumirAnticiposEmpresa(filas: FilaCuadro[]): ResumenAnticipoEmp
   const porEmpresa = new Map<string, ResumenAnticipoEmpresa>();
   for (const f of filas) {
     if (f.estadoAnticipoEmpresa === "NO_APLICA") continue;
-    const r = porEmpresa.get(f.empresa) ?? { empresa: f.empresa, faltaRegistrar: 0, viajesPorCobrar: 0, porCobrar: 0, pagado: 0 };
+    const r = porEmpresa.get(f.empresa) ?? {
+      empresa: f.empresa,
+      faltaRegistrar: 0,
+      viajesPorCobrar: 0,
+      porCobrar: 0,
+      pagado: 0,
+      aBomba: f.anticipoEmpresaABomba,
+    };
     if (f.estadoAnticipoEmpresa === "FALTA_REGISTRAR") r.faltaRegistrar++;
     if (f.estadoAnticipoEmpresa === "POR_COBRAR") {
       r.viajesPorCobrar++;

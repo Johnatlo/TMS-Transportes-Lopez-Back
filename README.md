@@ -1074,6 +1074,9 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 
 - **`requiereAnticipoEmpresa(f)`** · _función_
   true si el viaje lleva anticipo de la empresa (ver CLIENTES_CON_ANTICIPO).
+  Los urbanos no llevan: los que se facturan con una tarifa URBANO de la
+  matriz ("ABURRA LIMPIO URBANO", "RECICLAJES URBANO TOCANCIPA") y, sin
+  manifiesto, los que dicen URBANO en la empresa o la ruta.
 
 - **`estadoAnticipoEmpresa(f)`** · _función_
   Estado del anticipo de la empresa de un viaje.
@@ -3893,7 +3896,8 @@ _637 funciones, componentes, métodos y rutas en 43 archivos._
 - **`alertaAnticipoEmpresa(f, desde)`** · _función_
   Alerta del anticipo que da la empresa (clientes del Zorro, Aburra Limpio y
   viajes sin manifiesto): avisa todos los dias hasta que se escriben el valor
-  y la fecha en que la empresa lo pago. Sin alerta antes de `desde`.
+  y la fecha en que se pago. El del Zorro lo abona a la bomba; el de los demas
+  nos lo pagan a nosotros. Sin alerta antes de `desde`.
 
 - **`resumirAnticiposEmpresa(filas)`** · _función_
   Resumen por cliente de los viajes con anticipo de la empresa (mas por cobrar primero).
