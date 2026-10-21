@@ -2,6 +2,7 @@ import { Router, type Response } from "express";
 import { bombas, cuadro, ErrorCuadro } from "../cuadro";
 import { facturacion } from "../facturacion";
 import { anticipos } from "../anticipos";
+import { relacionesBomba } from "../relacionesBomba";
 import { importarAnticipos, propuestaAnticipos } from "../importaciones";
 
 /**
@@ -72,6 +73,55 @@ cuadroRouter.get("/anticipos/resumen", async (_req, res) => {
 cuadroRouter.put("/anticipos/parametros", async (req, res) => {
   await responder(res, () => anticipos.guardarParametrosBomba(req.body ?? {}));
 });
+/**
+ * POST /api/cuadro/anticipos/juntar: junta dos tanqueos de la misma placa como
+ * ida y vuelta ({ ida, vuelta }: ids de tanqueo). Devuelve el cuadro.
+ */
+cuadroRouter.post("/anticipos/juntar", async (req, res) => {
+  await responder(res, async () => {
+    await anticipos.juntarManual(Number(req.body?.ida), Number(req.body?.vuelta));
+    return anticipos.cuadro();
+  });
+});
+/** POST /api/cuadro/anticipos/separar/:tanqueoId: separa la vuelta de un tanqueo de ida y vuelta. */
+cuadroRouter.post("/anticipos/separar/:tanqueoId", async (req, res) => {
+  await responder(res, async () => {
+    await anticipos.separarVuelta(Number(req.params.tanqueoId));
+    return anticipos.cuadro();
+  });
+});
+
+// ---------- Cruce con la bomba (ver src/relacionesBomba.ts) ----------
+/** GET /api/cuadro/relaciones-bomba: facturas (relaciones de vales) de la bomba ya cruzadas. */
+cuadroRouter.get("/relaciones-bomba", async (_req, res) => {
+  res.json(await relacionesBomba.listar());
+});
+/** POST /api/cuadro/relaciones-bomba/previa: propone el tanqueo de cada vale ({ numero, vales }). No guarda. */
+cuadroRouter.post("/relaciones-bomba/previa", async (req, res) => {
+  await responder(res, () => relacionesBomba.proponer(req.body ?? {}));
+});
+/** POST /api/cuadro/relaciones-bomba: guarda la relacion y cruza los tanqueos ({ numero, fecha, nota, vales }). */
+cuadroRouter.post("/relaciones-bomba", async (req, res) => {
+  await responder(res, async () => {
+    await relacionesBomba.guardar(req.body ?? {}, req.usuario?.id ?? null);
+    return relacionesBomba.listar();
+  });
+});
+/** PUT /api/cuadro/relaciones-bomba/:relacionId/pago: fecha de pago de la factura ({ fechaPago }; vacia la quita). */
+cuadroRouter.put("/relaciones-bomba/:relacionId/pago", async (req, res) => {
+  await responder(res, async () => {
+    await relacionesBomba.pagar(Number(req.params.relacionId), req.body ?? {});
+    return relacionesBomba.listar();
+  });
+});
+/** DELETE /api/cuadro/relaciones-bomba/:relacionId: borra la relacion y deshace el cruce. */
+cuadroRouter.delete("/relaciones-bomba/:relacionId", async (req, res) => {
+  await responder(res, async () => {
+    await relacionesBomba.borrar(Number(req.params.relacionId));
+    return relacionesBomba.listar();
+  });
+});
+
 /** GET /api/cuadro/abonos-socio: abonos del socio a la bomba, con sus viajes. */
 cuadroRouter.get("/abonos-socio", async (_req, res) => {
   res.json(await anticipos.abonos());

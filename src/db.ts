@@ -455,6 +455,38 @@ export async function initSchema(): Promise<void> {
       CONSTRAINT fk_abono_socio FOREIGN KEY (abonoId) REFERENCES abonos_socio(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Cruce con la bomba (ver src/relacionesBomba.ts): cada relacion quincenal
+  // de vales que manda la bomba (una por factura, p. ej. AE5044797) y sus
+  // vales, cada uno con el tramo de anticipo con que se cruzo.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bomba_relaciones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      numero VARCHAR(40) NOT NULL UNIQUE,
+      fecha DATE NOT NULL,
+      total DOUBLE NOT NULL,
+      fechaPago DATE,
+      nota VARCHAR(200),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bomba_relacion_vales (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      relacionId INT NOT NULL,
+      eds VARCHAR(80),
+      vale VARCHAR(40),
+      fecha DATE NOT NULL,
+      hora VARCHAR(8),
+      placa VARCHAR(15) NOT NULL,
+      galones DOUBLE,
+      valor DOUBLE NOT NULL,
+      cuadroAnticipoId INT,
+      UNIQUE KEY uq_vale_tramo (cuadroAnticipoId),
+      CONSTRAINT fk_vale_relacion FOREIGN KEY (relacionId) REFERENCES bomba_relaciones(id) ON DELETE CASCADE,
+      CONSTRAINT fk_vale_tramo FOREIGN KEY (cuadroAnticipoId) REFERENCES cuadro_anticipos(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Notas del viaje con autor y fecha (como los comentarios del Excel).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cuadro_notas (

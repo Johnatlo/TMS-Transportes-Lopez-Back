@@ -12,6 +12,13 @@
  * asigna sola al proximo viaje de esa placa (asignarVueltasPendientes), con
  * su valor, su bomba y su fecha.
  *
+ * Ida y vuelta en el Excel (y en lo que se cargo de el): no hay columna que lo
+ * diga; son dos anticipos de la misma placa, el mismo dia y en la misma
+ * bomba. juntarIdaYVuelta los deja en un solo tanqueo: la ida es la del viaje
+ * despachado mas cerca del dia del tanqueo (el que sale de Bogota / Soacha);
+ * la otra es la vuelta (ver elegirIdaYVuelta). Si son 3 o mas el mismo dia,
+ * no se juntan solos: la pantalla los muestra como posible vuelta.
+ *
  * Cuentas con la bomba (resumirBomba): lo que se le debe (todo lo entregado en
  * la bomba), lo pagado, lo que abono un socio (el Zorro) por algunos viajes y
  * el cupo de credito que queda.
@@ -125,6 +132,12 @@ export interface FilaAnticipo {
   descuento: number | null;
   /** Combustible que se habia registrado antes de calcularlo con los galones. */
   combustibleEntregado: number | null;
+  /** Fecha del viaje del cuadro al que se suma. */
+  fechaViaje: string | null;
+  /** Vale de la relacion de la bomba con que se cruzo; null = sin cruzar con vale. */
+  vale: string | null;
+  /** Factura (relacion) de la bomba con que se cruzo el vale. */
+  relacionId: number | null;
 }
 
 const SELECT_ANTICIPOS = `
@@ -133,8 +146,10 @@ const SELECT_ANTICIPOS = `
          t.facturaBomba, t.fechaFacturaBomba, COALESCE(t.idaYVuelta, 0) AS idaYVuelta,
          (SELECT ve.flota FROM vehiculos ve
            WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
-         a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado
+         a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
+         c.fecha AS fechaViaje, rv.vale, rv.relacionId
     FROM cuadro_anticipos a
+    LEFT JOIN bomba_relacion_vales rv ON rv.cuadroAnticipoId = a.id
     LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId
     LEFT JOIN anticipos_tanqueo t ON t.id = a.tanqueoId
     LEFT JOIN bombas b ON b.id = a.bombaId`;
@@ -164,7 +179,62 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   precioGalon: r.precioGalon === null || r.precioGalon === undefined ? null : Number(r.precioGalon),
   descuento: r.descuento === null || r.descuento === undefined ? null : Number(r.descuento),
   combustibleEntregado: r.combustibleEntregado === null || r.combustibleEntregado === undefined ? null : Number(r.combustibleEntregado),
+  fechaViaje: dia(r.fechaViaje),
+  vale: r.vale ?? null,
+  relacionId: r.relacionId ?? null,
 });
+
+/** Tanqueo de un solo tramo (como quedaron los cargados del Excel), para juntar ida y vuelta. */
+export interface TanqueoSuelto {
+  tanqueoId: number;
+  tramoId: number;
+  placa: string;
+  fecha: string;
+  bombaId: number | null;
+  cuadroViajeId: number | null;
+  /** Fecha de despacho del viaje del tramo. */
+  fechaViaje: string | null;
+  /** El viaje sale de Bogota o Soacha (la ida casi siempre). */
+  saleDeBogota: boolean;
+  facturaBomba: string | null;
+}
+
+/** Dias entre dos fechas "AAAA-MM-DD" (sin signo); sin fecha, muy lejos. */
+const distancia = (a: string, b: string | null) =>
+  b ? Math.abs(Math.round((Date.parse(`${a}T12:00:00Z`) - Date.parse(`${b}T12:00:00Z`)) / 86_400_000)) : 9999;
+
+/**
+ * Cual de dos tanqueos del mismo dia es la ida y cual la vuelta: la ida es la
+ * del viaje despachado mas cerca del dia del tanqueo; si empatan, la que sale
+ * de Bogota / Soacha; si no, el viaje mas antiguo.
+ */
+export function elegirIdaYVuelta(a: TanqueoSuelto, b: TanqueoSuelto): { ida: TanqueoSuelto; vuelta: TanqueoSuelto } {
+  const orden = [a, b].sort(
+    (x, y) =>
+      distancia(x.fecha, x.fechaViaje) - distancia(y.fecha, y.fechaViaje) ||
+      Number(y.saleDeBogota) - Number(x.saleDeBogota) ||
+      (x.fechaViaje ?? "9999").localeCompare(y.fechaViaje ?? "9999") ||
+      x.tramoId - y.tramoId
+  );
+  return { ida: orden[0], vuelta: orden[1] };
+}
+
+/**
+ * Parejas de ida y vuelta entre los tanqueos sueltos: exactamente dos de la
+ * misma placa, el mismo dia y la misma bomba (con 3 o mas no se sabe cuales
+ * van juntos). No junta dos con facturas de la bomba distintas.
+ */
+export function parejasIdaYVuelta(sueltos: TanqueoSuelto[]): Array<{ ida: TanqueoSuelto; vuelta: TanqueoSuelto }> {
+  const grupos = new Map<string, TanqueoSuelto[]>();
+  for (const t of sueltos) {
+    if (t.bombaId === null) continue;
+    const clave = `${placaNormal(t.placa)}|${t.fecha}|${t.bombaId}`;
+    grupos.set(clave, [...(grupos.get(clave) ?? []), t]);
+  }
+  return [...grupos.values()]
+    .filter((g) => g.length === 2 && !(g[0].facturaBomba && g[1].facturaBomba && g[0].facturaBomba !== g[1].facturaBomba))
+    .map((g) => elegirIdaYVuelta(g[0], g[1]));
+}
 
 /** Cupo con la bomba y valores sugeridos para el cruce (parametros de la empresa). */
 export interface ParametrosBomba {
@@ -291,6 +361,104 @@ export const anticipos = {
     return asignadas;
   },
 
+  /** Tanqueos de un solo tramo de IDA (sin juntar), con su viaje. */
+  async sueltos(): Promise<TanqueoSuelto[]> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT t.id AS tanqueoId, a.id AS tramoId, t.placa, t.fecha, t.bombaId, a.cuadroViajeId, c.fecha AS fechaViaje,
+              t.facturaBomba,
+              COALESCE(pl.municipioOrigen, vj.origenRndc) IN ('11001000', '25754000') AS saleDeBogota
+         FROM anticipos_tanqueo t
+         JOIN cuadro_anticipos a ON a.tanqueoId = t.id
+         LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId
+         LEFT JOIN viajes vj ON vj.id = c.viajeId
+         LEFT JOIN viaje_remesas vr ON vr.id = c.viajeRemesaId
+         LEFT JOIN plantillas_viaje pl ON pl.id = vr.plantillaId
+        WHERE t.idaYVuelta = 0 AND a.tramo = 'IDA'
+          AND (SELECT COUNT(*) FROM cuadro_anticipos x WHERE x.tanqueoId = t.id) = 1`
+    );
+    return rows.map((r) => ({
+      tanqueoId: r.tanqueoId,
+      tramoId: r.tramoId,
+      placa: r.placa,
+      fecha: dia(r.fecha)!,
+      bombaId: r.bombaId ?? null,
+      cuadroViajeId: r.cuadroViajeId ?? null,
+      fechaViaje: dia(r.fechaViaje),
+      saleDeBogota: !!r.saleDeBogota,
+      facturaBomba: r.facturaBomba ?? null,
+    }));
+  },
+
+  /**
+   * Junta un tanqueo de ida con otro como su vuelta: el tramo de la vuelta
+   * pasa al tanqueo de la ida como VUELTA y el tanqueo de la vuelta se borra.
+   * Si los dos estaban en el mismo viaje, la vuelta queda para el proximo
+   * viaje de la placa.
+   */
+  async juntar(ida: TanqueoSuelto, vuelta: TanqueoSuelto): Promise<void> {
+    const conexion = await pool.getConnection();
+    try {
+      await conexion.beginTransaction();
+      await conexion.query("UPDATE cuadro_anticipos SET tanqueoId = ?, tramo = 'VUELTA', cuadroViajeId = ? WHERE id = ?", [
+        ida.tanqueoId,
+        vuelta.cuadroViajeId === ida.cuadroViajeId ? null : vuelta.cuadroViajeId,
+        vuelta.tramoId,
+      ]);
+      await conexion.query("UPDATE anticipos_tanqueo SET idaYVuelta = 1, facturaBomba = COALESCE(facturaBomba, ?) WHERE id = ?", [
+        vuelta.facturaBomba,
+        ida.tanqueoId,
+      ]);
+      await conexion.query("DELETE FROM anticipos_tanqueo WHERE id = ?", [vuelta.tanqueoId]);
+      await conexion.commit();
+    } catch (exc) {
+      await conexion.rollback();
+      throw exc;
+    } finally {
+      conexion.release();
+    }
+  },
+
+  /** Junta solos los pares de ida y vuelta (ver parejasIdaYVuelta). Devuelve cuantos junto. */
+  async juntarIdaYVuelta(): Promise<number> {
+    const parejas = parejasIdaYVuelta(await this.sueltos());
+    for (const p of parejas) await this.juntar(p.ida, p.vuelta);
+    if (parejas.length) await this.asignarVueltasPendientes();
+    return parejas.length;
+  },
+
+  /**
+   * Junta a mano dos tanqueos de la misma placa (la posible vuelta que muestra
+   * la pantalla): el primero es la ida. Los dos deben ser de un solo tramo.
+   */
+  async juntarManual(idaTanqueoId: number, vueltaTanqueoId: number): Promise<void> {
+    const sueltos = await this.sueltos();
+    const ida = sueltos.find((s) => s.tanqueoId === idaTanqueoId);
+    const vuelta = sueltos.find((s) => s.tanqueoId === vueltaTanqueoId);
+    if (!ida || !vuelta || ida === vuelta) throw new ErrorCuadro("Solo se pueden juntar dos tanqueos de un solo tramo.");
+    if (placaNormal(ida.placa) !== placaNormal(vuelta.placa)) throw new ErrorCuadro("Los dos tanqueos deben ser de la misma placa.");
+    await this.juntar(ida, vuelta);
+    await this.asignarVueltasPendientes();
+  },
+
+  /**
+   * Separa la vuelta de un tanqueo de ida y vuelta: queda como un tanqueo de
+   * ida propio en el mismo viaje (para corregir una pareja mal hecha).
+   */
+  async separarVuelta(tanqueoId: number): Promise<void> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT a.id, t.placa, t.fecha, t.bombaId FROM cuadro_anticipos a JOIN anticipos_tanqueo t ON t.id = a.tanqueoId WHERE a.tanqueoId = ? AND a.tramo = 'VUELTA'",
+      [tanqueoId]
+    );
+    const v = rows[0];
+    if (!v) throw new ErrorCuadro("Ese tanqueo no tiene vuelta.");
+    const [t] = await pool.query<ResultSetHeader>(
+      "INSERT INTO anticipos_tanqueo (placa, fecha, bombaId, idaYVuelta, nota) VALUES (?, ?, ?, 0, 'Separado de una ida y vuelta')",
+      [v.placa, dia(v.fecha), v.bombaId]
+    );
+    await pool.query("UPDATE cuadro_anticipos SET tanqueoId = ?, tramo = 'IDA' WHERE id = ?", [t.insertId, v.id]);
+    await pool.query("UPDATE anticipos_tanqueo SET idaYVuelta = 0 WHERE id = ?", [tanqueoId]);
+  },
+
   /** Los tramos de un viaje (para su detalle), por fecha. */
   async delViaje(cuadroViajeId: number): Promise<FilaAnticipo[]> {
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_ANTICIPOS} WHERE a.cuadroViajeId = ? ORDER BY a.fecha, a.id`, [
@@ -301,6 +469,7 @@ export const anticipos = {
 
   /** El cuadro de anticipos completo (una fila por tramo), lo mas reciente primero. */
   async cuadro(): Promise<FilaAnticipo[]> {
+    await this.juntarIdaYVuelta();
     await this.asignarVueltasPendientes();
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_ANTICIPOS} ORDER BY a.fecha DESC, a.tanqueoId DESC, a.id`);
     return rows.map(mapear);

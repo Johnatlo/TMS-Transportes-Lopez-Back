@@ -429,6 +429,13 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/cuadro/anticipos/importar` | Carga las filas confirmadas ({ filas: [{ ...fila, viajeId }] }). |
 | `GET` | `/api/cuadro/anticipos/resumen` | Deuda, pagado, abonado por el socio, pendiente y cupo con la bomba. |
 | `PUT` | `/api/cuadro/anticipos/parametros` | Cupo de credito con la bomba y precio y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }). Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id. |
+| `POST` | `/api/cuadro/anticipos/juntar` | Junta dos tanqueos de la misma placa como ida y vuelta ({ ida, vuelta }: ids de tanqueo). Devuelve el cuadro. |
+| `POST` | `/api/cuadro/anticipos/separar/:tanqueoId` | Separa la vuelta de un tanqueo de ida y vuelta. |
+| `GET` | `/api/cuadro/relaciones-bomba` | Facturas (relaciones de vales) de la bomba ya cruzadas. |
+| `POST` | `/api/cuadro/relaciones-bomba/previa` | Propone el tanqueo de cada vale ({ numero, vales }). No guarda. |
+| `POST` | `/api/cuadro/relaciones-bomba` | Guarda la relacion y cruza los tanqueos ({ numero, fecha, nota, vales }). |
+| `PUT` | `/api/cuadro/relaciones-bomba/:relacionId/pago` | Fecha de pago de la factura ({ fechaPago }; vacia la quita). |
+| `DELETE` | `/api/cuadro/relaciones-bomba/:relacionId` | Borra la relacion y deshace el cruce. |
 | `GET` | `/api/cuadro/abonos-socio` | Abonos del socio a la bomba, con sus viajes. |
 | `POST` | `/api/cuadro/abonos-socio` | Registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }). |
 | `DELETE` | `/api/cuadro/abonos-socio/:abonoId` | Borra un abono. |
@@ -509,10 +516,10 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_611 funciones, componentes, métodos y rutas en 42 archivos._
+_637 funciones, componentes, métodos y rutas en 43 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
-- [`src/anticipos.ts`](#srcanticiposts) (23)
+- [`src/anticipos.ts`](#srcanticiposts) (31)
 - [`src/auth.ts`](#srcauthts) (35)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/config.ts`](#srcconfigts) (3)
@@ -525,6 +532,7 @@ _611 funciones, componentes, métodos y rutas en 42 archivos._
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
+- [`src/relacionesBomba.ts`](#srcrelacionesbombats) (11)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
@@ -538,7 +546,7 @@ _611 funciones, componentes, métodos y rutas en 42 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (31)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (38)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (17)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -608,6 +616,13 @@ _611 funciones, componentes, métodos y rutas en 42 archivos._
 > asigna sola al proximo viaje de esa placa (asignarVueltasPendientes), con
 > su valor, su bomba y su fecha.
 >
+> Ida y vuelta en el Excel (y en lo que se cargo de el): no hay columna que lo
+> diga; son dos anticipos de la misma placa, el mismo dia y en la misma
+> bomba. juntarIdaYVuelta los deja en un solo tanqueo: la ida es la del viaje
+> despachado mas cerca del dia del tanqueo (el que sale de Bogota / Soacha);
+> la otra es la vuelta (ver elegirIdaYVuelta). Si son 3 o mas el mismo dia,
+> no se juntan solos: la pantalla los muestra como posible vuelta.
+>
 > Cuentas con la bomba (resumirBomba): lo que se le debe (todo lo entregado en
 > la bomba), lo pagado, lo que abono un socio (el Zorro) por algunos viajes y
 > el cupo de credito que queda.
@@ -638,6 +653,19 @@ _611 funciones, componentes, métodos y rutas en 42 archivos._
 - **`mapear(r)`** · _función_
   Fila de SELECT_ANTICIPOS -> FilaAnticipo.
 
+- **`distancia(a, b)`** · _función_
+  Dias entre dos fechas "AAAA-MM-DD" (sin signo); sin fecha, muy lejos.
+
+- **`elegirIdaYVuelta(a, b)`** · _función_
+  Cual de dos tanqueos del mismo dia es la ida y cual la vuelta: la ida es la
+  del viaje despachado mas cerca del dia del tanqueo; si empatan, la que sale
+  de Bogota / Soacha; si no, el viaje mas antiguo.
+
+- **`parejasIdaYVuelta(sueltos)`** · _función_
+  Parejas de ida y vuelta entre los tanqueos sueltos: exactamente dos de la
+  misma placa, el mismo dia y la misma bomba (con 3 o mas no se sabe cuales
+  van juntos). No junta dos con facturas de la bomba distintas.
+
 - **`descuentoSugerido(galones, descuentoPorGalon)`** · _función_
   Descuento sugerido en pesos: galones x descuento por galon, redondeado.
 
@@ -662,6 +690,26 @@ _611 funciones, componentes, métodos y rutas en 42 archivos._
     Asigna cada vuelta pendiente al proximo viaje de su placa: el primero del
     cuadro (no anulado) despues del viaje de ida, por fecha y luego por orden
     de creacion. Si aun no hay, sigue pendiente. Devuelve cuantas asigno.
+
+  - **`anticipos.sueltos()`** · _método_
+    Tanqueos de un solo tramo de IDA (sin juntar), con su viaje.
+
+  - **`anticipos.juntar(ida, vuelta)`** · _método_
+    Junta un tanqueo de ida con otro como su vuelta: el tramo de la vuelta
+    pasa al tanqueo de la ida como VUELTA y el tanqueo de la vuelta se borra.
+    Si los dos estaban en el mismo viaje, la vuelta queda para el proximo
+    viaje de la placa.
+
+  - **`anticipos.juntarIdaYVuelta()`** · _método_
+    Junta solos los pares de ida y vuelta (ver parejasIdaYVuelta). Devuelve cuantos junto.
+
+  - **`anticipos.juntarManual(idaTanqueoId, vueltaTanqueoId)`** · _método_
+    Junta a mano dos tanqueos de la misma placa (la posible vuelta que muestra
+    la pantalla): el primero es la ida. Los dos deben ser de un solo tramo.
+
+  - **`anticipos.separarVuelta(tanqueoId)`** · _método_
+    Separa la vuelta de un tanqueo de ida y vuelta: queda como un tanqueo de
+    ida propio en el mismo viaje (para corregir una pareja mal hecha).
 
   - **`anticipos.delViaje(cuadroViajeId)`** · _método_
     Los tramos de un viaje (para su detalle), por fecha.
@@ -1386,6 +1434,62 @@ _611 funciones, componentes, métodos y rutas en 42 archivos._
   4. Si existe el frontend compilado, lo sirve, con caida a index.html para
      las rutas de React.
   5. Manejador de errores comun y escucha en el puerto configurado.
+
+### `src/relacionesBomba.ts`
+
+> Cruce con la bomba: la relacion quincenal de vales que manda la bomba
+> (COESCO: "RELACION VALES DESPACHO - CONSUMO", una por factura, p. ej.
+> AE5044797) contra los anticipos de combustible del TMS.
+>
+> Cada vale trae EDS, numero de vale, fecha, placa, galones y valor. El
+> navegador lee el PDF o el Excel de la relacion (o se arma a mano eligiendo
+> los tanqueos) y manda los vales; aqui se propone a que tramo corresponde
+> cada uno (emparejarVales) y, al confirmar, se guarda la relacion:
+> - el tramo queda cruzado con su vale: el combustible pasa a ser el valor
+>   del vale (lo que cobra la bomba) y se guarda lo que se habia registrado
+>   antes, para ver la diferencia; los galones son los del vale;
+> - el tanqueo queda con el numero y la fecha de la factura de la bomba.
+> Borrar la relacion devuelve los tramos como estaban.
+
+- **`estacionNormal(nombre)`** · _función_
+  Estacion comparable: sin "EDS", "S." como "SAN", sin tildes ni signos.
+  "EDS SAN ESTEBAN" y "S. ESTEBAN" -> "SAN ESTEBAN".
+
+- **`diasEntre(a, b)`** · _función_
+  Dias entre dos fechas "AAAA-MM-DD" (sin signo).
+
+- **`emparejarVales(vales, tramos)`** · _función_
+  Propone el tramo de cada vale. Candidatos: misma placa, misma estacion (si
+  el tramo tiene bomba), a lo sumo 2 dias de diferencia, con combustible y
+  sin cruzar. Se reparten primero los que coinciden en valor (los mas
+  cercanos en fecha), y luego los demas al tramo libre mas cercano. Un tramo
+  va con un solo vale.
+
+- **`leerVales(lista)`** · _función_
+  Valida los vales que manda el navegador.
+
+- **`tramosCruzables()`** · _función_
+  Tramos con combustible que aun pueden cruzarse (y los ya cruzados, marcados).
+
+- **`relacionesBomba`** · _módulo_
+  Relaciones de la bomba: proponer, guardar, listar, pagar y borrar.
+
+  - **`relacionesBomba.proponer(d)`** · _método_
+    Propone el tramo de cada vale (no guarda). Avisa si la factura ya se cargo.
+
+  - **`relacionesBomba.guardar(d, usuarioId)`** · _método_
+    Guarda la relacion con sus vales y cruza los tramos elegidos ({ numero,
+    fecha, nota, vales: [{ ...vale, tramoId }] }). En una transaccion.
+
+  - **`relacionesBomba.listar()`** · _método_
+    Relaciones cruzadas, la mas reciente primero, con sus vales.
+
+  - **`relacionesBomba.pagar(id, d)`** · _método_
+    Se le pago a la bomba la factura: fecha de pago en la relacion y en sus tramos.
+
+  - **`relacionesBomba.borrar(id)`** · _método_
+    Borra una relacion: los tramos vuelven al combustible que tenian antes del
+    cruce y los tanqueos quedan sin el numero de esa factura.
 
 ### `src/repo.ts`
 
@@ -2931,6 +3035,28 @@ _611 funciones, componentes, métodos y rutas en 42 archivos._
   PUT /api/cuadro/anticipos/parametros: cupo de credito con la bomba y precio
   y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }).
   Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id.
+
+- **`POST /anticipos/juntar`** · _ruta HTTP_
+  POST /api/cuadro/anticipos/juntar: junta dos tanqueos de la misma placa como
+  ida y vuelta ({ ida, vuelta }: ids de tanqueo). Devuelve el cuadro.
+
+- **`POST /anticipos/separar/:tanqueoId`** · _ruta HTTP_
+  POST /api/cuadro/anticipos/separar/:tanqueoId: separa la vuelta de un tanqueo de ida y vuelta.
+
+- **`GET /relaciones-bomba`** · _ruta HTTP_
+  GET /api/cuadro/relaciones-bomba: facturas (relaciones de vales) de la bomba ya cruzadas.
+
+- **`POST /relaciones-bomba/previa`** · _ruta HTTP_
+  POST /api/cuadro/relaciones-bomba/previa: propone el tanqueo de cada vale ({ numero, vales }). No guarda.
+
+- **`POST /relaciones-bomba`** · _ruta HTTP_
+  POST /api/cuadro/relaciones-bomba: guarda la relacion y cruza los tanqueos ({ numero, fecha, nota, vales }).
+
+- **`PUT /relaciones-bomba/:relacionId/pago`** · _ruta HTTP_
+  PUT /api/cuadro/relaciones-bomba/:relacionId/pago: fecha de pago de la factura ({ fechaPago }; vacia la quita).
+
+- **`DELETE /relaciones-bomba/:relacionId`** · _ruta HTTP_
+  DELETE /api/cuadro/relaciones-bomba/:relacionId: borra la relacion y deshace el cruce.
 
 - **`GET /abonos-socio`** · _ruta HTTP_
   GET /api/cuadro/abonos-socio: abonos del socio a la bomba, con sus viajes.
