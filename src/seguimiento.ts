@@ -110,11 +110,14 @@ export function alertaFacturacion(f: FilaCuadro, hoy: string, desde = ""): Alert
   if (f.anulado || f.facturaFechaPago || f.fecha < desde) return null;
   if (sinFactura(f) && papelesListos(f.estadoPapeles)) {
     const dias = f.fechaRadicado ? Math.max(0, diasEntre(f.fechaRadicado, hoy)) : null;
+    const motivo = dias === null || dias === 0 ? "Listo para facturar: falta la factura." : `Listo para facturar hace ${dias} dias y sin factura.`;
+    // Los urbanos se facturan a orden del generador de carga: siempre en amarillo.
+    if (f.urbano) {
+      return { nivel: "atencion", motivos: [`${motivo} Es urbano: se factura a orden del generador de carga.`], comunicarse: false };
+    }
     return {
       nivel: dias !== null && dias >= DIAS_PAPELES_DEMORADOS ? "urgente" : "atencion",
-      motivos: [
-        dias === null || dias === 0 ? "Listo para facturar: falta la factura." : `Listo para facturar hace ${dias} dias y sin factura.`,
-      ],
+      motivos: [motivo],
       comunicarse: false,
     };
   }
@@ -511,6 +514,47 @@ export interface AlertaSeguimiento {
   empresa?: string;
 }
 
+/** "2026-10-05" -> "05/10/2026". */
+const fechaTexto = (f: string) => f.split("-").reverse().join("/");
+/** 1234567 -> "$1.234.567". */
+const pesosTexto = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`;
+
+/**
+ * Alertas de cartera, una por empresa: junta sus facturas vencidas (o con el
+ * pago prometido incumplido) citando numero, fecha, vencimiento y valor, y
+ * suma el total. Si es una sola factura, la alerta abre esa factura.
+ */
+export function alertasCarteraPorEmpresa(facturas: FacturaCartera[]): AlertaSeguimiento[] {
+  const porEmpresa = new Map<string, FacturaCartera[]>();
+  for (const fc of facturas) {
+    if (!fc.alerta) continue;
+    porEmpresa.set(fc.empresa, [...(porEmpresa.get(fc.empresa) ?? []), fc]);
+  }
+  return [...porEmpresa.entries()]
+    .map(([empresa, lista]) => {
+      const ordenadas = [...lista].sort((a, b) => a.vence.localeCompare(b.vence));
+      const total = ordenadas.reduce((s, f) => s + f.valor, 0);
+      const motivos = ordenadas.map((f) => {
+        const vencimiento =
+          f.diasVencida > 0 ? `vencida hace ${f.diasVencida} dias (vencio el ${fechaTexto(f.vence)})` : `vence el ${fechaTexto(f.vence)}`;
+        const promesa = f.compromisoPago ? ` · prometio pagar el ${fechaTexto(f.compromisoPago)}` : "";
+        return `Factura ${f.facturaNumero} del ${fechaTexto(f.facturaFecha)}, ${vencimiento}: ${pesosTexto(f.valor)}${promesa}`;
+      });
+      motivos.push(`Total por cobrar: ${pesosTexto(total)}. Llamar al cliente y cobrar.`);
+      return {
+        tipo: "CARTERA" as const,
+        nivel: "urgente" as const,
+        titulo: `${empresa} · ${ordenadas.length} factura${ordenadas.length === 1 ? "" : "s"} · ${pesosTexto(total)}`,
+        motivos,
+        facturaNumero: ordenadas.length === 1 ? ordenadas[0].facturaNumero : undefined,
+        empresa,
+        total,
+      };
+    })
+    .sort((a, b) => b.total - a.total)
+    .map(({ total: _total, ...a }) => a);
+}
+
 /** Todas las alertas: urgentes primero, luego papeles, facturacion y cartera. */
 export function alertasDe(filas: FilaCuadro[], facturas: FacturaCartera[], hoy: string, desde = ""): AlertaSeguimiento[] {
   const titulo = (f: FilaCuadro) =>
@@ -524,17 +568,8 @@ export function alertasDe(filas: FilaCuadro[], facturas: FacturaCartera[], hoy: 
     const ae = alertaAnticipoEmpresa(f, desde);
     if (ae) lista.push({ tipo: "ANTICIPO_EMPRESA", nivel: ae.nivel, titulo: titulo(f), motivos: ae.motivos, cuadroId: f.id });
   }
-  for (const fc of facturas) {
-    if (!fc.alerta) continue;
-    lista.push({
-      tipo: "CARTERA",
-      nivel: fc.alerta.nivel,
-      titulo: `Factura ${fc.facturaNumero} · ${fc.empresa}`,
-      motivos: fc.alerta.motivos,
-      facturaNumero: fc.facturaNumero,
-      empresa: fc.empresa,
-    });
-  }
+  // Cartera: una alerta por empresa con todas sus facturas vencidas.
+  lista.push(...alertasCarteraPorEmpresa(facturas));
   const orden: Record<TipoAlerta, number> = { PAPELES: 0, FACTURACION: 1, CARTERA: 2, ANTICIPO_EMPRESA: 3, BOMBA: 4 };
   return lista.sort((a, b) => (a.nivel === b.nivel ? orden[a.tipo] - orden[b.tipo] : a.nivel === "urgente" ? -1 : 1));
 }

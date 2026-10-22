@@ -520,7 +520,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_651 funciones, componentes, métodos y rutas en 43 archivos._
+_655 funciones, componentes, métodos y rutas en 43 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -529,7 +529,7 @@ _651 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (35)
+- [`src/cuadro.ts`](#srccuadrots) (36)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
@@ -563,7 +563,7 @@ _651 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (33)
+- [`src/seguimiento.ts`](#srcseguimientots) (36)
 - [`src/terceros.ts`](#srctercerosts) (11)
 
 ### `src/alertas.ts`
@@ -1094,6 +1094,11 @@ _651 funciones, componentes, métodos y rutas en 43 archivos._
 
 - **`estadoAnticipoEmpresa(f)`** · _función_
   Estado del anticipo de la empresa de un viaje.
+
+- **`esUrbano(f)`** · _función_
+  Viaje urbano: su tarifa de la matriz dice URBANO, o dice URBANO en la
+  empresa o la ruta escrita a mano, o sale y llega al mismo municipio. (La
+  tarifa solo se conoce al facturar; por eso se mira tambien la ruta.)
 
 - **`num(v)`** · _función_
   Numero de MySQL (DECIMAL llega como texto) a number; null se conserva.
@@ -3971,6 +3976,17 @@ _651 funciones, componentes, métodos y rutas en 43 archivos._
 
 - **`resumirAnticiposEmpresa(filas)`** · _función_
   Resumen por cliente de los viajes con anticipo de la empresa (mas por cobrar primero).
+
+- **`fechaTexto(f)`** · _función_
+  "2026-10-05" -> "05/10/2026".
+
+- **`pesosTexto(n)`** · _función_
+  1234567 -> "$1.234.567".
+
+- **`alertasCarteraPorEmpresa(facturas)`** · _función_
+  Alertas de cartera, una por empresa: junta sus facturas vencidas (o con el
+  pago prometido incumplido) citando numero, fecha, vencimiento y valor, y
+  suma el total. Si es una sola factura, la alerta abre esa factura.
 
 - **`alertasDe(filas, facturas, hoy, desde)`** · _función_
   Todas las alertas: urgentes primero, luego papeles, facturacion y cartera.

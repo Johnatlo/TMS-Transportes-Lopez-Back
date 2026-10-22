@@ -3,12 +3,13 @@ import { describe, expect, test, vi } from "vitest";
 // Estas pruebas no tocan la base de datos.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { CLIENTES_ZORRO, estadoAnticipoEmpresa, estadoDe } from "./cuadro";
+import { CLIENTES_ZORRO, esUrbano, estadoAnticipoEmpresa, estadoDe } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 import {
   agruparCartera,
   alertaAnticipoEmpresa,
   alertaFacturaBomba,
+  alertasCarteraPorEmpresa,
   alertaFactura,
   alertaFacturacion,
   alertaPapeles,
@@ -91,7 +92,13 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     enviadoFacturarEn: null,
     ...cambios,
   };
-  return { ...base, ...estadoDe(base), estadoAnticipoEmpresa: estadoAnticipoEmpresa(base), anticipoEmpresaABomba: CLIENTES_ZORRO.test(base.empresa) };
+  return {
+    ...base,
+    ...estadoDe(base),
+    estadoAnticipoEmpresa: estadoAnticipoEmpresa(base),
+    anticipoEmpresaABomba: CLIENTES_ZORRO.test(base.empresa),
+    urbano: esUrbano(base),
+  };
 }
 
 describe("diasEntre", () => {
@@ -340,5 +347,54 @@ describe("factura de la bomba por pagar", () => {
   test("pagada o sin vencimiento no avisa", () => {
     expect(alertaFacturaBomba({ ...factura, fechaPago: "2026-10-20" }, "2026-10-24")).toBeNull();
     expect(alertaFacturaBomba({ ...factura, fechaVencimiento: null }, "2026-10-24")).toBeNull();
+  });
+});
+
+describe("alertas de cartera por empresa", () => {
+  const factura = (empresa: string, numero: string, valor: number, diasVencida: number, vence: string) =>
+    ({
+      empresa,
+      facturaNumero: numero,
+      facturaFecha: "2026-09-01",
+      vence,
+      diasVencida,
+      valor,
+      compromisoPago: null,
+      alerta: { nivel: "urgente", motivos: ["Vencida"], comunicarse: false },
+    }) as unknown as Parameters<typeof alertasCarteraPorEmpresa>[0][number];
+
+  test("una alerta por empresa con sus facturas, fechas y el total", () => {
+    const alertas = alertasCarteraPorEmpresa([
+      factura("RECOLAM", "7300", 8_840_000, 12, "2026-10-10"),
+      factura("CORAME", "7100", 1_000_000, 3, "2026-10-19"),
+      factura("RECOLAM", "7250", 2_000_000, 20, "2026-10-02"),
+      { ...factura("RECOLAM", "7400", 5_000_000, -3, "2026-10-25"), alerta: null },
+    ]);
+    expect(alertas.map((a) => a.titulo)).toEqual(["RECOLAM · 2 facturas · $10.840.000", "CORAME · 1 factura · $1.000.000"]);
+    expect(alertas[0].motivos).toEqual([
+      "Factura 7250 del 01/09/2026, vencida hace 20 dias (vencio el 02/10/2026): $2.000.000",
+      "Factura 7300 del 01/09/2026, vencida hace 12 dias (vencio el 10/10/2026): $8.840.000",
+      "Total por cobrar: $10.840.000. Llamar al cliente y cobrar.",
+    ]);
+    // Varias facturas: la alerta abre la empresa; una sola: abre esa factura.
+    expect([alertas[0].facturaNumero, alertas[1].facturaNumero]).toEqual([undefined, "7100"]);
+  });
+});
+
+describe("urbanos por facturar", () => {
+  test("se facturan a orden del generador: nunca urgentes", () => {
+    const listo = { estadoPapeles: "RADICADO" as const, fechaRadicado: "2026-10-05" };
+    expect(alertaFacturacion(fila(listo), HOY)?.nivel).toBe("urgente");
+    const urbano = alertaFacturacion(fila({ ...listo, tarifaFlete: "ABURRA LIMPIO URBANO" }), HOY);
+    expect(urbano?.nivel).toBe("atencion");
+    expect(urbano?.motivos[0]).toMatch(/generador de carga/);
+    expect(alertaFacturacion(fila({ ...listo, empresa: "CORAME URBANO" }), HOY)?.nivel).toBe("atencion");
+  });
+
+  test("urbano por la tarifa, el texto o el mismo municipio de origen y destino", () => {
+    const base = { tarifaFlete: null, empresa: "RECOLAM", rutaManual: null };
+    expect(esUrbano({ ...base, rutaOrigen: "CALI VALLE DEL CAUCA", rutaDestino: "CALI VALLE DEL CAUCA" })).toBe(true);
+    expect(esUrbano({ ...base, rutaOrigen: "SOACHA CUNDINAMARCA", rutaDestino: "CALI VALLE DEL CAUCA" })).toBe(false);
+    expect(esUrbano({ ...base, rutaManual: "URBANO BOGOTA" })).toBe(true);
   });
 });

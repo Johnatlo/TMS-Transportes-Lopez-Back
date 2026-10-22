@@ -185,6 +185,22 @@ export function estadoAnticipoEmpresa(
   return requiereAnticipoEmpresa(f) ? "FALTA_REGISTRAR" : "NO_APLICA";
 }
 
+/**
+ * Viaje urbano: su tarifa de la matriz dice URBANO, o dice URBANO en la
+ * empresa o la ruta escrita a mano, o sale y llega al mismo municipio. (La
+ * tarifa solo se conoce al facturar; por eso se mira tambien la ruta.)
+ */
+export function esUrbano(f: {
+  tarifaFlete: string | null;
+  empresa: string;
+  rutaManual: string | null;
+  rutaOrigen?: string | null;
+  rutaDestino?: string | null;
+}): boolean {
+  if (/URBANO/i.test(`${f.tarifaFlete ?? ""} ${f.empresa} ${f.rutaManual ?? ""}`)) return true;
+  return !!f.rutaOrigen && f.rutaOrigen === f.rutaDestino;
+}
+
 /** Estado del viaje por sus papeles; ANULADO y PAGADO (todo pagado) reemplazan a los demas. */
 export type EstadoCuadro = "ANULADO" | "PAGADO" | "RADICADOS" | "RADICADO" | "SIN_RADICAR" | "EN_RUTA";
 /** Estado de la factura, aparte del de los papeles. */
@@ -233,6 +249,11 @@ export interface FilaCuadro {
   anticipoEmpresaNoAplica: boolean;
   /** Estado del anticipo de la empresa (ver estadoAnticipoEmpresa). */
   estadoAnticipoEmpresa: EstadoAnticipoEmpresa;
+  /**
+   * Viaje urbano (ver esUrbano): se factura a orden del generador de carga,
+   * asi que su alerta de facturacion nunca es urgente.
+   */
+  urbano: boolean;
   /** El anticipo de la empresa se abona a la bomba (clientes del Zorro); si no, nos lo pagan a nosotros. */
   anticipoEmpresaABomba: boolean;
   /** KILO: kilos (los facturados si los hay) x tarifa + adicional. FIJO: el valor fijo. */
@@ -348,7 +369,7 @@ export const sumarDias = (fecha: string, dias: number) => {
  *   "facturado sin datos".
  */
 export function estadoDe(
-  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa" | "anticipoEmpresaABomba">
+  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa" | "anticipoEmpresaABomba" | "urbano">
 ): { estado: EstadoCuadro; estadoFactura: EstadoFactura; todoPagado: boolean } {
   const todoPagado = !f.anulado && !!f.facturaFechaPago;
   const estadoFactura: EstadoFactura =
@@ -501,6 +522,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     ...estadoDe(base),
     estadoAnticipoEmpresa: estadoAnticipoEmpresa(base),
     anticipoEmpresaABomba: CLIENTES_ZORRO.test(base.empresa),
+    urbano: esUrbano({ ...base, rutaOrigen: r.rutaOrigen ?? null, rutaDestino: r.rutaDestino ?? null }),
   };
 }
 
