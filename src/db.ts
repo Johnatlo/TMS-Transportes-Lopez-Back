@@ -482,9 +482,26 @@ export async function initSchema(): Promise<void> {
       galones DOUBLE,
       valor DOUBLE NOT NULL,
       cuadroAnticipoId INT,
-      UNIQUE KEY uq_vale_tramo (cuadroAnticipoId),
+      tipo VARCHAR(12) NOT NULL DEFAULT 'COMBUSTIBLE',
+      UNIQUE KEY uq_vale_tramo_tipo (cuadroAnticipoId, tipo),
       CONSTRAINT fk_vale_relacion FOREIGN KEY (relacionId) REFERENCES bomba_relaciones(id) ON DELETE CASCADE,
       CONSTRAINT fk_vale_tramo FOREIGN KEY (cuadroAnticipoId) REFERENCES cuadro_anticipos(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Pago a la bomba (ver pagos en src/relacionesBomba.ts): cada quincena se
+  // pagan varias facturas (relaciones) de la bomba de una vez, descontando
+  // los abonos que hicieron los socios. bomba_relaciones.pagoId y
+  // abonos_socio.pagoId dicen en que pago quedo cada una.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bomba_pagos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      fecha DATE NOT NULL,
+      totalFacturas DOUBLE NOT NULL,
+      totalAbonos DOUBLE NOT NULL DEFAULT 0,
+      valorPagado DOUBLE NOT NULL,
+      referencia VARCHAR(80),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   // Notas del viaje con autor y fecha (como los comentarios del Excel).
@@ -952,6 +969,13 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "concepto", "VARCHAR(120)"],
     ["cuadro_viajes", "reconocidoDeViajeId", "INT"],
     ["cuadro_viajes", "reconocidoTipo", "VARCHAR(12)"],
+    // La bomba da combustible y efectivo: cada vale es de uno de los dos. El
+    // efectivo cruzado guarda lo que se habia registrado antes, como el combustible.
+    ["bomba_relacion_vales", "tipo", "VARCHAR(12) NOT NULL DEFAULT 'COMBUSTIBLE'"],
+    ["cuadro_anticipos", "efectivoEntregado", "DOUBLE"],
+    // Pago a la bomba en que quedo cada factura y cada abono del socio.
+    ["bomba_relaciones", "pagoId", "INT"],
+    ["abonos_socio", "pagoId", "INT"],
     // Fecha de vencimiento de la factura de la bomba: avisa cuando hay que pagarla.
     ["bomba_relaciones", "fechaVencimiento", "DATE"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
@@ -1054,6 +1078,17 @@ export async function initSchema(): Promise<void> {
           SET cv.conductor = ch.nombre
         WHERE cv.conductor <=> cv.conductorManifiesto OR cv.conductor IS NULL OR cv.conductor = ''`
     );
+  }
+
+  // Un tramo puede tener un vale de combustible y otro de efectivo: el indice
+  // unico pasa de (tramo) a (tramo, tipo). Se crea el nuevo antes de quitar el
+  // viejo, en la misma orden: la llave foranea siempre tiene un indice.
+  const [valeViejo] = await pool.query(
+    `SELECT 1 FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bomba_relacion_vales' AND INDEX_NAME = 'uq_vale_tramo'`
+  );
+  if ((valeViejo as unknown[]).length > 0) {
+    await pool.query("ALTER TABLE bomba_relacion_vales ADD UNIQUE KEY uq_vale_tramo_tipo (cuadroAnticipoId, tipo), DROP INDEX uq_vale_tramo");
   }
 
   // Un solo reconocido de Cartones America por manifiesto y tipo.

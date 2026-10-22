@@ -121,6 +121,24 @@ cuadroRouter.put("/relaciones-bomba/:relacionId/vencimiento", async (req, res) =
     return relacionesBomba.listar();
   });
 });
+/** GET /api/cuadro/pagos-bomba: pagos a la bomba (facturas de la quincena menos abonos de los socios). */
+cuadroRouter.get("/pagos-bomba", async (_req, res) => {
+  res.json(await relacionesBomba.pagos());
+});
+/** POST /api/cuadro/pagos-bomba: registra el pago ({ relaciones, abonos, fecha, referencia }). Devuelve los pagos. */
+cuadroRouter.post("/pagos-bomba", async (req, res) => {
+  await responder(res, async () => {
+    await relacionesBomba.registrarPago(req.body ?? {}, req.usuario?.id ?? null);
+    return relacionesBomba.pagos();
+  });
+});
+/** DELETE /api/cuadro/pagos-bomba/:pagoId: deshace un pago a la bomba. */
+cuadroRouter.delete("/pagos-bomba/:pagoId", async (req, res) => {
+  await responder(res, async () => {
+    await relacionesBomba.borrarPago(Number(req.params.pagoId));
+    return relacionesBomba.pagos();
+  });
+});
 /** DELETE /api/cuadro/relaciones-bomba/:relacionId: borra la relacion y deshace el cruce. */
 cuadroRouter.delete("/relaciones-bomba/:relacionId", async (req, res) => {
   await responder(res, async () => {

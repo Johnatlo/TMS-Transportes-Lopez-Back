@@ -134,8 +134,12 @@ export interface FilaAnticipo {
   combustibleEntregado: number | null;
   /** Fecha del viaje del cuadro al que se suma. */
   fechaViaje: string | null;
-  /** Vale de la relacion de la bomba con que se cruzo; null = sin cruzar con vale. */
+  /** Vale de combustible de la relacion de la bomba con que se cruzo; null = sin cruzar. */
   vale: string | null;
+  /** Vale de efectivo de la relacion de la bomba con que se cruzo; null = sin cruzar. */
+  valeEfectivo: string | null;
+  /** Efectivo que se habia registrado antes de cruzarlo con el vale. */
+  efectivoEntregado: number | null;
   /** Factura (relacion) de la bomba con que se cruzo el vale. */
   relacionId: number | null;
 }
@@ -147,9 +151,11 @@ const SELECT_ANTICIPOS = `
          (SELECT ve.flota FROM vehiculos ve
            WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
          a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
-         c.fecha AS fechaViaje, rv.vale, rv.relacionId
+         c.fecha AS fechaViaje, rv.vale, COALESCE(rv.relacionId, re.relacionId) AS relacionId,
+         re.vale AS valeEfectivo, a.efectivoEntregado
     FROM cuadro_anticipos a
-    LEFT JOIN bomba_relacion_vales rv ON rv.cuadroAnticipoId = a.id
+    LEFT JOIN bomba_relacion_vales rv ON rv.cuadroAnticipoId = a.id AND rv.tipo = 'COMBUSTIBLE'
+    LEFT JOIN bomba_relacion_vales re ON re.cuadroAnticipoId = a.id AND re.tipo = 'EFECTIVO'
     LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId
     LEFT JOIN anticipos_tanqueo t ON t.id = a.tanqueoId
     LEFT JOIN bombas b ON b.id = a.bombaId`;
@@ -181,6 +187,8 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   combustibleEntregado: r.combustibleEntregado === null || r.combustibleEntregado === undefined ? null : Number(r.combustibleEntregado),
   fechaViaje: dia(r.fechaViaje),
   vale: r.vale ?? null,
+  valeEfectivo: r.valeEfectivo ?? null,
+  efectivoEntregado: r.efectivoEntregado === null || r.efectivoEntregado === undefined ? null : Number(r.efectivoEntregado),
   relacionId: r.relacionId ?? null,
 });
 
@@ -287,6 +295,8 @@ export interface AbonoSocio {
   fecha: string;
   valor: number;
   nota: string | null;
+  /** Pago a la bomba en que se desconto; null = aun no se ha usado. */
+  pagoId: number | null;
   viajes: Array<{ cuadroViajeId: number; valor: number; placa: string | null; empresa: string | null; manifiesto: string | null; fecha: string | null }>;
 }
 
@@ -500,7 +510,10 @@ export const anticipos = {
 
   /**
    * Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, a que
-   * viaje se suma (para corregir una vuelta asignada al viaje equivocado) o
+   * viaje se suma (para corregir una vuelta asignada al viaje equivocado), el
+   * efectivo o el combustible a mano (para corregir lo que no coincide con la
+   * bomba; el valor total se recalcula), aceptar lo que cobro la bomba
+   * (aceptarBomba: la diferencia queda resuelta) o
    * los datos del cruce: galones, precio por galon y descuento. Con galones,
    * el combustible del tramo se recalcula con la formula de la bomba (precio
    * y descuento vacios = los sugeridos) y se guarda lo que se habia
@@ -521,7 +534,19 @@ export const anticipos = {
       sets.push("cuadroViajeId = ?");
       valores.push(d.cuadroViajeId ? Number(d.cuadroViajeId) : null);
     }
+    for (const campo of ["efectivo", "combustible"] as const) {
+      if (!(campo in d)) continue;
+      sets.push(`${campo} = ?`);
+      valores.push(pesos(d[campo], campo === "efectivo" ? "Efectivo" : "Combustible"));
+    }
     if (sets.length) await pool.query(`UPDATE cuadro_anticipos SET ${sets.join(", ")} WHERE id = ?`, [...valores, id]);
+    if ("efectivo" in d || "combustible" in d) {
+      await pool.query("UPDATE cuadro_anticipos SET valor = COALESCE(efectivo, 0) + COALESCE(combustible, 0) WHERE id = ?", [id]);
+    }
+    // Se acepta lo que cobro la bomba: la diferencia con lo registrado queda resuelta.
+    if (d.aceptarBomba === true) {
+      await pool.query("UPDATE cuadro_anticipos SET combustibleEntregado = NULL, efectivoEntregado = NULL WHERE id = ?", [id]);
+    }
     if ("galones" in d || "precioGalon" in d || "descuento" in d) await this.cruzarTramo(id, d);
   },
 
@@ -649,6 +674,7 @@ export const anticipos = {
       fecha: dia(a.fecha)!,
       valor: Number(a.valor),
       nota: a.nota ?? null,
+      pagoId: a.pagoId ?? null,
       viajes: viajes
         .filter((v) => v.abonoId === a.id)
         .map((v) => ({

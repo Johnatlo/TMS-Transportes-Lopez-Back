@@ -436,6 +436,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/cuadro/relaciones-bomba` | Guarda la relacion y cruza los tanqueos ({ numero, fecha, nota, vales }). |
 | `PUT` | `/api/cuadro/relaciones-bomba/:relacionId/pago` | Fecha de pago de la factura ({ fechaPago }; vacia la quita). |
 | `PUT` | `/api/cuadro/relaciones-bomba/:relacionId/vencimiento` | Fecha de vencimiento de la factura ({ fechaVencimiento }). |
+| `GET` | `/api/cuadro/pagos-bomba` | Pagos a la bomba (facturas de la quincena menos abonos de los socios). |
+| `POST` | `/api/cuadro/pagos-bomba` | Registra el pago ({ relaciones, abonos, fecha, referencia }). Devuelve los pagos. |
+| `DELETE` | `/api/cuadro/pagos-bomba/:pagoId` | Deshace un pago a la bomba. |
 | `DELETE` | `/api/cuadro/relaciones-bomba/:relacionId` | Borra la relacion y deshace el cruce. |
 | `GET` | `/api/cuadro/abonos-socio` | Abonos del socio a la bomba, con sus viajes. |
 | `POST` | `/api/cuadro/abonos-socio` | Registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }). |
@@ -517,7 +520,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_642 funciones, componentes, métodos y rutas en 43 archivos._
+_651 funciones, componentes, métodos y rutas en 43 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -533,7 +536,7 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
-- [`src/relacionesBomba.ts`](#srcrelacionesbombats) (12)
+- [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
@@ -547,7 +550,7 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (39)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (42)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (17)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -724,7 +727,10 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 
   - **`anticipos.actualizarTramo(id, d)`** · _método_
     Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, a que
-    viaje se suma (para corregir una vuelta asignada al viaje equivocado) o
+    viaje se suma (para corregir una vuelta asignada al viaje equivocado), el
+    efectivo o el combustible a mano (para corregir lo que no coincide con la
+    bomba; el valor total se recalcula), aceptar lo que cobro la bomba
+    (aceptarBomba: la diferencia queda resuelta) o
     los datos del cruce: galones, precio por galon y descuento. Con galones,
     el combustible del tramo se recalcula con la formula de la bomba (precio
     y descuento vacios = los sugeridos) y se guarda lo que se habia
@@ -1464,7 +1470,10 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 > (COESCO: "RELACION VALES DESPACHO - CONSUMO", una por factura, p. ej.
 > AE5044797) contra los anticipos de combustible del TMS.
 >
-> Cada vale trae EDS, numero de vale, fecha, placa, galones y valor. El
+> Cada vale trae EDS, numero de vale, fecha, placa, galones y valor. La
+> bomba da combustible y tambien efectivo: cada vale es de uno de los dos
+> (tipo) y se compara con ese valor del tramo; un tramo puede quedar cruzado
+> con un vale de combustible y otro de efectivo. El
 > navegador lee el PDF o el Excel de la relacion (o se arma a mano eligiendo
 > los tanqueos) y manda los vales; aqui se propone a que tramo corresponde
 > cada uno (emparejarVales) y, al confirmar, se guarda la relacion:
@@ -1473,6 +1482,12 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 >   antes, para ver la diferencia; los galones son los del vale;
 > - el tanqueo queda con el numero y la fecha de la factura de la bomba.
 > Borrar la relacion devuelve los tramos como estaban.
+
+- **`montoTramo(t, tipo)`** · _función_
+  Lo que el tramo tiene registrado del tipo del vale.
+
+- **`yaCruzado(t, tipo)`** · _función_
+  El tramo ya tiene vale de ese tipo.
 
 - **`estacionNormal(nombre)`** · _función_
   Estacion comparable: sin "EDS", "S." como "SAN", sin tildes ni signos.
@@ -1483,16 +1498,19 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 
 - **`emparejarVales(vales, tramos)`** · _función_
   Propone el tramo de cada vale. Candidatos: misma placa, misma estacion (si
-  el tramo tiene bomba), a lo sumo 2 dias de diferencia, con combustible y
-  sin cruzar. Se reparten primero los que coinciden en valor (los mas
-  cercanos en fecha), y luego los demas al tramo libre mas cercano. Un tramo
-  va con un solo vale.
+  el tramo tiene bomba), a lo sumo 2 dias de diferencia, con valor del tipo
+  del vale (combustible o efectivo) y sin un vale de ese tipo. Se reparten
+  primero los que coinciden en valor (los mas cercanos en fecha), y luego los
+  demas al tramo libre mas cercano. Un tramo va con un solo vale de cada tipo.
 
 - **`leerVales(lista)`** · _función_
   Valida los vales que manda el navegador.
 
 - **`tramosCruzables()`** · _función_
-  Tramos con combustible que aun pueden cruzarse (y los ya cruzados, marcados).
+  Tramos que aun pueden cruzarse (y los ya cruzados, marcados por tipo).
+
+- **`valorAPagarBomba(totalFacturas, totalAbonos)`** · _función_
+  Lo que se le paga a la bomba: el total de las facturas menos lo que abonaron los socios.
 
 - **`relacionesBomba`** · _módulo_
   Relaciones de la bomba: proponer, guardar, listar, pagar y borrar.
@@ -1509,6 +1527,18 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 
   - **`relacionesBomba.vencimiento(id, d)`** · _método_
     Cambia la fecha de vencimiento de una factura de la bomba (vacia la quita).
+
+  - **`relacionesBomba.pagos()`** · _método_
+    Pagos a la bomba registrados, el mas reciente primero, con sus facturas y abonos.
+
+  - **`relacionesBomba.registrarPago(d, usuarioId)`** · _método_
+    Registra el pago de la quincena ({ relaciones, abonos, fecha, referencia }):
+    las facturas elegidas (sin pagar) quedan pagadas en esa fecha, con sus
+    tramos, y los abonos del socio elegidos quedan usados en este pago (no se
+    vuelven a descontar). Valor pagado = facturas - abonos. En una transaccion.
+
+  - **`relacionesBomba.borrarPago(id)`** · _método_
+    Deshace un pago: sus facturas y tramos quedan sin pagar y los abonos libres.
 
   - **`relacionesBomba.pagar(id, d)`** · _método_
     Se le pago a la bomba la factura: fecha de pago en la relacion y en sus tramos.
@@ -3084,6 +3114,15 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
 - **`PUT /relaciones-bomba/:relacionId/vencimiento`** · _ruta HTTP_
   PUT /api/cuadro/relaciones-bomba/:relacionId/vencimiento: fecha de vencimiento de la factura ({ fechaVencimiento }).
 
+- **`GET /pagos-bomba`** · _ruta HTTP_
+  GET /api/cuadro/pagos-bomba: pagos a la bomba (facturas de la quincena menos abonos de los socios).
+
+- **`POST /pagos-bomba`** · _ruta HTTP_
+  POST /api/cuadro/pagos-bomba: registra el pago ({ relaciones, abonos, fecha, referencia }). Devuelve los pagos.
+
+- **`DELETE /pagos-bomba/:pagoId`** · _ruta HTTP_
+  DELETE /api/cuadro/pagos-bomba/:pagoId: deshace un pago a la bomba.
+
 - **`DELETE /relaciones-bomba/:relacionId`** · _ruta HTTP_
   DELETE /api/cuadro/relaciones-bomba/:relacionId: borra la relacion y deshace el cruce.
 
@@ -4041,7 +4080,8 @@ _642 funciones, componentes, métodos y rutas en 43 archivos._
   Repositorio del pago a terceros.
 
   - **`terceros.listar()`** · _método_
-    Viajes de vehiculos terceros (flota TERCERO y sin socio dueno), no
+    Viajes de vehiculos terceros (flota TERCERO y sin socio dueno), sin los
+    reconocidos de Cartones America (no se le pagan al tercero), no
     anulados, con su liquidacion, y el resumen por tercero.
 
   - **`terceros.proponerNombres(lista)`** · _método_
