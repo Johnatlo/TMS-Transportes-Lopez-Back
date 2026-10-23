@@ -275,6 +275,30 @@ describe("cartera", () => {
     expect(r.vencido1a30).toBe(3_400_000);
     expect(r.vencidoMas90).toBe(3_400_000);
   });
+
+  test("las variantes de Cartones America se cobran juntas, cada factura con su concepto", () => {
+    const facturas = agruparCartera(
+      [
+        facturada(1, { facturaNumero: "A", empresa: "CARTONES AMERICA" }),
+        facturada(2, { facturaNumero: "B", empresa: "CARTONES AMERICA URBANO" }),
+        facturada(3, { facturaNumero: "C", empresa: "RECONOCIDO CARTONES AMERICA" }),
+        facturada(4, { facturaNumero: "D", empresa: "CARTONES AMERICA", concepto: "4 CLIENTES CARTONES AMERICA" }),
+      ],
+      new Map([["CARTONES AMERICA", 45]]),
+      new Map(),
+      HOY
+    );
+    expect(facturas.map((f) => [f.facturaNumero, f.cliente, f.concepto, f.diasCredito]).sort()).toEqual([
+      ["A", "CARTONES AMERICA", null, 45],
+      ["B", "CARTONES AMERICA", "URBANO", 45],
+      ["C", "CARTONES AMERICA", "RECONOCIDO", 45],
+      ["D", "CARTONES AMERICA", "4 CLIENTES CARTONES AMERICA", 45],
+    ]);
+    const resumen = resumirPorCliente(facturas);
+    expect(resumen).toHaveLength(1);
+    expect(resumen[0]).toMatchObject({ empresa: "CARTONES AMERICA", facturas: 4, total: 13_600_000 });
+    expect(resumen[0].conceptos.sort()).toEqual(["4 CLIENTES CARTONES AMERICA", "RECONOCIDO", "URBANO"]);
+  });
 });
 
 describe("lista de alertas", () => {

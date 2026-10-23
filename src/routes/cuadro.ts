@@ -3,6 +3,7 @@ import { bombas, cuadro, ErrorCuadro } from "../cuadro";
 import { facturacion } from "../facturacion";
 import { anticipos } from "../anticipos";
 import { relacionesBomba } from "../relacionesBomba";
+import { reportes } from "../reportes";
 import { importarAnticipos, propuestaAnticipos } from "../importaciones";
 
 /**
@@ -120,6 +121,14 @@ cuadroRouter.put("/relaciones-bomba/:relacionId/vencimiento", async (req, res) =
     await relacionesBomba.vencimiento(Number(req.params.relacionId), req.body ?? {});
     return relacionesBomba.listar();
   });
+});
+/**
+ * GET /api/cuadro/reportes/bomba?desde=AAAA-MM-DD&hasta=AAAA-MM-DD: estado de
+ * cuenta con la bomba (deuda al inicio, prestamos, abonos de los socios,
+ * pagos de la empresa, deuda al final) y lo prestado por mes, bomba y empresa.
+ */
+cuadroRouter.get("/reportes/bomba", async (req, res) => {
+  await responder(res, () => reportes.bomba(req.query as Record<string, unknown>));
 });
 /** GET /api/cuadro/pagos-bomba: pagos a la bomba (facturas de la quincena menos abonos de los socios). */
 cuadroRouter.get("/pagos-bomba", async (_req, res) => {

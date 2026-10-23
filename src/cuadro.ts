@@ -121,7 +121,8 @@ export const KG_RECONOCIDO_CLIENTES = 2_000;
  */
 export type TipoReconocido = "MAS4" | "COMPLETA32";
 export const CONCEPTO_RECONOCIDO: Record<TipoReconocido, string> = {
-  MAS4: "+4 TONELADAS CARTONES AMERICA",
+  // Son 2 toneladas reconocidas por llevar 4 o mas clientes (antes decia "+4 TONELADAS").
+  MAS4: "4 CLIENTES CARTONES AMERICA",
   COMPLETA32: "RECONOCIDO CORAME",
 };
 
@@ -222,7 +223,7 @@ export interface FilaCuadro {
   ruta: string | null;
   /** Ruta escrita a mano (solo viajes sin manifiesto). */
   rutaManual: string | null;
-  /** Reconocido de Cartones America: "+4 TONELADAS CARTONES AMERICA" o "RECONOCIDO CORAME". */
+  /** Reconocido de Cartones America: "4 CLIENTES CARTONES AMERICA" o "RECONOCIDO CORAME". */
   concepto: string | null;
   /** Manifiesto del viaje que origino el reconocido. */
   reconocidoDe: string | null;
@@ -700,6 +701,17 @@ export const cuadro = {
         GROUP BY v.id`,
       [`${NIT_CARTONES_AMERICA}%`]
     );
+    // Si cambio el nombre de un concepto, los reconocidos ya generados toman el
+    // nuevo; tambien su nota de factura, si aun no se facturo.
+    for (const [tipo, concepto] of Object.entries(CONCEPTO_RECONOCIDO)) {
+      await pool.query(
+        `UPDATE cuadro_viajes
+            SET notaFactura = IF(facturaNumero IS NULL AND concepto IS NOT NULL, REPLACE(notaFactura, concepto, ?), notaFactura),
+                concepto = ?
+          WHERE reconocidoTipo = ? AND NOT (concepto <=> ?)`,
+        [concepto, concepto, tipo, concepto]
+      );
+    }
     const [existentes] = await pool.query<RowDataPacket[]>(
       `SELECT id, reconocidoDeViajeId, reconocidoTipo, pesoKg, anulado, facturado, facturaNumero
          FROM cuadro_viajes WHERE reconocidoDeViajeId IS NOT NULL`

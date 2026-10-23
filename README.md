@@ -436,6 +436,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/cuadro/relaciones-bomba` | Guarda la relacion y cruza los tanqueos ({ numero, fecha, nota, vales }). |
 | `PUT` | `/api/cuadro/relaciones-bomba/:relacionId/pago` | Fecha de pago de la factura ({ fechaPago }; vacia la quita). |
 | `PUT` | `/api/cuadro/relaciones-bomba/:relacionId/vencimiento` | Fecha de vencimiento de la factura ({ fechaVencimiento }). |
+| `GET` | `/api/cuadro/reportes/bomba` | Estado de cuenta con la bomba (deuda al inicio, prestamos, abonos de los socios, pagos de la empresa, deuda al final) y lo prestado por mes, bomba y empresa. |
 | `GET` | `/api/cuadro/pagos-bomba` | Pagos a la bomba (facturas de la quincena menos abonos de los socios). |
 | `POST` | `/api/cuadro/pagos-bomba` | Registra el pago ({ relaciones, abonos, fecha, referencia }). Devuelve los pagos. |
 | `DELETE` | `/api/cuadro/pagos-bomba/:pagoId` | Deshace un pago a la bomba. |
@@ -520,12 +521,13 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_655 funciones, componentes, métodos y rutas en 43 archivos._
+_668 funciones, componentes, métodos y rutas en 45 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
 - [`src/auth.ts`](#srcauthts) (35)
 - [`src/cifrado.ts`](#srccifradots) (4)
+- [`src/clientesCobro.ts`](#srcclientescobrots) (3)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
@@ -538,6 +540,7 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/repo.ts`](#srcrepots) (94)
+- [`src/reportes.ts`](#srcreportests) (9)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
 - [`src/rndc/conexion.ts`](#srcrndcconexionts) (4)
@@ -550,7 +553,7 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (42)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (43)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (17)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -678,9 +681,13 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
   columna COMBUST. del Excel): round(galones x precio - descuento).
   Ej.: 100,182 galones x 11.230 - 25.044 = 1.100.000.
 
-- **`resumirBomba(tramos, abonadoSocio, p)`** · _función_
+- **`resumirBomba(tramos, abonadoSocio, p, abonosSinUsar)`** · _función_
   Cuentas con la bomba a partir de los tramos: solo cuentan los entregados en
   una bomba (los de solo efectivo sin bomba no son deuda con ella).
+
+  Los abonos de los socios que ya se descontaron en un pago a la bomba estan
+  dentro de lo pagado (sus tramos quedaron pagados): a la deuda solo se le
+  restan los que aun no se han usado (`abonosSinUsar`; por defecto, todos).
 
 - **`anticipos`** · _módulo_
   Anticipos por tanqueo y por tramo: registrar, asignar vueltas, listar y corregir.
@@ -927,6 +934,32 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
 
 - **`descifrar(guardado)`** · _función_
   Descifra lo que guardo cifrar(). Lanza ErrorCifrado si no se puede.
+
+### `src/clientesCobro.ts`
+
+> Cliente al que se le cobra: varios nombres de empresa del cuadro son cobros
+> a la misma empresa con distinto concepto ("RECONOCIDO CARTONES AMERICA",
+> "CARTONES AMERICA URBANO", "CORAME RECONOCIDO CARTULINA BOGOTA" son todos
+> de CARTONES AMERICA; "RECICLAJES URBANO TOCANCIPA" es de RECICLAJES BOGOTA).
+> En cartera y en los reportes se agrupan por el cliente y se muestra su
+> concepto. El nombre original de la empresa no se cambia: sigue siendo la
+> llave de la factura (pagos, gestiones, anticipos).
+>
+> Es una lista cerrada, a proposito: solo se juntan los clientes de la lista
+> (una regla general podria juntar dos empresas que solo se parecen).
+
+- **`normal(t)`** · _función_
+  Nombre comparable: mayusculas, sin tildes, sin puntos ni comas, espacios simples.
+
+- **`limpiar(t)`** · _función_
+  Lo que sobra del nombre, sin tipo de sociedad ni signos sueltos.
+
+- **`clienteDeCobro(empresa, concepto)`** · _función_
+  Cliente de cobro y concepto de una empresa del cuadro. Si el nombre es una
+  variante de un cliente de la lista (ALIAS_COBRO), el cliente es el de la
+  lista y el concepto es lo que sobra del nombre ("URBANO", "RECONOCIDO",
+  "CARTON"). Si no, el cliente es la misma empresa. `concepto` (el de un
+  reconocido del cuadro) se usa si el nombre no trae uno.
 
 ### `src/config.ts`
 
@@ -1936,6 +1969,55 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
     fecha planillada, placa, cliente, valor del manifiesto y FOPAT (solo en la
     remesa 1), citas, numeros y radicados, municipios, producto, remitente y
     destinatario. Del mas reciente al mas antiguo.
+
+### `src/reportes.ts`
+
+> Reportes contables de los cuadros: estado de cuenta por periodo (saldo
+> inicial, movimientos con su saldo, saldo final) y totales por mes, como los
+> de un programa contable.
+>
+> La parte generica (estadoDeCuenta, porMes) no conoce de donde salen los
+> movimientos: cada cuadro arma los suyos (hoy la bomba; despues cartera,
+> terceros...). Cargo = aumenta lo que se debe; abono = lo disminuye.
+
+- **`fechaReporte(v, campo)`** · _función_
+  Fecha "AAAA-MM-DD" valida o ErrorCuadro.
+
+- **`estadoDeCuenta(movimientos, desde, hasta)`** · _función_
+  Estado de cuenta entre dos fechas (incluidas): el saldo inicial suma todo
+  lo anterior, y cada movimiento del periodo lleva el saldo acumulado. Los
+  movimientos del mismo dia van primero los cargos.
+
+- **`porMes(movimientos)`** · _función_
+  Totales de cargos y abonos por mes ("2026-09") y por tipo de movimiento.
+
+- **`movimientosBomba(entregas, abonos, pagos, pagosSueltos)`** · _función_
+  Movimientos de la cuenta con la bomba:
+  - PRESTAMO: los anticipos entregados (efectivo + combustible), uno por dia y bomba.
+  - ABONO_SOCIO: lo que los socios le pagaron directamente a la bomba.
+  - PAGO_EMPRESA: los pagos de la quincena (facturas - abonos de los socios).
+  - PAGO: anticipos marcados como pagados sin un pago de la quincena (los
+    cargados del Excel, o con la fecha escrita a mano), por dia.
+  Asi el saldo es la deuda con la bomba: los abonos usados en un pago se
+  restan en su fecha y el pago solo resta lo que puso la empresa.
+
+- **`totalesPor(entregas, llave)`** · _función_
+  Totales de lo entregado agrupado por una llave (bomba, empresa del vehiculo).
+
+- **`flotaTexto(f)`** · _función_
+  Nombre de la empresa del vehiculo como en el Excel de anticipos.
+
+- **`reporteBomba(datos, desde, hasta)`** · _función_
+  Reporte de la bomba entre dos fechas: estado de cuenta (deuda al inicio,
+  prestamos, abonos de los socios, pagos de la empresa, deuda al final),
+  resumen del periodo y lo prestado por mes, por bomba y por empresa del
+  vehiculo.
+
+- **`reportes`** · _módulo_
+  Repositorio: lee de la base lo que necesitan los reportes.
+
+  - **`reportes.bomba(q)`** · _método_
+    Reporte de la bomba entre dos fechas ({ desde, hasta }).
 
 ### `src/rndc/builders.ts`
 
@@ -3119,6 +3201,11 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
 - **`PUT /relaciones-bomba/:relacionId/vencimiento`** · _ruta HTTP_
   PUT /api/cuadro/relaciones-bomba/:relacionId/vencimiento: fecha de vencimiento de la factura ({ fechaVencimiento }).
 
+- **`GET /reportes/bomba`** · _ruta HTTP_
+  GET /api/cuadro/reportes/bomba?desde=AAAA-MM-DD&hasta=AAAA-MM-DD: estado de
+  cuenta con la bomba (deuda al inicio, prestamos, abonos de los socios,
+  pagos de la empresa, deuda al final) y lo prestado por mes, bomba y empresa.
+
 - **`GET /pagos-bomba`** · _ruta HTTP_
   GET /api/cuadro/pagos-bomba: pagos a la bomba (facturas de la quincena menos abonos de los socios).
 
@@ -3961,7 +4048,9 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
   cartera quedan por dueno.
 
 - **`resumirPorCliente(facturas)`** · _función_
-  Totales por cliente con edades de vencimiento (0, 1-30, 31-60, 61-90, +90 dias).
+  Totales por cliente de cobro con edades de vencimiento (0, 1-30, 31-60,
+  61-90, +90 dias). Las variantes de un cliente (CARTONES AMERICA URBANO,
+  RECONOCIDO...) quedan en el mismo cliente, con sus conceptos.
 
 - **`alertaFacturaBomba(r, hoy)`** · _función_
   Alerta de una factura de la bomba sin pagar: urgente si ya vencio,
@@ -3984,9 +4073,10 @@ _655 funciones, componentes, métodos y rutas en 43 archivos._
   1234567 -> "$1.234.567".
 
 - **`alertasCarteraPorEmpresa(facturas)`** · _función_
-  Alertas de cartera, una por empresa: junta sus facturas vencidas (o con el
-  pago prometido incumplido) citando numero, fecha, vencimiento y valor, y
-  suma el total. Si es una sola factura, la alerta abre esa factura.
+  Alertas de cartera, una por cliente de cobro: junta sus facturas vencidas
+  (o con el pago prometido incumplido) citando numero, concepto, fecha,
+  vencimiento y valor, y suma el total. Si es una sola factura, la alerta
+  abre esa factura.
 
 - **`alertasDe(filas, facturas, hoy, desde)`** · _función_
   Todas las alertas: urgentes primero, luego papeles, facturacion y cartera.

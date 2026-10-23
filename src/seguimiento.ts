@@ -28,6 +28,7 @@ import { cuadro, dia, ErrorCuadro, ESTADOS_PAPELES, hoyColombia, papelesListos, 
 import type { EstadoPapeles, FilaCuadro } from "./cuadro";
 import { grupoDe, GRUPOS_DUENO } from "./duenos";
 import { relacionesBomba } from "./relacionesBomba";
+import { clienteDeCobro } from "./clientesCobro";
 import type { RelacionBomba } from "./relacionesBomba";
 import type { GrupoDueno } from "./duenos";
 
@@ -184,7 +185,12 @@ export interface SaldoCartera {
 /** Una factura por cobrar (puede cubrir varios viajes). */
 export interface FacturaCartera {
   facturaNumero: string;
+  /** Empresa como esta en el cuadro (llave de la factura con el numero). */
   empresa: string;
+  /** Cliente al que se le cobra (las variantes de un cliente quedan juntas, ver clienteDeCobro). */
+  cliente: string;
+  /** Concepto del cobro dentro del cliente ("URBANO", "RECONOCIDO CORAME"); null si es el normal. */
+  concepto: string | null;
   facturaFecha: string;
   diasCredito: number;
   /** "Fecha pago cliente" escrita en el cuadro, o fecha de factura + dias de credito. */
@@ -216,7 +222,10 @@ export interface FacturaCartera {
 
 /** Totales de cartera de un cliente, por edades de vencimiento. */
 export interface ResumenCliente {
+  /** Cliente de cobro (agrupa las variantes de nombre de una misma empresa). */
   empresa: string;
+  /** Conceptos distintos de sus facturas ("URBANO", "RECONOCIDO CORAME"...). */
+  conceptos: string[];
   diasCredito: number;
   facturas: number;
   total: number;
@@ -289,11 +298,13 @@ export function agruparCartera(
   /** Arma la factura con lo comun a viajes y saldos. */
   const factura = (
     llave: string,
-    base: { facturaNumero: string; empresa: string; facturaFecha: string; venceEscrito: string | null },
+    base: { facturaNumero: string; empresa: string; facturaFecha: string; venceEscrito: string | null; concepto?: string | null },
     placas: PlacaFactura[],
     resto: Pick<FacturaCartera, "sinViaje" | "viajesSinValor" | "viajes">
   ): FacturaCartera => {
-    const diasCredito = plazos.get(base.empresa) ?? DIAS_CREDITO_DEFECTO;
+    const cobro = clienteDeCobro(base.empresa, base.concepto);
+    // El plazo puede estar escrito para el nombre exacto o para el cliente.
+    const diasCredito = plazos.get(base.empresa) ?? plazos.get(cobro.cliente) ?? DIAS_CREDITO_DEFECTO;
     // La fecha pago cliente escrita manda; si no hay, se calcula.
     const vence = base.venceEscrito ?? sumarDias(base.facturaFecha, diasCredito);
     const ultimaGestion = gestiones.get(llave) ?? null;
@@ -304,6 +315,8 @@ export function agruparCartera(
     return {
       facturaNumero: base.facturaNumero,
       empresa: base.empresa,
+      cliente: cobro.cliente,
+      concepto: cobro.concepto,
       facturaFecha: base.facturaFecha,
       diasCredito,
       vence,
@@ -333,6 +346,8 @@ export function agruparCartera(
           // Si los viajes tienen fechas distintas, cuenta la mas antigua.
           facturaFecha: viajes.map((v) => v.facturaFecha!).sort()[0],
           venceEscrito: viajes.map((v) => v.facturaVence).filter((v): v is string => !!v).sort()[0] ?? null,
+          // Concepto de los reconocidos de Cartones America de la factura.
+          concepto: [...new Set(viajes.map((v) => v.concepto).filter((c): c is string => !!c))].join(" / ") || null,
         },
         viajes.map((v) => ({ placa: v.placa, dueno: grupoDe(v.dueno), valor: v.valorFlete ?? 0 })),
         {
@@ -375,12 +390,17 @@ export function carteraDeDueno(facturas: FacturaCartera[], grupo: GrupoDueno): F
     .map((f) => ({ ...f, valor: f.porDueno[grupo]! }));
 }
 
-/** Totales por cliente con edades de vencimiento (0, 1-30, 31-60, 61-90, +90 dias). */
+/**
+ * Totales por cliente de cobro con edades de vencimiento (0, 1-30, 31-60,
+ * 61-90, +90 dias). Las variantes de un cliente (CARTONES AMERICA URBANO,
+ * RECONOCIDO...) quedan en el mismo cliente, con sus conceptos.
+ */
 export function resumirPorCliente(facturas: FacturaCartera[]): ResumenCliente[] {
   const porCliente = new Map<string, ResumenCliente>();
   for (const f of facturas) {
-    const r = porCliente.get(f.empresa) ?? {
-      empresa: f.empresa,
+    const r = porCliente.get(f.cliente) ?? {
+      empresa: f.cliente,
+      conceptos: [] as string[],
       diasCredito: f.diasCredito,
       facturas: 0,
       total: 0,
@@ -392,13 +412,14 @@ export function resumirPorCliente(facturas: FacturaCartera[]): ResumenCliente[] 
     };
     r.facturas++;
     r.total += f.valor;
+    if (f.concepto && !r.conceptos.includes(f.concepto)) r.conceptos.push(f.concepto);
     const d = f.diasVencida;
     if (d <= 0) r.porVencer += f.valor;
     else if (d <= 30) r.vencido1a30 += f.valor;
     else if (d <= 60) r.vencido31a60 += f.valor;
     else if (d <= 90) r.vencido61a90 += f.valor;
     else r.vencidoMas90 += f.valor;
-    porCliente.set(f.empresa, r);
+    porCliente.set(f.cliente, r);
   }
   return [...porCliente.values()].sort((a, b) => b.total - a.total);
 }
@@ -520,15 +541,17 @@ const fechaTexto = (f: string) => f.split("-").reverse().join("/");
 const pesosTexto = (n: number) => `$${Math.round(n).toLocaleString("es-CO")}`;
 
 /**
- * Alertas de cartera, una por empresa: junta sus facturas vencidas (o con el
- * pago prometido incumplido) citando numero, fecha, vencimiento y valor, y
- * suma el total. Si es una sola factura, la alerta abre esa factura.
+ * Alertas de cartera, una por cliente de cobro: junta sus facturas vencidas
+ * (o con el pago prometido incumplido) citando numero, concepto, fecha,
+ * vencimiento y valor, y suma el total. Si es una sola factura, la alerta
+ * abre esa factura.
  */
 export function alertasCarteraPorEmpresa(facturas: FacturaCartera[]): AlertaSeguimiento[] {
   const porEmpresa = new Map<string, FacturaCartera[]>();
   for (const fc of facturas) {
     if (!fc.alerta) continue;
-    porEmpresa.set(fc.empresa, [...(porEmpresa.get(fc.empresa) ?? []), fc]);
+    const cliente = fc.cliente ?? fc.empresa;
+    porEmpresa.set(cliente, [...(porEmpresa.get(cliente) ?? []), fc]);
   }
   return [...porEmpresa.entries()]
     .map(([empresa, lista]) => {
@@ -538,7 +561,8 @@ export function alertasCarteraPorEmpresa(facturas: FacturaCartera[]): AlertaSegu
         const vencimiento =
           f.diasVencida > 0 ? `vencida hace ${f.diasVencida} dias (vencio el ${fechaTexto(f.vence)})` : `vence el ${fechaTexto(f.vence)}`;
         const promesa = f.compromisoPago ? ` · prometio pagar el ${fechaTexto(f.compromisoPago)}` : "";
-        return `Factura ${f.facturaNumero} del ${fechaTexto(f.facturaFecha)}, ${vencimiento}: ${pesosTexto(f.valor)}${promesa}`;
+        const concepto = f.concepto ? ` (${f.concepto})` : "";
+        return `Factura ${f.facturaNumero}${concepto} del ${fechaTexto(f.facturaFecha)}, ${vencimiento}: ${pesosTexto(f.valor)}${promesa}`;
       });
       motivos.push(`Total por cobrar: ${pesosTexto(total)}. Llamar al cliente y cobrar.`);
       return {
@@ -547,7 +571,8 @@ export function alertasCarteraPorEmpresa(facturas: FacturaCartera[]): AlertaSegu
         titulo: `${empresa} · ${ordenadas.length} factura${ordenadas.length === 1 ? "" : "s"} · ${pesosTexto(total)}`,
         motivos,
         facturaNumero: ordenadas.length === 1 ? ordenadas[0].facturaNumero : undefined,
-        empresa,
+        // Con una sola factura, la llave es su empresa exacta; si no, el cliente.
+        empresa: ordenadas.length === 1 ? ordenadas[0].empresa : empresa,
         total,
       };
     })

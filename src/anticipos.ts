@@ -279,12 +279,21 @@ export interface ResumenBomba extends ParametrosBomba {
 /**
  * Cuentas con la bomba a partir de los tramos: solo cuentan los entregados en
  * una bomba (los de solo efectivo sin bomba no son deuda con ella).
+ *
+ * Los abonos de los socios que ya se descontaron en un pago a la bomba estan
+ * dentro de lo pagado (sus tramos quedaron pagados): a la deuda solo se le
+ * restan los que aun no se han usado (`abonosSinUsar`; por defecto, todos).
  */
-export function resumirBomba(tramos: Pick<FilaAnticipo, "bombaId" | "valor" | "fechaPago">[], abonadoSocio: number, p: ParametrosBomba): ResumenBomba {
+export function resumirBomba(
+  tramos: Pick<FilaAnticipo, "bombaId" | "valor" | "fechaPago">[],
+  abonadoSocio: number,
+  p: ParametrosBomba,
+  abonosSinUsar = abonadoSocio
+): ResumenBomba {
   const conBomba = tramos.filter((t) => t.bombaId !== null);
   const deuda = conBomba.reduce((s, t) => s + t.valor, 0);
   const pagado = conBomba.filter((t) => !!t.fechaPago).reduce((s, t) => s + t.valor, 0);
-  const pendiente = Math.max(0, deuda - pagado - abonadoSocio);
+  const pendiente = Math.max(0, deuda - pagado - abonosSinUsar);
   return { ...p, deuda, pagado, abonadoSocio, pendiente, cupoDisponible: p.cupoBomba - pendiente };
 }
 
@@ -653,11 +662,14 @@ export const anticipos = {
   /** Cuentas con la bomba: deuda, pagado, abonado por el socio, pendiente y cupo disponible. */
   async resumen(): Promise<ResumenBomba> {
     const [tramos] = await pool.query<RowDataPacket[]>("SELECT bombaId, valor, fechaPago FROM cuadro_anticipos");
-    const [[abonos]] = await pool.query<RowDataPacket[]>("SELECT COALESCE(SUM(valor), 0) AS total FROM abonos_socio");
+    const [[abonos]] = await pool.query<RowDataPacket[]>(
+      "SELECT COALESCE(SUM(valor), 0) AS total, COALESCE(SUM(IF(pagoId IS NULL, valor, 0)), 0) AS sinUsar FROM abonos_socio"
+    );
     return resumirBomba(
       tramos.map((t) => ({ bombaId: t.bombaId ?? null, valor: Number(t.valor), fechaPago: dia(t.fechaPago) })),
       Number(abonos.total),
-      await this.parametrosBomba()
+      await this.parametrosBomba(),
+      Number(abonos.sinUsar)
     );
   },
 

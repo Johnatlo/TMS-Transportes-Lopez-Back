@@ -67,6 +67,20 @@ describe("cuentas con la bomba", () => {
     expect(r).toMatchObject({ deuda: 7_000_000, pagado: 2_200_000, abonadoSocio: 1_000_000, pendiente: 3_800_000, cupoDisponible: 496_200_000 });
   });
 
+  test("los abonos ya descontados en un pago a la bomba no se restan dos veces", () => {
+    // El abono de 1.000.000 se uso en el pago: sus tramos ya estan pagados.
+    const r = resumirBomba(
+      [
+        { bombaId: 1, valor: 2_200_000, fechaPago: "2026-10-10" },
+        { bombaId: 1, valor: 1_800_000, fechaPago: null },
+      ],
+      1_000_000,
+      { cupoBomba: 500_000_000, precioGalonBomba: 11390, descuentoGalonBomba: 250 },
+      0
+    );
+    expect(r).toMatchObject({ abonadoSocio: 1_000_000, pendiente: 1_800_000 });
+  });
+
   test("combustible con la formula del Excel: round(galones x precio - descuento)", () => {
     // Filas reales de la hoja "EDS CHUSACA - RETORNO - S ESTE" (columna COMBUST.).
     expect(combustibleSegunFormula(100.182, 11230, 25044)).toBe(1100000); // =(F175*11230)-25044
