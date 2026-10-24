@@ -9,7 +9,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { dia, ErrorCuadro } from "./cuadro";
+import { anioPosible, dia, ErrorCuadro } from "./cuadro";
 
 /** Un movimiento de la cuenta. */
 export interface Movimiento {
@@ -91,6 +91,29 @@ export interface EntregaBomba {
   flota: string | null;
   efectivo: number;
   combustible: number;
+}
+
+/**
+ * Anticipo con una fecha de pago imposible: año fuera de rango, antes del
+ * anticipo o en el futuro. Se avisan en el reporte porque descuadran el saldo
+ * (un pago de 1909 entra al saldo inicial como si se le hubiera pagado a la
+ * bomba antes de deberle).
+ */
+export interface FechaRara {
+  fechaAnticipo: string;
+  placa: string;
+  bomba: string;
+  fechaPago: string;
+  valor: number;
+  motivo: string;
+}
+
+/** Por que una fecha de pago es imposible; null si esta bien. */
+export function motivoFechaRara(fechaAnticipo: string, fechaPago: string, hoy: string): string | null {
+  if (!anioPosible(fechaPago)) return `el año ${fechaPago.slice(0, 4)} no es posible`;
+  if (fechaPago < fechaAnticipo) return "es anterior al anticipo";
+  if (fechaPago > hoy) return "todavia no ha llegado";
+  return null;
 }
 
 /** Un pago a la bomba que no paso por "Registrar pago" (fecha de pago puesta en el tramo). */
@@ -212,12 +235,12 @@ export function reporteBomba(
 /** Repositorio: lee de la base lo que necesitan los reportes. */
 export const reportes = {
   /** Reporte de la bomba entre dos fechas ({ desde, hasta }). */
-  async bomba(q: Record<string, unknown>) {
+  async bomba(q: Record<string, unknown>, hoy: string) {
     const desde = fechaReporte(q.desde, "inicial");
     const hasta = fechaReporte(q.hasta, "final");
     if (desde > hasta) throw new ErrorCuadro("La fecha inicial es despues de la final.");
     const [tramos] = await pool.query<RowDataPacket[]>(
-      `SELECT a.fecha, a.efectivo, a.combustible, a.fechaPago, b.nombre AS bomba,
+      `SELECT a.fecha, a.efectivo, a.combustible, a.fechaPago, b.nombre AS bomba, COALESCE(a.placa, c.placa) AS placa,
               (SELECT ve.flota FROM vehiculos ve
                 WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
               EXISTS (SELECT 1 FROM bomba_relacion_vales v JOIN bomba_relaciones r ON r.id = v.relacionId
@@ -232,7 +255,19 @@ export const reportes = {
               (SELECT GROUP_CONCAT(numero ORDER BY numero SEPARATOR ', ') FROM bomba_relaciones WHERE pagoId = p.id) AS facturas
          FROM bomba_pagos p`
     );
-    return reporteBomba(
+    // Fechas de pago imposibles: se avisan para corregirlas.
+    const fechasRaras: FechaRara[] = tramos
+      .filter((t) => t.fechaPago)
+      .map((t) => ({
+        fechaAnticipo: dia(t.fecha)!,
+        placa: t.placa ?? "",
+        bomba: t.bomba,
+        fechaPago: dia(t.fechaPago)!,
+        valor: Number(t.efectivo ?? 0) + Number(t.combustible ?? 0),
+        motivo: motivoFechaRara(dia(t.fecha)!, dia(t.fechaPago)!, hoy) ?? "",
+      }))
+      .filter((f) => f.motivo);
+    const reporte = reporteBomba(
       {
         entregas: tramos.map((t) => ({
           fecha: dia(t.fecha)!,
@@ -255,5 +290,6 @@ export const reportes = {
       desde,
       hasta
     );
+    return { ...reporte, fechasRaras };
   },
 };

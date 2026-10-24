@@ -569,6 +569,17 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   fechaPagoTerceroProgramada: "fecha",
 };
 
+/**
+ * Años que se aceptan en las fechas del cuadro y de los anticipos. Un año
+ * fuera de aqui es un error al escribir (se encontraron pagos a la bomba con
+ * fecha de 1906 y 1909, que descuadraban el reporte).
+ */
+export const ANIO_MINIMO = 2020;
+export const ANIO_MAXIMO = 2100;
+
+/** true si la fecha "AAAA-MM-DD" tiene un año posible (ANIO_MINIMO a ANIO_MAXIMO). */
+export const anioPosible = (f: string) => Number(f.slice(0, 4)) >= ANIO_MINIMO && Number(f.slice(0, 4)) <= ANIO_MAXIMO;
+
 /** Error de validacion del cuadro: la ruta lo responde como 422 con su mensaje. */
 export class ErrorCuadro extends Error {}
 
@@ -590,6 +601,7 @@ function valorCampo(campo: string, tipo: string, crudo: unknown): unknown {
   if (tipo === "fecha") {
     const t = String(crudo).slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) throw new ErrorCuadro(`"${campo}" no es una fecha valida.`);
+    if (!anioPosible(t)) throw new ErrorCuadro(`"${campo}": el año ${t.slice(0, 4)} no es posible; revisa la fecha.`);
     return t;
   }
   return String(crudo).trim();

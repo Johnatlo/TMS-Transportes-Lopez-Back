@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 // reportes importa la conexion a MySQL; estas pruebas no tocan la base.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { estadoDeCuenta, movimientosBomba, porMes, reporteBomba } from "./reportes";
+import { estadoDeCuenta, motivoFechaRara, movimientosBomba, porMes, reporteBomba } from "./reportes";
 
 describe("estado de cuenta", () => {
   const movs = [
@@ -74,5 +74,28 @@ describe("reporte de la bomba", () => {
   test("los prestamos del mismo dia y bomba van en un solo movimiento", () => {
     const m = movimientosBomba(datos.entregas, [], [], []).filter((x) => x.fecha === "2026-09-01");
     expect(m).toEqual([{ fecha: "2026-09-01", tipo: "PRESTAMO", descripcion: "Anticipos CHUSACA (2)", cargo: 3_500_000, abono: 0 }]);
+  });
+});
+
+describe("fechas de pago imposibles", () => {
+  test("año imposible, antes del anticipo o en el futuro", () => {
+    expect(motivoFechaRara("2026-10-11", "1909-10-30", "2026-10-23")).toMatch(/1909/);
+    expect(motivoFechaRara("2026-10-11", "2026-10-05", "2026-10-23")).toMatch(/anterior/);
+    expect(motivoFechaRara("2026-10-11", "2026-10-30", "2026-10-23")).toMatch(/no ha llegado/);
+    expect(motivoFechaRara("2026-10-11", "2026-10-20", "2026-10-23")).toBeNull();
+  });
+
+  test("un pago de 1909 dejaba el saldo inicial negativo", () => {
+    const r = reporteBomba(
+      {
+        entregas: [{ fecha: "2026-10-11", bomba: "S. ESTEBAN", flota: "LOPEZ", efectivo: 1_200_000, combustible: 1_007_100 }],
+        abonos: [],
+        pagos: [],
+        pagosSueltos: [{ fecha: "1909-10-30", valor: 2_207_100 }],
+      },
+      "2026-08-23",
+      "2026-10-23"
+    );
+    expect(r.resumen.saldoInicial).toBe(-2_207_100);
   });
 });

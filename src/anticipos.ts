@@ -32,7 +32,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { dia, ErrorCuadro } from "./cuadro";
+import { anioPosible, dia, ErrorCuadro } from "./cuadro";
 
 export type Tramo = "IDA" | "VUELTA";
 
@@ -51,6 +51,7 @@ function pesos(v: unknown, campo: string): number {
 function fecha(v: unknown, campo: string): string {
   const t = String(v ?? "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) throw new ErrorCuadro(`Escribe ${campo}.`);
+  if (!anioPosible(t)) throw new ErrorCuadro(`En ${campo}, el año ${t.slice(0, 4)} no es posible; revisa la fecha.`);
   return t;
 }
 

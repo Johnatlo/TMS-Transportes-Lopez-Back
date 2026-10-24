@@ -521,7 +521,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_668 funciones, componentes, métodos y rutas en 45 archivos._
+_670 funciones, componentes, métodos y rutas en 45 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -531,7 +531,7 @@ _668 funciones, componentes, métodos y rutas en 45 archivos._
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (36)
+- [`src/cuadro.ts`](#srccuadrots) (37)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
@@ -540,7 +540,7 @@ _668 funciones, componentes, métodos y rutas en 45 archivos._
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/repo.ts`](#srcrepots) (94)
-- [`src/reportes.ts`](#srcreportests) (9)
+- [`src/reportes.ts`](#srcreportests) (10)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
 - [`src/rndc/conexion.ts`](#srcrndcconexionts) (4)
@@ -1176,6 +1176,9 @@ _668 funciones, componentes, métodos y rutas en 45 archivos._
   Normaliza tipos (fechas a texto, numeros, booleanos), calcula el valor del
   flete (kilos x tarifa, o el fijo), el vencimiento del saldo si es tercero, y
   el estado con estadoDe.
+
+- **`anioPosible(f)`** · _función_
+  true si la fecha "AAAA-MM-DD" tiene un año posible (ANIO_MINIMO a ANIO_MAXIMO).
 
 - **`ErrorCuadro`** · _clase_
   Error de validacion del cuadro: la ruta lo responde como 422 con su mensaje.
@@ -1991,6 +1994,9 @@ _668 funciones, componentes, métodos y rutas en 45 archivos._
 - **`porMes(movimientos)`** · _función_
   Totales de cargos y abonos por mes ("2026-09") y por tipo de movimiento.
 
+- **`motivoFechaRara(fechaAnticipo, fechaPago, hoy)`** · _función_
+  Por que una fecha de pago es imposible; null si esta bien.
+
 - **`movimientosBomba(entregas, abonos, pagos, pagosSueltos)`** · _función_
   Movimientos de la cuenta con la bomba:
   - PRESTAMO: los anticipos entregados (efectivo + combustible), uno por dia y bomba.
@@ -2016,7 +2022,7 @@ _668 funciones, componentes, métodos y rutas en 45 archivos._
 - **`reportes`** · _módulo_
   Repositorio: lee de la base lo que necesitan los reportes.
 
-  - **`reportes.bomba(q)`** · _método_
+  - **`reportes.bomba(q, hoy)`** · _método_
     Reporte de la bomba entre dos fechas ({ desde, hasta }).
 
 ### `src/rndc/builders.ts`

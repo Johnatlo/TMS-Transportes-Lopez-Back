@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 // El cuadro importa la conexion a MySQL; estas pruebas no tocan la base.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { CLIENTE_FLUJO_LARGO, datosAHeredar, estadoDe, reconocidosCorame, sumarDias } from "./cuadro";
+import { anioPosible, CLIENTE_FLUJO_LARGO, datosAHeredar, estadoDe, reconocidosCorame, sumarDias } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 
 type Base = Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa" | "anticipoEmpresaABomba" | "urbano">;
@@ -206,5 +206,13 @@ describe("reconocidos de Cartones America", () => {
   test("3 clientes y 32.000 kg o mas: nada", () => {
     expect(reconocidosCorame({ clientes: 3, pesoKg: 32_000 })).toEqual([]);
     expect(reconocidosCorame({ clientes: 1, pesoKg: 34_999 })).toEqual([]);
+  });
+});
+
+describe("años posibles en las fechas", () => {
+  test("se rechazan años como 1909 o 2290", () => {
+    expect(anioPosible("2026-10-30")).toBe(true);
+    expect(anioPosible("1909-10-30")).toBe(false);
+    expect(anioPosible("2290-01-01")).toBe(false);
   });
 });

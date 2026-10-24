@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import { bombas, cuadro, ErrorCuadro } from "../cuadro";
+import { bombas, cuadro, ErrorCuadro, hoyColombia } from "../cuadro";
 import { facturacion } from "../facturacion";
 import { anticipos } from "../anticipos";
 import { relacionesBomba } from "../relacionesBomba";
@@ -128,7 +128,7 @@ cuadroRouter.put("/relaciones-bomba/:relacionId/vencimiento", async (req, res) =
  * pagos de la empresa, deuda al final) y lo prestado por mes, bomba y empresa.
  */
 cuadroRouter.get("/reportes/bomba", async (req, res) => {
-  await responder(res, () => reportes.bomba(req.query as Record<string, unknown>));
+  await responder(res, () => reportes.bomba(req.query as Record<string, unknown>, hoyColombia()));
 });
 /** GET /api/cuadro/pagos-bomba: pagos a la bomba (facturas de la quincena menos abonos de los socios). */
 cuadroRouter.get("/pagos-bomba", async (_req, res) => {

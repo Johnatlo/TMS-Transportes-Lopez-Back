@@ -18,7 +18,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { dia, ErrorCuadro } from "./cuadro";
+import { anioPosible, dia, ErrorCuadro } from "./cuadro";
 import { placaNormal } from "./anticipos";
 
 /** Que entrego la bomba en el vale: combustible (con galones) o efectivo. */
@@ -171,7 +171,7 @@ function leerVales(lista: unknown): Array<ValeBomba & { tramoId: number | null }
   return lista.map((v, i) => {
     const fecha = String(v?.fecha ?? "").slice(0, 10);
     const valor = Number(v?.valor);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro(`Vale ${i + 1}: la fecha no es valida.`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !anioPosible(fecha)) throw new ErrorCuadro(`Vale ${i + 1}: la fecha no es valida.`);
     if (!Number.isFinite(valor) || valor <= 0) throw new ErrorCuadro(`Vale ${i + 1}: falta el valor.`);
     const placa = placaNormal(v?.placa);
     if (!placa) throw new ErrorCuadro(`Vale ${i + 1}: falta la placa.`);
@@ -379,7 +379,7 @@ export const relacionesBomba = {
     const abonos = (Array.isArray(d.abonos) ? d.abonos : []).map(Number).filter((x) => x > 0);
     const fecha = String(d.fecha ?? "").slice(0, 10);
     if (ids.length === 0) throw new ErrorCuadro("Elige las facturas de la bomba que se pagan.");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha del pago a la bomba.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !anioPosible(fecha)) throw new ErrorCuadro("Escribe la fecha del pago a la bomba (con un año posible).");
     const conexion = await pool.getConnection();
     try {
       await conexion.beginTransaction();
