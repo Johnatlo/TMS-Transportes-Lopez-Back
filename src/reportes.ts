@@ -10,6 +10,7 @@
 import type { RowDataPacket } from "mysql2";
 import { pool } from "./db";
 import { anioPosible, dia, ErrorCuadro } from "./cuadro";
+import { sqlFlota } from "./flota";
 
 /** Un movimiento de la cuenta. */
 export interface Movimiento {
@@ -241,7 +242,7 @@ export const reportes = {
     if (desde > hasta) throw new ErrorCuadro("La fecha inicial es despues de la final.");
     const [tramos] = await pool.query<RowDataPacket[]>(
       `SELECT a.fecha, a.efectivo, a.combustible, a.fechaPago, b.nombre AS bomba, COALESCE(a.placa, c.placa) AS placa,
-              (SELECT ve.flota FROM vehiculos ve
+              (SELECT ${sqlFlota()} FROM vehiculos ve
                 WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
               EXISTS (SELECT 1 FROM bomba_relacion_vales v JOIN bomba_relaciones r ON r.id = v.relacionId
                        WHERE v.cuadroAnticipoId = a.id AND r.pagoId IS NOT NULL) AS enPago

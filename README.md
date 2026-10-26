@@ -521,7 +521,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_670 funciones, componentes, métodos y rutas en 45 archivos._
+_671 funciones, componentes, métodos y rutas en 46 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -536,6 +536,7 @@ _670 funciones, componentes, métodos y rutas en 45 archivos._
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
 - [`src/fechas.ts`](#srcfechasts) (1)
+- [`src/flota.ts`](#srcflotats) (1)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
@@ -1400,6 +1401,20 @@ _670 funciones, componentes, métodos y rutas en 45 archivos._
 
 - **`fechaHoraColombia(valor)`** · _función_
   Fecha y hora escritas en Colombia. Si ya trae zona (ISO con Z u offset), se respeta.
+
+### `src/flota.ts`
+
+> Flota de un vehiculo: propia (Transportes Lopez o Transportes M&C) o de un
+> tercero. Va en su propio archivo porque la usan cuadro, anticipos y
+> reportes al armar sus consultas (cuadro y anticipos se importan entre si).
+
+- **`sqlFlota(ve)`** · _función_
+  Expresion SQL con la flota del vehiculo de alias `ve`: la que tenga escrita
+  (LOPEZ o MYC) o, si dice TERCERO o no esta en Flota, la que sale del
+  propietario o del tenedor: con el NIT de Transportes Lopez es LOPEZ, con el
+  de M&C es MYC y con cualquier otro, TERCERO. Asi un carro de la empresa que
+  nadie marco como propio no aparece en Pago a terceros. Los NIT se comparan
+  con sus primeros 9 digitos (sin el digito de verificacion).
 
 ### `src/importaciones.ts`
 

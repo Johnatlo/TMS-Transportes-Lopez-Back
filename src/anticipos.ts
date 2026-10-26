@@ -33,6 +33,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
 import { anioPosible, dia, ErrorCuadro } from "./cuadro";
+import { sqlFlota } from "./flota";
 
 export type Tramo = "IDA" | "VUELTA";
 
@@ -149,7 +150,7 @@ const SELECT_ANTICIPOS = `
   SELECT a.id, a.tanqueoId, a.tramo, a.fecha, COALESCE(a.placa, c.placa) AS placa, a.cuadroViajeId,
          c.empresa, c.manifiesto, a.efectivo, a.combustible, a.valor, a.bombaId, b.nombre AS bomba,
          t.facturaBomba, t.fechaFacturaBomba, COALESCE(t.idaYVuelta, 0) AS idaYVuelta,
-         (SELECT ve.flota FROM vehiculos ve
+         (SELECT ${sqlFlota()} FROM vehiculos ve
            WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
          a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
          c.fecha AS fechaViaje, rv.vale, COALESCE(rv.relacionId, re.relacionId) AS relacionId,

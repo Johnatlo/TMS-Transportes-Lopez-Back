@@ -16,6 +16,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
+import { sqlFlota } from "./flota";
 // anticipos.ts tambien importa de aqui; solo se usan dentro de funciones, asi
 // que el ciclo no molesta (cuando se llaman, los dos modulos ya cargaron).
 import { anticipos } from "./anticipos";
@@ -32,6 +33,7 @@ export const ESTADOS_PAPELES: EstadoPapeles[] = ["EN_RUTA", "DESCARGADO", "CONDU
 export const papelesListos = (e: string) => e === "RADICADO" || e === "RADICADOS";
 
 export type Flota = "LOPEZ" | "MYC" | "TERCERO";
+
 
 /**
  * Dias dentro de los cuales un manifiesto nuevo de la misma placa y empresa se
@@ -406,7 +408,7 @@ const CODIGO_ORIGEN = "LPAD(COALESCE(pl.municipioOrigen, vj.origenRndc), 8, '0')
 const CODIGO_DESTINO = "LPAD(COALESCE(pl.municipioDestino, vj.destinoRndc), 8, '0')";
 
 export const SELECT_CUADRO = `
-  SELECT c.*, COALESCE(ve.flota, 'TERCERO') AS flota, ve.dueno, tf.nombre AS tarifaFlete,
+  SELECT c.*, ${sqlFlota()} AS flota, ve.dueno, tf.nombre AS tarifaFlete,
          ${nombreMunicipio(CODIGO_ORIGEN)} AS rutaOrigen,
          ${nombreMunicipio(CODIGO_DESTINO)} AS rutaDestino,
          uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor, up.nombre AS papelesRevisadoPor,
