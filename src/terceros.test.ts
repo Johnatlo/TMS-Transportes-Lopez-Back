@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 // terceros importa la conexion a MySQL; estas pruebas no tocan la base.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { estadoPagoTercero, icaSugerido, liquidar, resumirTerceros, viernesDePago } from "./terceros";
+import { estadoPagoTercero, filasConPoliza, icaSugerido, liquidar, resumirTerceros, viernesDePago } from "./terceros";
 import type { ViajeTercero } from "./terceros";
 
 /** Viaje de tercero sin nada pactado; cada prueba cambia lo que necesita. */
@@ -74,12 +74,34 @@ describe("liquidar", () => {
   });
 });
 
+describe("filasConPoliza", () => {
+  test("una poliza por manifiesto, en la primera fila pactada; sin manifiesto, cada una", () => {
+    const f = (id: number, manifiesto: string | null, pactada = true) => ({
+      id,
+      manifiesto,
+      pesoKg: 10_000,
+      valorTerceroTon: pactada ? 100_000 : null,
+      valorTerceroFijo: null,
+    });
+    // 00006755 con tres clientes (la primera sin pactar), 00006767 solo y dos sin manifiesto.
+    const ids = filasConPoliza([f(3, "00006755"), f(1, "00006755", false), f(2, "00006755"), f(4, "00006767"), f(5, null), f(6, null)]);
+    expect([...ids].sort()).toEqual([2, 4, 5, 6]);
+  });
+
+  test("liquidar sin poliza en las demas filas del manifiesto", () => {
+    expect(liquidar(viaje({ valorTerceroFijo: 1_000_000 }), { efectivo: 0, combustible: 0 }, false).poliza).toBe(0);
+  });
+});
+
 describe("icaSugerido", () => {
   test("por cliente, como en la matriz", () => {
     expect(icaSugerido("CORAME")).toBe(3.3);
     expect(icaSugerido("BODEGAS DE RECICLAJE")).toBe(4);
     expect(icaSugerido("CENCORE")).toBe(8);
     expect(icaSugerido("APROREC")).toBe(0);
+    // Los de la liquidacion de ejemplo (docs/Liq Viaje Pago ejemplo.xlsx).
+    expect(icaSugerido("ECOAMBIENTAL RECICLAJE S.A.S.")).toBe(4);
+    expect(icaSugerido("CARTON CAJAS")).toBe(4.14);
   });
 });
 

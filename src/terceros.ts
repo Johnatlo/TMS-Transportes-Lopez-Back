@@ -23,7 +23,7 @@ import type { FilaCuadro } from "./cuadro";
 export const RETEFUENTE_TERCERO = 0.01;
 /** FOPAT (fondo de prevencion de accidentalidad) sobre el valor del viaje. */
 export const FOPAT_TERCERO = 0.001;
-/** Poliza por viaje. */
+/** Poliza RCE: una por manifiesto (un viaje con varios clientes la paga una vez). */
 export const POLIZA_TERCERO = 3000;
 
 /**
@@ -35,6 +35,9 @@ const ICA_POR_CLIENTE: Array<[RegExp, number]> = [
   [/BODEGAS?\s+DE\s+RECICLAJE|RECICLAJES?\s+BOGOTA/i, 4],
   [/CENCORE|COOP/i, 8],
   [/EMPAQUES/i, 4.14],
+  // De la liquidacion de ejemplo (docs/Liq Viaje Pago ejemplo.xlsx).
+  [/ECOAMBIENTAL/i, 4],
+  [/CARTON\s+CAJAS/i, 4.14],
 ];
 
 /** ICA por mil que se sugiere para un cliente (0 si no esta en la lista: RECOLAM, APROREC...). */
@@ -87,10 +90,15 @@ export interface LiquidacionTercero {
   valorAPagar: number | null;
 }
 
-/** Calcula lo que se le paga al tercero por un viaje (exportado para las pruebas). */
+/**
+ * Calcula lo que se le paga al tercero por un viaje (exportado para las
+ * pruebas). cobraPoliza: false en las demas filas de un manifiesto con varios
+ * clientes (la poliza va solo en una, ver filasConPoliza).
+ */
 export function liquidar(
   f: Pick<FilaCuadro, "empresa" | "pesoKg" | "valorTerceroTon" | "valorTerceroFijo" | "anticipoTransferencia" | "aplicaDescuentosTercero" | "icaTerceroPorMil">,
-  bomba: AnticiposBomba
+  bomba: AnticiposBomba,
+  cobraPoliza = true
 ): LiquidacionTercero {
   const valorTercero =
     f.valorTerceroFijo !== null
@@ -103,7 +111,7 @@ export function liquidar(
   const retefuente = Math.round(base * RETEFUENTE_TERCERO);
   const ica = Math.round((base * icaPorMil) / 1000);
   const fopat = Math.round(base * FOPAT_TERCERO);
-  const poliza = valorTercero === null ? 0 : POLIZA_TERCERO;
+  const poliza = valorTercero === null || !cobraPoliza ? 0 : POLIZA_TERCERO;
   const totalDescuentos = retefuente + ica + fopat + poliza;
   const transferencia = f.anticipoTransferencia ?? 0;
   return {
@@ -122,6 +130,31 @@ export function liquidar(
         ? null
         : valorTercero - bomba.efectivo - bomba.combustible - transferencia - (f.aplicaDescuentosTercero ? totalDescuentos : 0),
   };
+}
+
+/** true si la fila ya tiene pactado lo que se le paga al tercero. */
+const pactado = (f: Pick<FilaCuadro, "pesoKg" | "valorTerceroTon" | "valorTerceroFijo">) =>
+  f.valorTerceroFijo !== null || (f.valorTerceroTon !== null && f.pesoKg !== null);
+
+/**
+ * Filas (ids) que llevan la poliza RCE: una por manifiesto, la primera ya
+ * pactada (la de menor id); las filas sin manifiesto la llevan cada una.
+ */
+export function filasConPoliza(
+  filas: Array<Pick<FilaCuadro, "id" | "manifiesto" | "pesoKg" | "valorTerceroTon" | "valorTerceroFijo">>
+): Set<number> {
+  const ids = new Set<number>();
+  const vistos = new Set<string>();
+  for (const f of [...filas].sort((a, b) => a.id - b.id)) {
+    if (!f.manifiesto) {
+      ids.add(f.id);
+      continue;
+    }
+    if (vistos.has(f.manifiesto) || !pactado(f)) continue;
+    vistos.add(f.manifiesto);
+    ids.add(f.id);
+  }
+  return ids;
 }
 
 /** Estado del pago de un viaje al tercero (ver EstadoPagoTercero). */
@@ -234,14 +267,19 @@ export const terceros = {
     const porViaje = new Map(bomba.map((b) => [Number(b.cuadroViajeId), { efectivo: Number(b.efectivo), combustible: Number(b.combustible) }]));
     const nombres = new Map(duenos.map((d) => [Number(d.id), d.nombre ? String(d.nombre).trim() : null]));
     const hoy = hoyColombia();
-    const viajes = filas
-      // Sin los reconocidos de Cartones America: al tercero no se le pagan.
-      .filter((f) => !f.anulado && f.flota === "TERCERO" && !f.dueno && !f.concepto)
+    // Sin los reconocidos de Cartones America: al tercero no se le pagan.
+    const deTerceros = filas.filter((f) => !f.anulado && f.flota === "TERCERO" && !f.dueno && !f.concepto);
+    const conPoliza = filasConPoliza(deTerceros);
+    // Manifiestos que ya tienen su poliza en una fila pactada.
+    const manifiestosConPoliza = new Set(deTerceros.filter((f) => conPoliza.has(f.id) && f.manifiesto).map((f) => f.manifiesto));
+    const viajes = deTerceros
       .map((f) => {
-        const l = liquidar(f, porViaje.get(f.id) ?? { efectivo: 0, combustible: 0 });
+        const l = liquidar(f, porViaje.get(f.id) ?? { efectivo: 0, combustible: 0 }, conPoliza.has(f.id));
         return {
           ...f,
           ...l,
+          // Sin pactar: la llevaria si su manifiesto aun no la tiene (para el formulario).
+          cobraPoliza: conPoliza.has(f.id) || (!pactado(f) && !manifiestosConPoliza.has(f.manifiesto)),
           tercero: (f.vehiculoId ? nombres.get(f.vehiculoId) : null) ?? f.placa,
           estadoPagoTercero: estadoPagoTercero(f, l, hoy),
           icaSugerido: icaSugerido(f.empresa),

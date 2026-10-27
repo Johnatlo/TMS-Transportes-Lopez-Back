@@ -521,7 +521,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_671 funciones, componentes, métodos y rutas en 46 archivos._
+_673 funciones, componentes, métodos y rutas en 46 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -568,7 +568,7 @@ _671 funciones, componentes, métodos y rutas en 46 archivos._
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
 - [`src/seguimiento.ts`](#srcseguimientots) (36)
-- [`src/terceros.ts`](#srctercerosts) (11)
+- [`src/terceros.ts`](#srctercerosts) (13)
 
 ### `src/alertas.ts`
 
@@ -4191,8 +4191,17 @@ _671 funciones, componentes, métodos y rutas en 46 archivos._
   Viernes en que se le paga a un tercero ("AAAA-MM-DD"): lunes o martes ->
   el viernes de esa semana; miercoles a domingo -> el de la semana siguiente.
 
-- **`liquidar(f, bomba)`** · _función_
-  Calcula lo que se le paga al tercero por un viaje (exportado para las pruebas).
+- **`liquidar(f, bomba, cobraPoliza)`** · _función_
+  Calcula lo que se le paga al tercero por un viaje (exportado para las
+  pruebas). cobraPoliza: false en las demas filas de un manifiesto con varios
+  clientes (la poliza va solo en una, ver filasConPoliza).
+
+- **`pactado(f)`** · _función_
+  true si la fila ya tiene pactado lo que se le paga al tercero.
+
+- **`filasConPoliza(filas)`** · _función_
+  Filas (ids) que llevan la poliza RCE: una por manifiesto, la primera ya
+  pactada (la de menor id); las filas sin manifiesto la llevan cada una.
 
 - **`estadoPagoTercero(f, l, hoy)`** · _función_
   Estado del pago de un viaje al tercero (ver EstadoPagoTercero).
