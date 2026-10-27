@@ -140,6 +140,12 @@ export interface FilaAnticipo {
   vale: string | null;
   /** Vale de efectivo de la relacion de la bomba con que se cruzo; null = sin cruzar. */
   valeEfectivo: string | null;
+  /**
+   * El combustible / el efectivo ya esta cruzado con un vale de la bomba. Aparte
+   * del numero de vale porque los vales armados a mano no traen numero.
+   */
+  cruzadoCombustible: boolean;
+  cruzadoEfectivo: boolean;
   /** Efectivo que se habia registrado antes de cruzarlo con el vale. */
   efectivoEntregado: number | null;
   /** Factura (relacion) de la bomba con que se cruzo el vale. */
@@ -154,7 +160,8 @@ const SELECT_ANTICIPOS = `
            WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
          a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
          c.fecha AS fechaViaje, rv.vale, COALESCE(rv.relacionId, re.relacionId) AS relacionId,
-         re.vale AS valeEfectivo, a.efectivoEntregado
+         re.vale AS valeEfectivo, rv.id IS NOT NULL AS cruzadoCombustible, re.id IS NOT NULL AS cruzadoEfectivo,
+         a.efectivoEntregado
     FROM cuadro_anticipos a
     LEFT JOIN bomba_relacion_vales rv ON rv.cuadroAnticipoId = a.id AND rv.tipo = 'COMBUSTIBLE'
     LEFT JOIN bomba_relacion_vales re ON re.cuadroAnticipoId = a.id AND re.tipo = 'EFECTIVO'
@@ -190,6 +197,8 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   fechaViaje: dia(r.fechaViaje),
   vale: r.vale ?? null,
   valeEfectivo: r.valeEfectivo ?? null,
+  cruzadoCombustible: !!Number(r.cruzadoCombustible),
+  cruzadoEfectivo: !!Number(r.cruzadoEfectivo),
   efectivoEntregado: r.efectivoEntregado === null || r.efectivoEntregado === undefined ? null : Number(r.efectivoEntregado),
   relacionId: r.relacionId ?? null,
 });
