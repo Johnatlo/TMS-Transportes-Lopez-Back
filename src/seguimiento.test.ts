@@ -29,6 +29,7 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     vehiculoId: 1,
     placa: "SKN250",
     flota: "TERCERO" as const,
+    configuracion: "3S3",
     dueno: null,
     conductor: null,
     ruta: null,
