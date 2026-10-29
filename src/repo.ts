@@ -1903,6 +1903,8 @@ export interface FilaConsecutivo {
   cliente: string | null;
   pesoReal: number | null;
   valorManifiesto: number | null;
+  /** Valor a facturar de la remesa en el Cuadro pagos (null si aun no tiene tarifa). */
+  valorFacturar: number | null;
   retencionFopat: number | null;
   valorAnticipo: number | null;
   citaCargue: Date;
@@ -1935,7 +1937,8 @@ export const consecutivos = {
    * Una fila por remesa con las columnas de la hoja de control de la empresa:
    * fecha planillada, placa, cliente, valor del manifiesto y FOPAT (solo en la
    * remesa 1), citas, numeros y radicados, municipios, producto, remitente y
-   * destinatario. Del mas reciente al mas antiguo.
+   * destinatario, y el valor a facturar de la remesa en el Cuadro pagos (el
+   * flete que se envia en el cuadro de facturacion). Del mas reciente al mas antiguo.
    */
   async listar(limite = 10000): Promise<FilaConsecutivo[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
@@ -1957,7 +1960,15 @@ export const consecutivos = {
               COALESCE(des.codTipoId, vr.destinatarioTipoId) AS destinatarioTipoId,
               COALESCE(des.nit, vr.destinatarioNit) AS destinatarioNit, des.nombre AS destinatarioNombre,
               COALESCE(c.nombre, v.conductorRndc) AS conductor,
-              CASE WHEN v.origen = 'PORTAL' THEN 'Portal RNDC' ELSE u.nombre END AS creadoPor
+              CASE WHEN v.origen = 'PORTAL' THEN 'Portal RNDC' ELSE u.nombre END AS creadoPor,
+              -- Valor a facturar (como valorFlete del cuadro): FIJO, o kilos facturados x tarifa + adicional.
+              (SELECT CASE WHEN cv.tipoFlete = 'FIJO' THEN cv.valorFijo
+                           WHEN COALESCE(cv.pesoFacturadoKg, cv.pesoKg) IS NOT NULL AND cv.tarifaKilo IS NOT NULL
+                             THEN ROUND(COALESCE(cv.pesoFacturadoKg, cv.pesoKg) * cv.tarifaKilo) + COALESCE(cv.fleteAdicional, 0)
+                      END
+                 FROM cuadro_viajes cv
+                WHERE cv.viajeRemesaId = vr.id AND cv.anulado = 0 AND cv.reconocidoDeViajeId IS NULL
+                ORDER BY cv.id LIMIT 1) AS valorFacturar
          FROM viaje_remesas vr
          JOIN viajes v ON v.id = vr.viajeId
          LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId
@@ -1984,6 +1995,7 @@ export const consecutivos = {
       valorManifiesto: aNumero(r.valorManifiesto),
       retencionFopat: aNumero(r.retencionFopat),
       valorAnticipo: aNumero(r.valorAnticipo),
+      valorFacturar: aNumero(r.valorFacturar),
     }));
   },
 };

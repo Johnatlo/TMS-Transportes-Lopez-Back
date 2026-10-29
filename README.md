@@ -2039,7 +2039,8 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
     Una fila por remesa con las columnas de la hoja de control de la empresa:
     fecha planillada, placa, cliente, valor del manifiesto y FOPAT (solo en la
     remesa 1), citas, numeros y radicados, municipios, producto, remitente y
-    destinatario. Del mas reciente al mas antiguo.
+    destinatario, y el valor a facturar de la remesa en el Cuadro pagos (el
+    flete que se envia en el cuadro de facturacion). Del mas reciente al mas antiguo.
 
 ### `src/reportes.ts`
 
