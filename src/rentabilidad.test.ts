@@ -56,7 +56,7 @@ describe("calcular: socios", () => {
 });
 
 describe("calcular: terceros", () => {
-  test("como la hoja TERCEROS, fila 490 (SWN-623), con la comision de 30.000 que paga el tercero", () => {
+  test("como la hoja TERCEROS, fila 490 (SWN-623): la comision de la matriz se le descuenta a la empresa", () => {
     const c = calcular(
       entrada({
         grupo: "TERCEROS",
@@ -70,10 +70,11 @@ describe("calcular: terceros", () => {
     );
     // Lado empresa: 1 % + 0,1 %, ICA 4 por mil, 4 x 1000 + 5.000 y Supertransporte.
     expect([c.retencion, c.reteIca, c.bancaria, c.supertransporte]).toEqual([60_552, 22_019, 27_019, 6_611]);
-    expect(c.saldoEmpresa).toBe(5_504_688 - 60_552 - 22_019 - 27_019 - 6_611);
-    // Lado tercero: 1 % + 0,1 %, ICA, Supertransporte, poliza 3.000 y comision 30.000.
-    expect([c.retencionTercero, c.reteIcaTercero, c.bancariaTercero, c.poliza, c.comision]).toEqual([49_739, 18_087, 5_431, 3_000, 30_000]);
-    expect(c.saldoBeneficiario).toBe(4_521_708 - 49_739 - 18_087 - 5_431 - 3_000 - 30_000);
+    expect(c.comision).toBe(130_000);
+    expect(c.saldoEmpresa).toBe(5_504_688 - 60_552 - 22_019 - 27_019 - 6_611 - 130_000);
+    // Lado tercero: 1 % + 0,1 %, ICA, Supertransporte y poliza 3.000 (sin comision). Como en el Excel: 4.445.451,81.
+    expect([c.retencionTercero, c.reteIcaTercero, c.bancariaTercero, c.poliza]).toEqual([49_739, 18_087, 5_431, 3_000]);
+    expect(c.saldoBeneficiario).toBe(4_445_451);
     expect(c.rentabilidad).toBe(c.saldoEmpresa - c.saldoBeneficiario);
     expect(c.anticipoRenta).toBe(Math.round(c.rentabilidad * 0.035));
     expect(c.ganancia).toBe(c.rentabilidad - c.anticipoRenta);
@@ -81,13 +82,13 @@ describe("calcular: terceros", () => {
     expect(c.anticipo).toBe(2_600_000);
   });
 
-  test("sin valor pactado con el tercero no se le cobra comision", () => {
-    expect(calcular(entrada({ grupo: "TERCEROS", valorEmpresa: 1_000_000, valorTercero: null })).comision).toBe(0);
+  test("sin flete no hay comision", () => {
+    expect(calcular(entrada({ grupo: "TERCEROS", valorEmpresa: 0, valorTercero: 1_000_000 })).comision).toBe(0);
   });
 
   test("un reconocido no tiene pago al tercero: todo queda para la empresa", () => {
     const c = calcular(entrada({ grupo: "TERCEROS", valorEmpresa: 1_000_000, reconocido: true, valorTercero: null }));
-    expect([c.comision, c.poliza, c.saldoBeneficiario]).toEqual([0, 0, 0]);
+    expect([c.poliza, c.saldoBeneficiario]).toEqual([0, 0]);
     expect(c.rentabilidad).toBe(c.saldoEmpresa);
   });
 });

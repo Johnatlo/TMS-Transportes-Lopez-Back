@@ -1621,8 +1621,8 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
 > Dos clases de grupo:
 > - TERCEROS: lo que paga el cliente con sus descuentos (saldo empresa) menos
 >   lo que se le paga al tercero con los suyos (saldo tercero) = rentabilidad;
->   menos el anticipo de renta 3,5 % = ganancia. La comision (30.000 por
->   remision) la paga el tercero.
+>   menos el anticipo de renta 3,5 % = ganancia. La comision de la matriz
+>   (como en los demas carros) se le descuenta a la empresa, no al tercero.
 > - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
 >   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
 >   el anticipo = lo que se le paga al dueno. La empresa se queda con la

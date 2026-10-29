@@ -11,8 +11,8 @@
  * Dos clases de grupo:
  * - TERCEROS: lo que paga el cliente con sus descuentos (saldo empresa) menos
  *   lo que se le paga al tercero con los suyos (saldo tercero) = rentabilidad;
- *   menos el anticipo de renta 3,5 % = ganancia. La comision (30.000 por
- *   remision) la paga el tercero.
+ *   menos el anticipo de renta 3,5 % = ganancia. La comision de la matriz
+ *   (como en los demas carros) se le descuenta a la empresa, no al tercero.
  * - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
  *   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
  *   el anticipo = lo que se le paga al dueno. La empresa se queda con la
@@ -33,8 +33,6 @@ export const BANCARIA_FIJA = 5000;
 export const SUPERTRANSPORTE = 0.001201;
 /** Anticipo de renta. */
 export const ANTICIPO_RENTA = 0.035;
-/** Comision que paga el tercero por remision. */
-export const COMISION_TERCERO = 30000;
 /** Descargue en Cartones America (valor actual; ha cambiado con el tiempo). */
 export const DESCARGUE_CAME = 198000;
 /** Planilla - poliza RCE por manifiesto. */
@@ -185,16 +183,16 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
 
   if (e.grupo === "TERCEROS") {
     const p = e.valorTercero ?? 0;
-    // La comision la paga el tercero: solo si ya se pacto lo que se le paga.
-    const comision = e.rentComision ?? (e.primeraDeRemision && p > 0 ? COMISION_TERCERO : 0);
+    // La comision de la matriz, como en los demas carros: una vez por remision y con flete.
+    const comision = e.rentComision ?? (e.primeraDeRemision && v > 0 ? e.comisionMatriz?.comision ?? 0 : 0);
     const tLopez = e.rentTLopez ?? 0;
     const poliza = e.rentPoliza ?? (e.primeraDeManifiesto && p > 0 ? POLIZA_RCE : 0);
-    const saldoEmpresa = v - retencion - reteIca - bancaria - supertransporte - tLopez;
+    const saldoEmpresa = v - retencion - reteIca - bancaria - supertransporte - comision - tLopez;
     const retencionTercero = r(p * RETENCION_CLIENTE);
     const reteIcaTercero = r((p * e.icaTerceroPorMil) / 1000);
     // Al tercero ya solo se le descuenta la Supertransporte (antes tambien el 4 x 1000 + 5.000).
     const bancariaTercero = r(p * SUPERTRANSPORTE);
-    const saldoBeneficiario = p - retencionTercero - reteIcaTercero - bancariaTercero - poliza - comision;
+    const saldoBeneficiario = p - retencionTercero - reteIcaTercero - bancariaTercero - poliza;
     const rentabilidad = saldoEmpresa - saldoBeneficiario;
     const anticipoRenta = r(rentabilidad * ANTICIPO_RENTA);
     return {
