@@ -448,6 +448,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `PUT` | `/api/cuadro/tanqueos/:tanqueoId` | Factura de la bomba (numero, fecha) o la bomba del tanqueo. |
 | `GET` | `/api/cuadro/tarifas` | La matriz de fletes. |
 | `PUT` | `/api/cuadro/tarifas` | Reemplaza la matriz completa con la importada del Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }). |
+| `POST` | `/api/cuadro/tarifas` | Agrega una tarifa a la matriz ({ nombre, razonSocial, valor, tipo, ... }). |
 | `PUT` | `/api/cuadro/tarifas/:tarifaId` | Cambia una tarifa y la devuelve (404 si no existe). |
 | `GET` | `/api/cuadro/por-facturar` | Viajes listos para facturar (y los ya enviados sin fecha de factura). |
 | `POST` | `/api/cuadro/enviar-facturacion` | Guarda en cada viaje lo que va en el cuadro de la contadora ({ filas: [{ id, tarifaFleteId, tipo, valorTon, pesoFacturadoKg, total, remision, notaFactura, facturaNumero }] }). |
@@ -478,6 +479,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/despacho/:id/cumplir/previa` | Datos para el formulario del cumplido del manifiesto: flete, anticipo, vacios, retencion y FOPAT calculados, tiempos logisticos con el piso SICETAC del cumplido, y los motivos permitidos de adicional y descuento. |
 | `POST` | `/api/despacho/:id/cumplir` | Cumple el manifiesto en el RNDC (proceso 6). |
 | `GET` | `/api/despacho/:id/manifiesto.pdf` | PDF del manifiesto, tal como lo genera el Ministerio. |
+| `GET` | `/api/despacho/:id/manifiesto-contingencia` | Manifiesto de contingencia (HTML para imprimir): cuando el RNDC no deja expedir el manifiesto o no entrega su PDF. Lleva los mismos datos que se envian al RNDC, sin QR y con el aviso de contingencia. El viaje queda marcado y con alerta hasta que se imprime el oficial. ?motivo= el error que se vio. |
 | `GET` | `/api/despacho/remesas/:remesaId/imprimir` | Impresion de una remesa. |
 | `GET` | `/api/despacho/:id/remesas` | Remesas de un viaje, con su consecutivo y radicado. |
 | `GET` | `/api/despacho/sugerencias/:vehiculoId` | Remolque y conductor sugeridos para un vehiculo: el que mas ha usado en sus ultimos viajes; si no tiene historial, el habitual del catalogo (placaRemolque y cedulaConductorHabitual). Solo sugiere: el despachador puede cambiarlos. |
@@ -525,7 +527,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_699 funciones, componentes, métodos y rutas en 48 archivos._
+_717 funciones, componentes, métodos y rutas en 50 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -534,11 +536,12 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
+- [`src/contingencia.ts`](#srccontingenciats) (9)
 - [`src/correo.ts`](#srccorreots) (9)
 - [`src/cuadro.ts`](#srccuadrots) (39)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
-- [`src/facturacion.ts`](#srcfacturacionts) (10)
+- [`src/facturacion.ts`](#srcfacturacionts) (11)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/flota.ts`](#srcflotats) (1)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
@@ -553,14 +556,15 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
 - [`src/rndc/consultas.ts`](#srcrndcconsultasts) (16)
 - [`src/rndc/estampado.ts`](#srcrndcestampadots) (4)
 - [`src/rndc/maestros.ts`](#srcrndcmaestrosts) (9)
+- [`src/rndc/manifiesto-contingencia.ts`](#srcrndcmanifiestocontingenciats) (5)
 - [`src/rndc/pdf.ts`](#srcrndcpdfts) (4)
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (44)
-- [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (45)
+- [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (20)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
@@ -572,7 +576,7 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (36)
+- [`src/seguimiento.ts`](#srcseguimientots) (37)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (12)
 - [`src/terceros.ts`](#srctercerosts) (13)
 
@@ -1035,6 +1039,45 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
   El RNDC rechaza el manifiesto completo si el consecutivo se repite, y ese
   rechazo llega despues de haber creado las remesas: mas vale atajarlo aqui.
 
+### `src/contingencia.ts`
+
+> Manifiestos de contingencia (ver rndc/manifiesto-contingencia.ts): cuando
+> el RNDC no deja expedir el manifiesto o no entrega su PDF, la empresa
+> imprime uno propio para que el carro salga. El viaje queda marcado
+> (viajes.contingenciaEn) y con alerta en la campana hasta que se imprime el
+> manifiesto oficial.
+
+- **`t(x)`** · _función_
+  Valor del manifiesto como texto; vacio -> null.
+
+- **`n(x)`** · _función_
+  Valor del manifiesto como numero; vacio -> 0.
+
+- **`nombresMunicipios(codigos)`** · _función_
+  Nombre "MUNICIPIO DEPARTAMENTO" de cada codigo de 8 digitos: del catalogo de
+  municipios; si no se importo, la ciudad de algun tercero de ese municipio
+  (como el cuadro pagos).
+
+- **`nombreTitular(numId, nombreFlota)`** · _función_
+  Nombre del titular del manifiesto: el de Flota, o el tercero o conductor con esa cedula.
+
+- **`datosContingencia(viaje, manifiesto, via, motivo)`** · _función_
+  Datos del manifiesto de contingencia de un viaje, a partir de lo que se
+  envia (o se enviaria) al RNDC (manifiesto = construirDatosManifiesto) y de
+  las plantillas de sus remesas.
+
+- **`contingencia`** · _módulo_
+  Repositorio de la marca de contingencia de los viajes.
+
+  - **`contingencia.marcar(viajeId, motivo)`** · _método_
+    Marca el viaje: se imprimio de contingencia (conserva la primera fecha; el motivo, el ultimo).
+
+  - **`contingencia.resolver(viajeId)`** · _método_
+    Se imprimio el manifiesto oficial: ya no hay contingencia pendiente.
+
+  - **`contingencia.pendientes()`** · _método_
+    Viajes con contingencia pendiente (no anulados), los mas viejos primero.
+
 ### `src/correo.ts`
 
 > Envio de correos por SMTP (cuenta de Gmail / Google Workspace).
@@ -1389,8 +1432,11 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
     falla queda la anterior). Los viajes que apuntaban a tarifas viejas
     conservan su valor; solo pierden el enlace a la tarifa.
 
+  - **`facturacion.crearTarifa(datos)`** · _método_
+    Agrega una tarifa a la matriz sin importar el Excel, y la devuelve.
+
   - **`facturacion.actualizarTarifa(id, datos)`** · _método_
-    Cambia una tarifa (valor, tipo, peso minimo, observaciones...) y la devuelve.
+    Cambia una tarifa (nombre, razon social, valor, tipo, pesos, observaciones) y la devuelve.
 
   - **`facturacion.porFacturar()`** · _método_
     Viajes listos para facturar (papeles radicados, sin factura con fecha), y
@@ -2681,6 +2727,36 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
   remolque con ese id, con los datos que tiene hoy el catalogo. Guarda en la
   fila el radicado y la fecha, o el error del RNDC.
 
+### `src/rndc/manifiesto-contingencia.ts`
+
+> Manifiesto de contingencia: lo imprime la empresa cuando la plataforma del
+> RNDC no deja expedir el manifiesto o no entrega su PDF, para que el carro no
+> se quede sin documento mientras tanto.
+>
+> Replica la organizacion del manifiesto oficial (docs/Manifiesto DE
+> ejemplo.pdf) con los mismos datos que se envian al RNDC (ver
+> construirDatosManifiesto), pero SIN el codigo QR ni los logos del
+> Ministerio, y con un aviso arriba y abajo de que es de contingencia. El
+> viaje queda con alerta hasta que se imprime el oficial.
+>
+> HTML listo para imprimir, como la remesa (remesa-impresion.ts).
+
+- **`escapar(valor)`** · _función_
+  Texto seguro para el HTML (vacio para null/undefined).
+
+- **`pesos(n)`** · _función_
+  4,489,141.00, como en el manifiesto oficial.
+
+- **`cientos(n)`** · _función_
+  Numero de 0 a 999 en letras ("QUINIENTOS TREINTA Y NUEVE").
+
+- **`enLetras(valor)`** · _función_
+  Valor en letras como en el manifiesto oficial: "CUATRO MILLONES QUINIENTOS
+  TREINTA Y NUEVE MIL SETENTA Y UNO PESOS". Pesos enteros.
+
+- **`construirHtmlManifiestoContingencia(d)`** · _función_
+  HTML imprimible del manifiesto de contingencia.
+
 ### `src/rndc/pdf.ts`
 
 > Descarga del PDF del manifiesto.
@@ -3329,6 +3405,9 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
   PUT /api/cuadro/tarifas: reemplaza la matriz completa con la importada del
   Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }).
 
+- **`POST /tarifas`** · _ruta HTTP_
+  POST /api/cuadro/tarifas: agrega una tarifa a la matriz ({ nombre, razonSocial, valor, tipo, ... }).
+
 - **`PUT /tarifas/:tarifaId`** · _ruta HTTP_
   PUT /api/cuadro/tarifas/:tarifaId: cambia una tarifa y la devuelve (404 si no existe).
 
@@ -3646,6 +3725,13 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
 
   Se pide al RNDC en vez de componerlo aqui: el formato es el oficial y trae el
   codigo QR de seguridad que las autoridades verifican en via.
+
+- **`GET /:id/manifiesto-contingencia`** · _ruta HTTP_
+  Manifiesto de contingencia (HTML para imprimir): cuando el RNDC no deja
+  expedir el manifiesto o no entrega su PDF. Lleva los mismos datos que se
+  envian al RNDC, sin QR y con el aviso de contingencia. El viaje queda
+  marcado y con alerta hasta que se imprime el oficial. ?motivo= el error
+  que se vio.
 
 - **`GET /remesas/:remesaId/imprimir`** · _ruta HTTP_
   Impresion de una remesa.
@@ -4168,6 +4254,11 @@ _699 funciones, componentes, métodos y rutas en 48 archivos._
 
 - **`resumirAnticiposEmpresa(filas)`** · _función_
   Resumen por cliente de los viajes con anticipo de la empresa (mas por cobrar primero).
+
+- **`alertaContingencia(v)`** · _función_
+  Alerta de un manifiesto impreso de contingencia (siempre urgente): sin
+  radicado hay que reintentar expedirlo en el RNDC; con radicado, imprimir el
+  oficial. Se quita sola cuando se imprime el oficial.
 
 - **`fechaTexto(f)`** · _función_
   "2026-10-05" -> "05/10/2026".

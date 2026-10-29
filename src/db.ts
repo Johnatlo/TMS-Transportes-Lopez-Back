@@ -958,6 +958,11 @@ export async function initSchema(): Promise<void> {
     // Radicado de la anulacion del cumplido del manifiesto (proceso 29), al
     // anular un viaje que ya estaba cumplido.
     ["viajes", "radicadoAnulacionCumplidoManifiesto", "VARCHAR(30)"],
+    // Manifiesto de contingencia (ver src/contingencia.ts): cuando se imprimio
+    // uno propio porque el RNDC no dejo expedir o imprimir, y por que. Se
+    // limpia al imprimir el oficial.
+    ["viajes", "contingenciaEn", "DATETIME"],
+    ["viajes", "contingenciaMotivo", "VARCHAR(300)"],
     // Anticipo que da la empresa (cliente) en algunos viajes: los del Zorro
     // (Ecoambiental, Reciclajes Bogota, Bodegas de Reciclaje), Aburra Limpio y
     // los viajes sin manifiesto. Es aparte de los anticipos de la bomba; la

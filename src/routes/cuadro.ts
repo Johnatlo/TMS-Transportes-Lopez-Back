@@ -199,6 +199,10 @@ cuadroRouter.get("/tarifas", async (_req, res) => {
 cuadroRouter.put("/tarifas", async (req, res) => {
   await responder(res, async () => ({ importadas: await facturacion.reemplazarTarifas(req.body?.tarifas) }));
 });
+/** POST /api/cuadro/tarifas: agrega una tarifa a la matriz ({ nombre, razonSocial, valor, tipo, ... }). */
+cuadroRouter.post("/tarifas", async (req, res) => {
+  await responder(res, () => facturacion.crearTarifa(req.body ?? {}));
+});
 /** PUT /api/cuadro/tarifas/:tarifaId: cambia una tarifa y la devuelve (404 si no existe). */
 cuadroRouter.put("/tarifas/:tarifaId", async (req, res) => {
   await responder(res, async () => {

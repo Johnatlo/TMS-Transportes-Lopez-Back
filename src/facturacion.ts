@@ -114,7 +114,17 @@ export const facturacion = {
     return tarifas.length;
   },
 
-  /** Cambia una tarifa (valor, tipo, peso minimo, observaciones...) y la devuelve. */
+  /** Agrega una tarifa a la matriz sin importar el Excel, y la devuelve. */
+  async crearTarifa(datos: Record<string, unknown>): Promise<TarifaFlete> {
+    const t = normalizarTarifa(datos);
+    const [res] = await pool.query<ResultSetHeader>(
+      "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones]
+    );
+    return { id: res.insertId, ...t };
+  },
+
+  /** Cambia una tarifa (nombre, razon social, valor, tipo, pesos, observaciones) y la devuelve. */
   async actualizarTarifa(id: number, datos: Record<string, unknown>): Promise<TarifaFlete | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM tarifas_flete WHERE id = ?", [id]);
     if (!rows[0]) return null;

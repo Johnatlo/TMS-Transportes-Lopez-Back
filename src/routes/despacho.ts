@@ -110,6 +110,8 @@ import { aCabeceraMunicipal, calcularPisoSicetac, horasPactadasTotales, pisoSice
 import { descargarPdfManifiesto } from "../rndc/pdf";
 import { estamparLogo, logoComoDataUri } from "../rndc/estampado";
 import { construirHtmlRemesa } from "../rndc/remesa-impresion";
+import { construirHtmlManifiestoContingencia } from "../rndc/manifiesto-contingencia";
+import { contingencia, datosContingencia } from "../contingencia";
 import { clienteLectura, clienteRegistro, clienteSicetac, credencialesRndc } from "../rndc/conexion";
 
 export const despachoRouter = Router();
@@ -2496,12 +2498,39 @@ despachoRouter.get("/:id/manifiesto.pdf", async (req, res) => {
         console.warn(`No se pudo estampar el logo en el manifiesto ${viaje.id}: ${(exc as Error).message}`);
       }
     }
+    // Ya hay oficial: si se habia impreso uno de contingencia, deja de estar pendiente.
+    await contingencia.resolver(viaje.id);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${nombreArchivo}"`);
     res.send(salida);
   } catch (exc) {
     res.status(502).json({ error: (exc as Error).message });
   }
+});
+
+/**
+ * Manifiesto de contingencia (HTML para imprimir): cuando el RNDC no deja
+ * expedir el manifiesto o no entrega su PDF. Lleva los mismos datos que se
+ * envian al RNDC, sin QR y con el aviso de contingencia. El viaje queda
+ * marcado y con alerta hasta que se imprime el oficial. ?motivo= el error
+ * que se vio.
+ */
+despachoRouter.get("/:id/manifiesto-contingencia", async (req, res) => {
+  const pagina = (estado: number, mensaje: string) =>
+    res.status(estado).type("html").send(`<!DOCTYPE html><meta charset="utf-8"><p style="font-family:Arial;margin:2rem">${mensaje.replace(/</g, "&lt;")}</p>`);
+  const viaje = await viajes.findById(Number(req.params.id));
+  if (!viaje) return pagina(404, "Viaje no encontrado.");
+  if (viaje.estado === "ANULADO") return pagina(409, "El viaje esta anulado: no se imprime manifiesto.");
+  if (viaje.origen === "PORTAL") return pagina(409, "Este viaje se expidio en el portal del RNDC: imprime el manifiesto alla.");
+  const r = await procesarViaje(viaje.id, { soloDatos: true });
+  const d = r.cuerpo as { error?: string; manifiesto?: Record<string, unknown> | null; errorManifiesto?: string | null; via?: { codVia: string; descripcion: string } | null };
+  if (r.status !== 200 || !d.manifiesto) {
+    return pagina(r.status === 200 ? 422 : r.status, `No se pudo armar el manifiesto: ${d.error ?? d.errorManifiesto ?? "faltan datos del viaje"}.`);
+  }
+  const motivo = typeof req.query.motivo === "string" && req.query.motivo.trim() ? req.query.motivo.trim() : null;
+  const html = construirHtmlManifiestoContingencia(await datosContingencia(viaje, d.manifiesto, d.via ?? null, motivo));
+  await contingencia.marcar(viaje.id, motivo);
+  res.type("html").send(html);
 });
 
 /**

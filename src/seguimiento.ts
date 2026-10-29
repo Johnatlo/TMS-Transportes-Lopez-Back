@@ -31,6 +31,8 @@ import { relacionesBomba } from "./relacionesBomba";
 import { clienteDeCobro } from "./clientesCobro";
 import type { RelacionBomba } from "./relacionesBomba";
 import type { GrupoDueno } from "./duenos";
+import { contingencia } from "./contingencia";
+import type { ViajeContingencia } from "./contingencia";
 
 /** Dias de credito si el cliente no tiene plazo configurado. */
 export const DIAS_CREDITO_DEFECTO = 30;
@@ -424,7 +426,7 @@ export function resumirPorCliente(facturas: FacturaCartera[]): ResumenCliente[] 
   return [...porCliente.values()].sort((a, b) => b.total - a.total);
 }
 
-export type TipoAlerta = "PAPELES" | "FACTURACION" | "CARTERA" | "ANTICIPO_EMPRESA" | "BOMBA";
+export type TipoAlerta = "PAPELES" | "FACTURACION" | "CARTERA" | "ANTICIPO_EMPRESA" | "BOMBA" | "CONTINGENCIA";
 
 /** Dias antes del vencimiento de una factura de la bomba en que empieza a avisar. */
 export const DIAS_AVISO_BOMBA = 5;
@@ -533,6 +535,29 @@ export interface AlertaSeguimiento {
   /** Factura (cartera, o de la bomba). */
   facturaNumero?: string;
   empresa?: string;
+  /** Viaje del RNDC (manifiesto de contingencia). */
+  viajeId?: number;
+}
+
+/**
+ * Alerta de un manifiesto impreso de contingencia (siempre urgente): sin
+ * radicado hay que reintentar expedirlo en el RNDC; con radicado, imprimir el
+ * oficial. Se quita sola cuando se imprime el oficial.
+ */
+export function alertaContingencia(v: ViajeContingencia): AlertaSeguimiento {
+  const cuando = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "short", timeStyle: "short" }).format(new Date(v.contingenciaEn));
+  return {
+    tipo: "CONTINGENCIA",
+    nivel: "urgente",
+    titulo: `Manifiesto ${v.consecutivoManifiesto ?? "-"}${v.placa ? ` · ${v.placa}` : ""} · de contingencia`,
+    motivos: [
+      `Se imprimio de contingencia el ${cuando}${v.motivo ? ` (${v.motivo})` : ""}.`,
+      v.radicado
+        ? `Ya esta radicado en el RNDC (${v.radicado}): imprime el manifiesto oficial apenas el RNDC lo entregue.`
+        : "Aun no esta radicado en el RNDC: reintenta expedirlo (Corregir y reintentar) hasta que el RNDC lo acepte, y luego imprime el oficial.",
+    ],
+    viajeId: v.id,
+  };
 }
 
 /** "2026-10-05" -> "05/10/2026". */
@@ -595,7 +620,7 @@ export function alertasDe(filas: FilaCuadro[], facturas: FacturaCartera[], hoy: 
   }
   // Cartera: una alerta por empresa con todas sus facturas vencidas.
   lista.push(...alertasCarteraPorEmpresa(facturas));
-  const orden: Record<TipoAlerta, number> = { PAPELES: 0, FACTURACION: 1, CARTERA: 2, ANTICIPO_EMPRESA: 3, BOMBA: 4 };
+  const orden: Record<TipoAlerta, number> = { CONTINGENCIA: -1, PAPELES: 0, FACTURACION: 1, CARTERA: 2, ANTICIPO_EMPRESA: 3, BOMBA: 4 };
   return lista.sort((a, b) => (a.nivel === b.nivel ? orden[a.tipo] - orden[b.tipo] : a.nivel === "urgente" ? -1 : 1));
 }
 
@@ -879,6 +904,8 @@ export const seguimiento = {
       const a = alertaFacturaBomba(r, hoy);
       if (a) alertas.push({ tipo: "BOMBA", nivel: a.nivel, titulo: `Factura de la bomba ${r.numero}`, motivos: a.motivos, facturaNumero: r.numero });
     }
+    // Manifiestos impresos de contingencia: reintentar hasta tener el oficial.
+    for (const v of await contingencia.pendientes()) alertas.push(alertaContingencia(v));
     // Las urgentes primero (las de la bomba entran al final).
     alertas.sort((a, b) => (a.nivel === b.nivel ? 0 : a.nivel === "urgente" ? -1 : 1));
     return {
