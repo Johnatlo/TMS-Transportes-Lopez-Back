@@ -990,6 +990,8 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "rentPoliza", "DOUBLE"],
     ["cuadro_viajes", "rentIcaPorMil", "DOUBLE"],
     ["cuadro_viajes", "fechaPagoRentabilidad", "DATE"],
+    // El flete se escribio o se eligio a mano: la deduccion de la matriz no lo toca (ver src/tarifasFlete.ts).
+    ["cuadro_viajes", "fleteManual", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Reconocidos de Cartones America (ver generarReconocidosCorame en
     // src/cuadro.ts): viajes sin manifiesto que se generan solos por cada
     // manifiesto despachado desde alla con 4 o mas clientes (+2 toneladas) o

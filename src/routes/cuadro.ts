@@ -256,6 +256,18 @@ cuadroRouter.put("/:id", async (req, res) => {
 });
 
 /**
+ * POST /api/cuadro/:id/tarifa: pone el flete de una tarifa de la matriz
+ * elegida a mano ({ tarifaFleteId }) y devuelve el viaje actualizado.
+ */
+cuadroRouter.post("/:id/tarifa", async (req, res) => {
+  const id = Number(req.params.id);
+  await responder(res, async () => {
+    await cuadro.aplicarTarifa(id, Number(req.body?.tarifaFleteId));
+    return cuadro.obtener(id);
+  });
+});
+
+/**
  * DELETE /api/cuadro/:id: borra un viaje creado a mano. Los que tienen
  * manifiesto no se borran aqui (409): se anulan desde Viajes.
  */

@@ -17,6 +17,8 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
 import { sqlFlota } from "./flota";
+import { cargarTarifas, deducirTarifa, fleteDeTarifa } from "./tarifasFlete";
+import type { TarifaPosible } from "./tarifasFlete";
 // anticipos.ts tambien importa de aqui; solo se usan dentro de funciones, asi
 // que el ciclo no molesta (cuando se llaman, los dos modulos ya cargaron).
 import { anticipos } from "./anticipos";
@@ -269,6 +271,15 @@ export interface FilaCuadro {
   tarifaFleteId: number | null;
   /** Nombre de esa tarifa ("ABURRA LIMPIO URBANO"); con URBANO el viaje no lleva anticipo de la empresa. */
   tarifaFlete: string | null;
+  /** Producto de la remesa ("CARTON RECICLADO"), para deducir la tarifa. */
+  producto: string | null;
+  /** El flete se escribio o se eligio a mano: la deduccion no lo toca. */
+  fleteManual: boolean;
+  /**
+   * Sin flete y sin una tarifa exacta: las tarifas de la matriz que podrian
+   * ser, para elegir a mano (ver src/tarifasFlete.ts). Vacio si ya tiene flete.
+   */
+  tarifasPosibles: TarifaPosible[];
   /** Nota de la factura para la contadora (remision, toneladas, valor, placa). */
   notaFactura: string | null;
   /** Cuando se envio en el cuadro de facturacion. */
@@ -417,7 +428,8 @@ export const SELECT_CUADRO = `
          COALESCE(a.total, 0) AS totalAnticipos, COALESCE(a.sinPagar, 0) AS anticiposSinPagar,
          COALESCE(n.cuantas, 0) AS notas,
          (SELECT texto FROM cuadro_notas WHERE cuadroViajeId = c.id ORDER BY id DESC LIMIT 1) AS ultimaNota,
-         (SELECT consecutivoManifiesto FROM viajes WHERE id = c.reconocidoDeViajeId) AS reconocidoDe
+         (SELECT consecutivoManifiesto FROM viajes WHERE id = c.reconocidoDeViajeId) AS reconocidoDe,
+         COALESCE(pl.tipoMercancia, vrr.producto) AS producto
     FROM cuadro_viajes c
     LEFT JOIN vehiculos ve ON ve.id = c.vehiculoId
     LEFT JOIN tarifas_flete tf ON tf.id = c.tarifaFleteId
@@ -480,6 +492,9 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     pesoFacturadoKg: num(r.pesoFacturadoKg),
     tarifaFleteId: r.tarifaFleteId ?? null,
     tarifaFlete: r.tarifaFlete ?? null,
+    producto: r.producto ?? null,
+    fleteManual: !!r.fleteManual,
+    tarifasPosibles: [],
     notaFactura: r.notaFactura ?? null,
     enviadoFacturarEn: r.enviadoFacturarEn ? new Date(r.enviadoFacturarEn).toISOString() : null,
     fechaDescargue: dia(r.fechaDescargue),
@@ -850,8 +865,69 @@ export const cuadro = {
     await this.sincronizarManifiestos();
     // Las vueltas de anticipos de ida y vuelta pasan al proximo viaje de la placa.
     await anticipos.asignarVueltasPendientes();
-    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} ORDER BY c.fecha DESC, c.id DESC`);
-    return rows.map(mapear);
+    const consulta = `${SELECT_CUADRO} ORDER BY c.fecha DESC, c.id DESC`;
+    const [rows] = await pool.query<RowDataPacket[]>(consulta);
+    const filas = rows.map(mapear);
+    // Flete de la matriz para los que no tienen: el exacto se guarda; si no, las posibles.
+    if (await this.deducirFletes(filas)) {
+      const [nuevas] = await pool.query<RowDataPacket[]>(consulta);
+      const posibles = new Map(filas.map((f) => [f.id, f.tarifasPosibles]));
+      return nuevas.map(mapear).map((f) => ({ ...f, tarifasPosibles: f.valorFlete === null ? posibles.get(f.id) ?? [] : [] }));
+    }
+    return filas;
+  },
+
+  /**
+   * Deduce el flete de la matriz (ver src/tarifasFlete.ts) de los viajes sin
+   * flete, sin tarifa, no anulados, no enviados a facturar y no puestos a
+   * mano. El exacto se guarda en el viaje; si no es exacto, se dejan las
+   * tarifas posibles en la fila (tarifasPosibles) para elegir. Devuelve
+   * cuantos se guardaron.
+   */
+  async deducirFletes(filas: FilaCuadro[]): Promise<number> {
+    const pendientes = filas.filter(
+      (f) => !f.anulado && f.tarifaKilo === null && f.valorFijo === null && f.tarifaFleteId === null && !f.fleteManual && !f.enviadoFacturarEn
+    );
+    if (!pendientes.length) return 0;
+    const tarifas = await cargarTarifas();
+    let guardados = 0;
+    for (const f of pendientes) {
+      const d = deducirTarifa(
+        { empresa: f.empresa, ruta: f.ruta, urbano: f.urbano, configuracion: f.configuracion, producto: f.producto },
+        tarifas
+      );
+      if (!d.exacta) {
+        f.tarifasPosibles = d.posibles;
+        continue;
+      }
+      const v = fleteDeTarifa(d.exacta, f.pesoKg);
+      const [res] = await pool.query<ResultSetHeader>(
+        `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?
+          WHERE id = ? AND tarifaFleteId IS NULL AND tarifaKilo IS NULL AND valorFijo IS NULL AND fleteManual = 0 AND anulado = 0`,
+        [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, f.id]
+      );
+      guardados += res.affectedRows;
+    }
+    return guardados;
+  },
+
+  /**
+   * Pone en un viaje el flete de una tarifa de la matriz elegida a mano (una
+   * de las posibles, o cualquiera). Queda como manual: la deduccion ya no lo
+   * cambia.
+   */
+  async aplicarTarifa(id: number, tarifaId: number): Promise<void> {
+    const tarifa = (await cargarTarifas()).find((t) => t.id === tarifaId);
+    if (!tarifa) throw new ErrorCuadro("Esa tarifa ya no esta en la matriz de fletes.");
+    if (tarifa.valor === null) throw new ErrorCuadro(`La tarifa ${tarifa.nombre} no tiene valor en la matriz: escribe el flete a mano.`);
+    const [[fila]] = await pool.query<RowDataPacket[]>("SELECT pesoKg FROM cuadro_viajes WHERE id = ? AND anulado = 0", [id]);
+    if (!fila) throw new ErrorCuadro("El viaje no existe o esta anulado.");
+    const v = fleteDeTarifa(tarifa, fila.pesoKg === null ? null : Number(fila.pesoKg));
+    await pool.query(
+      `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?,
+              fleteManual = 1 WHERE id = ?`,
+      [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, id]
+    );
   },
 
   /**
@@ -868,8 +944,17 @@ export const cuadro = {
         WHERE n.cuadroViajeId = ? ORDER BY n.id DESC`,
       [id]
     );
+    const fila = mapear(rows[0]);
+    // Sin flete: las tarifas de la matriz que podrian ser (para elegir en la ventana del viaje).
+    if (fila.tarifaKilo === null && fila.valorFijo === null && !fila.anulado) {
+      const d = deducirTarifa(
+        { empresa: fila.empresa, ruta: fila.ruta, urbano: fila.urbano, configuracion: fila.configuracion, producto: fila.producto },
+        await cargarTarifas()
+      );
+      fila.tarifasPosibles = d.exacta ? [{ id: d.exacta.id, nombre: d.exacta.nombre, valor: d.exacta.valor, tipo: d.exacta.tipo }] : d.posibles;
+    }
     return {
-      ...mapear(rows[0]),
+      ...fila,
       anticipos: await anticipos.delViaje(id),
       listaNotas: notas.map((n) => ({ ...n, creadaEn: new Date(n.creadaEn).toISOString() })),
     };
@@ -930,6 +1015,10 @@ export const cuadro = {
     if ("placa" in datos) {
       sets.push("vehiculoId = (SELECT id FROM vehiculos WHERE placa = ?)");
       valores.push(datos.placa);
+    }
+    // Flete escrito a mano: queda manual (la deduccion no lo toca) y sin la tarifa de la matriz.
+    if (["tipoFlete", "tarifaKilo", "valorFijo", "fleteAdicional"].some((c) => c in datos)) {
+      sets.push("fleteManual = 1", "tarifaFleteId = NULL");
     }
     if (sets.length === 0) return false;
     const [res] = await pool.query<ResultSetHeader>(`UPDATE cuadro_viajes SET ${sets.join(", ")} WHERE id = ?`, [

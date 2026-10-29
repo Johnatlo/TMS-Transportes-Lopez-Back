@@ -455,6 +455,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/cuadro/:id` | Un viaje con sus anticipos y notas (404 si no existe). |
 | `POST` | `/api/cuadro` | Crea un viaje sin manifiesto (urbano o planillado por el cliente). Placa, empresa y fecha obligatorias. Devuelve el viaje creado. |
 | `PUT` | `/api/cuadro/:id` | Guarda los campos enviados (papeles, flete, factura, pagos...) y devuelve el viaje actualizado. |
+| `POST` | `/api/cuadro/:id/tarifa` | Pone el flete de una tarifa de la matriz elegida a mano ({ tarifaFleteId }) y devuelve el viaje actualizado. |
 | `DELETE` | `/api/cuadro/:id` | Borra un viaje creado a mano. Los que tienen manifiesto no se borran aqui (409): se anulan desde Viajes. |
 | `POST` | `/api/cuadro/:id/revision` | Marca o quita la revision de CONTABILIDAD o GERENCIA ({ quien, revisado }), con el usuario y la hora. |
 | `POST` | `/api/cuadro/:id/notas` | Agrega una nota ({ texto }) con su autor. |
@@ -524,7 +525,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_684 funciones, componentes, métodos y rutas en 47 archivos._
+_699 funciones, componentes, métodos y rutas en 48 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -534,7 +535,7 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (37)
+- [`src/cuadro.ts`](#srccuadrots) (39)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (10)
@@ -558,7 +559,7 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (43)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (44)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (20)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -572,6 +573,7 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
 - [`src/seguimiento.ts`](#srcseguimientots) (36)
+- [`src/tarifasFlete.ts`](#srctarifasfletets) (12)
 - [`src/terceros.ts`](#srctercerosts) (13)
 
 ### `src/alertas.ts`
@@ -1233,6 +1235,18 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
   - **`cuadro.listar()`** · _método_
     Todos los viajes del cuadro, del mas reciente al mas antiguo. Antes de
     listar sincroniza los manifiestos expedidos, para que siempre esten todos.
+
+  - **`cuadro.deducirFletes(filas)`** · _método_
+    Deduce el flete de la matriz (ver src/tarifasFlete.ts) de los viajes sin
+    flete, sin tarifa, no anulados, no enviados a facturar y no puestos a
+    mano. El exacto se guarda en el viaje; si no es exacto, se dejan las
+    tarifas posibles en la fila (tarifasPosibles) para elegir. Devuelve
+    cuantos se guardaron.
+
+  - **`cuadro.aplicarTarifa(id, tarifaId)`** · _método_
+    Pone en un viaje el flete de una tarifa de la matriz elegida a mano (una
+    de las posibles, o cualquiera). Queda como manual: la deduccion ya no lo
+    cambia.
 
   - **`cuadro.obtener(id)`** · _método_
     Un viaje con sus anticipos (cada tramo con efectivo, combustible y bomba;
@@ -3340,6 +3354,10 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
   PUT /api/cuadro/:id: guarda los campos enviados (papeles, flete, factura,
   pagos...) y devuelve el viaje actualizado.
 
+- **`POST /:id/tarifa`** · _ruta HTTP_
+  POST /api/cuadro/:id/tarifa: pone el flete de una tarifa de la matriz
+  elegida a mano ({ tarifaFleteId }) y devuelve el viaje actualizado.
+
 - **`DELETE /:id`** · _ruta HTTP_
   DELETE /api/cuadro/:id: borra un viaje creado a mano. Los que tienen
   manifiesto no se borran aqui (409): se anulan desde Viajes.
@@ -4230,6 +4248,64 @@ _684 funciones, componentes, métodos y rutas en 47 archivos._
 
 - **`mapearGestion(r)`** · _función_
   Fila de cartera_gestiones -> GestionCobro.
+
+### `src/tarifasFlete.ts`
+
+> Deducir el flete de un viaje del cuadro con la matriz de fletes, apenas el
+> viaje entra al cuadro (con o sin manifiesto), para que el valor este para
+> los reportes de fin de mes aunque se demore la facturacion. El envio a
+> facturacion lo puede reemplazar despues.
+>
+> Solo se pone solo cuando es exacto: una tarifa del cliente claramente mejor
+> que las demas (por destino, origen, producto, tipo de carro y urbano), con
+> valor, y sin tarifas de varios clientes o ciudades adicionales (Tolua,
+> Porcelatino: no se sabe cuantos clientes lleva). Si no es exacto, el viaje
+> queda manual y se muestran las tarifas posibles para elegir.
+
+- **`normalizarNombre(s)`** · _función_
+  Nombre comparable: mayusculas, sin tildes, sin puntuacion y sin sufijos legales.
+
+- **`palabras(s)`** · _función_
+  Palabras del nombre, sin la "S" final para que RECICLAJE y RECICLAJES coincidan.
+
+- **`parecido(empresa, tarifa)`** · _función_
+  Que tanto se parece una tarifa al cliente (0 = nada): 3 = igual, 2 = uno
+  contiene al otro, 1 = comparten la mayoria de palabras (sin las de enlace
+  ni las letras sueltas). Contra la razon social y contra el nombre.
+
+- **`esDeVarios(t)`** · _función_
+  La tarifa es para varios clientes o ciudades adicionales (no se sabe solo con el viaje).
+
+- **`puntajeTarifa(tarifa, v)`** · _función_
+  Puntaje de una tarifa para un viaje (mas alto = mejor): cada palabra de su
+  nombre (sin las del cliente) que esta en el destino (+2), el origen (+1) o
+  el producto (+1,5); las que no estan en ninguno restan un poco. Mas el tipo
+  de carro (MULA / VOLVO), urbano, y abajo las de reconocidos de cartulina y
+  las de varios clientes.
+
+- **`ciudadesDe(v)`** · _función_
+  Primera palabra del origen y del destino del viaje ("YUMBO", "DUITAMA").
+
+- **`nombraCiudad(tarifa, ciudad)`** · _función_
+  true si el nombre de la tarifa (con las abreviaturas resueltas) trae esa ciudad.
+
+- **`nombraDestino(tarifa, v)`** · _función_
+  true si el nombre de la tarifa trae la ciudad de destino del viaje.
+
+- **`nombraOrigenSinDestino(tarifa, v)`** · _función_
+  true si el nombre de la tarifa trae la ciudad de origen del viaje pero no la de destino.
+
+- **`deducirTarifa(v, tarifas)`** · _función_
+  Deduce la tarifa de un viaje. Exacta solo si: el cliente tiene tarifas, la
+  mejor tiene valor, ninguna otra queda a menos de medio punto, y el cliente no
+  tiene tarifas de varios clientes o ciudades adicionales. Si no, las
+  posibles: la mejor, las que quedan cerca y las de varios clientes.
+
+- **`fleteDeTarifa(t, pesoKg)`** · _función_
+  Lo que va en el viaje con una tarifa: tipo de flete, tarifa por kilo o fijo, adicional y peso a facturar.
+
+- **`cargarTarifas()`** · _función_
+  La matriz de fletes para deducir (sin las observaciones).
 
 ### `src/terceros.ts`
 
