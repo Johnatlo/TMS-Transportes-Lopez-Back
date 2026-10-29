@@ -569,6 +569,13 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   aplicaDescuentosTercero: "booleano",
   icaTerceroPorMil: "numero",
   fechaPagoTerceroProgramada: "fecha",
+  // Rentabilidad (ver src/rentabilidad.ts): vacio = el valor de siempre.
+  rentComision: "numero",
+  rentTLopez: "numero",
+  rentDescargue: "numero",
+  rentPoliza: "numero",
+  rentIcaPorMil: "numero",
+  fechaPagoRentabilidad: "fecha",
 };
 
 /**

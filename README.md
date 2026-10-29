@@ -498,6 +498,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/seguimiento/terceros` | Viajes de vehiculos terceros con lo que se les paga (valor pactado - anticipos - retenciones si aplican) y el resumen por tercero. |
 | `POST` | `/api/seguimiento/terceros/nombres/previa` | A que vehiculos se le pone cada nombre de la Matriz Terceros ({ terceros: [{ nombre, cedula, placas }] }). No guarda. |
 | `POST` | `/api/seguimiento/terceros/nombres` | Pone esos nombres como titular de los vehiculos. |
+| `GET` | `/api/seguimiento/rentabilidad` | Todos los viajes no anulados con su grupo (TERCEROS, CELSO, MAURICIO...) y lo que deja cada uno (ver src/rentabilidad.ts). |
+| `GET` | `/api/seguimiento/rentabilidad/matrices` | Comisiones y retenciones por cliente. |
+| `PUT` | `/api/seguimiento/rentabilidad/matrices` | Reemplaza las matrices ({ comisiones?, retenciones? }). |
 | `POST` | `/api/seguimiento/terceros/pago` | Se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). |
 | `PUT` | `/api/seguimiento/cartera/anticipo` | Anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). |
 | `POST` | `/api/seguimiento/cartera/importar/previa` | Propone como cargar cada factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a sus viajes. No guarda nada. |
@@ -521,7 +524,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_673 funciones, componentes, métodos y rutas en 46 archivos._
+_684 funciones, componentes, métodos y rutas en 47 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -540,6 +543,7 @@ _673 funciones, componentes, métodos y rutas en 46 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
+- [`src/rentabilidad.ts`](#srcrentabilidadts) (8)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/reportes.ts`](#srcreportests) (10)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
@@ -556,7 +560,7 @@ _673 funciones, componentes, métodos y rutas en 46 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (43)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (47)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (17)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (20)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -1602,6 +1606,55 @@ _673 funciones, componentes, métodos y rutas en 46 archivos._
   - **`relacionesBomba.borrar(id)`** · _método_
     Borra una relacion: los tramos vuelven al combustible que tenian antes del
     cruce y los tanqueos quedan sin el numero de esa factura.
+
+### `src/rentabilidad.ts`
+
+> Rentabilidad: cuanto deja cada viaje cuando el cliente le paga a la empresa
+> (reemplaza el Excel "ejemplo rentabilidad", una hoja por grupo de carros).
+>
+> Se alimenta de lo que ya esta en el sistema: el Cuadro pagos (flete,
+> factura y fechas), Anticipos (efectivo y combustible de la bomba) y Pago a
+> terceros (lo pactado con el tercero y su ICA). Lo que no esta en ningun
+> lado se escribe en el viaje (columnas rent* de cuadro_viajes); vacio = el
+> valor de siempre.
+>
+> Dos clases de grupo:
+> - TERCEROS: lo que paga el cliente con sus descuentos (saldo empresa) menos
+>   lo que se le paga al tercero con los suyos (saldo tercero) = rentabilidad;
+>   menos el anticipo de renta 3,5 % = ganancia. La comision (30.000 por
+>   remision) la paga el tercero.
+> - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
+>   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
+>   el anticipo = lo que se le paga al dueno. La empresa se queda con la
+>   comision y T. Lopez.
+
+- **`grupoDe(placa, flota, dueno)`** · _función_
+  Grupo de un viaje: por la placa; si no, los terceros, el socio dueno o PROPIOS.
+
+- **`normalizar(s)`** · _función_
+  Texto sin tildes ni signos, en mayuscula, para comparar nombres de clientes.
+
+- **`buscarEnMatriz(matriz, empresa, urbano)`** · _función_
+  La fila de una matriz que le toca a una empresa: la de nombre mas largo que
+  aparezca en ella (como el SEARCH del Excel). Las de URBANO solo para urbanos
+  y, para un urbano, primero esas.
+
+- **`calcular(e)`** · _función_
+  Calcula la rentabilidad de un viaje (exportado para las pruebas).
+
+- **`rentabilidad`** · _módulo_
+  Repositorio de la rentabilidad y sus matrices.
+
+  - **`rentabilidad.listar()`** · _método_
+    Todos los viajes no anulados, con su grupo y su rentabilidad (los mas recientes primero).
+
+  - **`rentabilidad.matrices()`** · _método_
+    Las dos matrices (comisiones y retenciones por cliente).
+
+  - **`rentabilidad.guardarMatrices(d)`** · _método_
+    Reemplaza las matrices ({ comisiones: [{ cliente, comision, tLopez }],
+    retenciones: [{ cliente, reteicaPorMil, ciudad }] }). Las filas sin
+    cliente se ignoran. En una transaccion.
 
 ### `src/repo.ts`
 
@@ -3669,6 +3722,16 @@ _673 funciones, componentes, métodos y rutas en 46 archivos._
 - **`POST /terceros/nombres`** · _ruta HTTP_
   POST /api/seguimiento/terceros/nombres: pone esos nombres como titular de los vehiculos.
 
+- **`GET /rentabilidad`** · _ruta HTTP_
+  GET /api/seguimiento/rentabilidad: todos los viajes no anulados con su grupo
+  (TERCEROS, CELSO, MAURICIO...) y lo que deja cada uno (ver src/rentabilidad.ts).
+
+- **`GET /rentabilidad/matrices`** · _ruta HTTP_
+  GET /api/seguimiento/rentabilidad/matrices: comisiones y retenciones por cliente.
+
+- **`PUT /rentabilidad/matrices`** · _ruta HTTP_
+  PUT /api/seguimiento/rentabilidad/matrices: reemplaza las matrices ({ comisiones?, retenciones? }).
+
 - **`POST /terceros/pago`** · _ruta HTTP_
   POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }).
 
@@ -4215,7 +4278,7 @@ _673 funciones, componentes, métodos y rutas en 46 archivos._
 - **`terceros`** · _módulo_
   Repositorio del pago a terceros.
 
-  - **`terceros.listar()`** · _método_
+  - **`terceros.listar(filasCuadro)`** · _método_
     Viajes de vehiculos terceros (flota TERCERO y sin socio dueno), sin los
     reconocidos de Cartones America (no se le pagan al tercero), no
     anulados, con su liquidacion, y el resumen por tercero.

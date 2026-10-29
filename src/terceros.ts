@@ -241,9 +241,10 @@ export const terceros = {
    * reconocidos de Cartones America (no se le pagan al tercero), no
    * anulados, con su liquidacion, y el resumen por tercero.
    */
-  async listar(): Promise<{ viajes: ViajeTercero[]; terceros: ResumenTercero[] }> {
+  async listar(filasCuadro?: FilaCuadro[]): Promise<{ viajes: ViajeTercero[]; terceros: ResumenTercero[] }> {
+    // filasCuadro: las del cuadro si ya se leyeron (la rentabilidad), para no sincronizar dos veces.
     const [filas, [bomba], [duenos]] = await Promise.all([
-      cuadro.listar(),
+      filasCuadro ?? cuadro.listar(),
       pool.query<RowDataPacket[]>(
         `SELECT cuadroViajeId,
                 SUM(COALESCE(efectivo, 0)) AS efectivo,

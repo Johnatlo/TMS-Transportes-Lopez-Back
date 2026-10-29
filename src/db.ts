@@ -488,6 +488,25 @@ export async function initSchema(): Promise<void> {
       CONSTRAINT fk_vale_tramo FOREIGN KEY (cuadroAnticipoId) REFERENCES cuadro_anticipos(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Matriz Comisiones de la rentabilidad (ver src/rentabilidad.ts): por
+  // cliente, la comision y T. Lopez que se cobran una vez por remision.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rentabilidad_comisiones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      cliente VARCHAR(160) NOT NULL,
+      comision DOUBLE NOT NULL DEFAULT 0,
+      tLopez DOUBLE NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Matriz Retenciones de la rentabilidad: ReteICA por mil de cada cliente.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rentabilidad_retenciones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      cliente VARCHAR(160) NOT NULL,
+      reteicaPorMil DOUBLE NOT NULL DEFAULT 0,
+      ciudad VARCHAR(160)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Pago a la bomba (ver pagos en src/relacionesBomba.ts): cada quincena se
   // pagan varias facturas (relaciones) de la bomba de una vez, descontando
   // los abonos que hicieron los socios. bomba_relaciones.pagoId y
@@ -962,6 +981,15 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "aplicaDescuentosTercero", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["cuadro_viajes", "icaTerceroPorMil", "DOUBLE"],
     ["cuadro_viajes", "fechaPagoTerceroProgramada", "DATE"],
+    // Rentabilidad (ver src/rentabilidad.ts): lo escrito a mano en el viaje
+    // (vacio = el valor de siempre: matriz de comisiones, descargue CAME,
+    // poliza RCE, ReteICA del cliente) y cuando se repartio la ganancia.
+    ["cuadro_viajes", "rentComision", "DOUBLE"],
+    ["cuadro_viajes", "rentTLopez", "DOUBLE"],
+    ["cuadro_viajes", "rentDescargue", "DOUBLE"],
+    ["cuadro_viajes", "rentPoliza", "DOUBLE"],
+    ["cuadro_viajes", "rentIcaPorMil", "DOUBLE"],
+    ["cuadro_viajes", "fechaPagoRentabilidad", "DATE"],
     // Reconocidos de Cartones America (ver generarReconocidosCorame en
     // src/cuadro.ts): viajes sin manifiesto que se generan solos por cada
     // manifiesto despachado desde alla con 4 o mas clientes (+2 toneladas) o

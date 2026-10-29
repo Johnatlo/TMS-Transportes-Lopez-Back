@@ -4,6 +4,7 @@ import { seguimiento } from "../seguimiento";
 import { responder } from "./cuadro";
 import { importarCartera, propuestaCartera } from "../importaciones";
 import { terceros } from "../terceros";
+import { rentabilidad } from "../rentabilidad";
 
 /**
  * Seguimiento de papeles, facturacion y cartera (ver src/seguimiento.ts).
@@ -77,6 +78,24 @@ seguimientoRouter.post("/terceros/nombres/previa", async (req, res) => {
 /** POST /api/seguimiento/terceros/nombres: pone esos nombres como titular de los vehiculos. */
 seguimientoRouter.post("/terceros/nombres", async (req, res) => {
   await responder(res, () => terceros.importarNombres(req.body?.terceros));
+});
+
+/**
+ * GET /api/seguimiento/rentabilidad: todos los viajes no anulados con su grupo
+ * (TERCEROS, CELSO, MAURICIO...) y lo que deja cada uno (ver src/rentabilidad.ts).
+ */
+seguimientoRouter.get("/rentabilidad", async (_req, res) => {
+  res.json(await rentabilidad.listar());
+});
+
+/** GET /api/seguimiento/rentabilidad/matrices: comisiones y retenciones por cliente. */
+seguimientoRouter.get("/rentabilidad/matrices", async (_req, res) => {
+  res.json(await rentabilidad.matrices());
+});
+
+/** PUT /api/seguimiento/rentabilidad/matrices: reemplaza las matrices ({ comisiones?, retenciones? }). */
+seguimientoRouter.put("/rentabilidad/matrices", async (req, res) => {
+  await responder(res, () => rentabilidad.guardarMatrices(req.body ?? {}));
 });
 
 /** POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). */
