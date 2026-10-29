@@ -13,6 +13,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
 import { cuadro, ErrorCuadro, TARIFA_KILO_MAXIMA } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
+import { invalidarTarifas } from "./tarifasFlete";
 
 export type TipoTarifa = "TON" | "FIJO" | "POR" | "POR3";
 export const TIPOS_TARIFA: TipoTarifa[] = ["TON", "FIJO", "POR", "POR3"];
@@ -110,6 +111,8 @@ export const facturacion = {
       throw exc;
     } finally {
       conexion.release();
+      // La deduccion de fletes vuelve a leer la matriz.
+      invalidarTarifas();
     }
     return tarifas.length;
   },
@@ -121,6 +124,7 @@ export const facturacion = {
       "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones]
     );
+    invalidarTarifas();
     return { id: res.insertId, ...t };
   },
 
@@ -133,6 +137,7 @@ export const facturacion = {
       "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, pesoFijoKg = ?, observaciones = ? WHERE id = ?",
       [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, id]
     );
+    invalidarTarifas();
     return { id, ...t };
   },
 

@@ -53,9 +53,20 @@ export interface Deduccion {
 /** Sufijos legales que no ayudan a reconocer al cliente ("SAS", "LTDA"...). */
 const SUFIJOS = /\b(S\s?A\s?S|S\s?A|LTDA|S\s?EN\s?C|E\s?S\s?P|INC|E\s?U)\b/g;
 
+/**
+ * Nombres ya normalizados: la deduccion compara cada viaje con todas las
+ * tarifas y repetia la misma normalizacion miles de veces.
+ */
+const normalizados = new Map<string, string>();
+
 /** Nombre comparable: mayusculas, sin tildes, sin puntuacion y sin sufijos legales. */
 export function normalizarNombre(s: string | null | undefined): string {
-  return String(s ?? "")
+  const original = String(s ?? "");
+  const visto = normalizados.get(original);
+  if (visto !== undefined) return visto;
+  // Tope para que no crezca sin limite con textos que no se repiten.
+  if (normalizados.size > 20_000) normalizados.clear();
+  const nombre = original
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toUpperCase()
@@ -65,6 +76,8 @@ export function normalizarNombre(s: string | null | undefined): string {
     .replace(SUFIJOS, " ")
     .replace(/\s+/g, " ")
     .trim();
+  normalizados.set(original, nombre);
+  return nombre;
 }
 
 /** Palabras del nombre, sin la "S" final para que RECICLAJE y RECICLAJES coincidan. */
@@ -221,13 +234,42 @@ export function fleteDeTarifa(t: TarifaMatriz, pesoKg: number | null) {
   };
 }
 
-/** La matriz de fletes para deducir (sin las observaciones). */
+/**
+ * Matriz en memoria y deducciones ya hechas (por los datos del viaje). Se
+ * borran cuando cambia la matriz (invalidarTarifas): crear, editar o importar.
+ */
+let matriz: TarifaMatriz[] | null = null;
+const deducciones = new Map<string, Deduccion>();
+
+/** La matriz cambio: se vuelve a leer y a deducir. */
+export function invalidarTarifas(): void {
+  matriz = null;
+  deducciones.clear();
+}
+
+/**
+ * Deduce la tarifa de un viaje con la matriz en memoria y recuerda el
+ * resultado: el mismo cliente, ruta, producto, carro y urbano dan siempre lo
+ * mismo mientras la matriz no cambie.
+ */
+export async function deducirConMatriz(v: ViajeParaTarifa): Promise<Deduccion> {
+  const tarifas = await cargarTarifas();
+  const clave = JSON.stringify([v.empresa, v.ruta, v.urbano, v.configuracion, v.producto]);
+  const vista = deducciones.get(clave);
+  if (vista) return vista;
+  const d = deducirTarifa(v, tarifas);
+  deducciones.set(clave, d);
+  return d;
+}
+
+/** La matriz de fletes para deducir (sin las observaciones), de memoria si ya se leyo. */
 export async function cargarTarifas(): Promise<TarifaMatriz[]> {
+  if (matriz) return matriz;
   const [rows] = await pool.query<RowDataPacket[]>(
     "SELECT id, nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg FROM tarifas_flete ORDER BY nombre, id"
   );
   const num = (x: unknown) => (x === null || x === undefined ? null : Number(x));
-  return rows.map((r) => ({
+  matriz = rows.map((r) => ({
     id: Number(r.id),
     nombre: String(r.nombre),
     razonSocial: r.razonSocial ?? null,
@@ -236,4 +278,5 @@ export async function cargarTarifas(): Promise<TarifaMatriz[]> {
     pesoMinimoKg: num(r.pesoMinimoKg),
     pesoFijoKg: num(r.pesoFijoKg),
   }));
+  return matriz;
 }

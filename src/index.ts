@@ -21,6 +21,7 @@ import { cuadroRouter } from "./routes/cuadro";
 import { seguimientoRouter } from "./routes/seguimiento";
 import { exigirSesion } from "./auth";
 import { iniciarSincronizacionAutomatica } from "./rndc/sincronizacion";
+import { cuadro, MANTENIMIENTO_CADA_MS } from "./cuadro";
 
 /**
  * Arranque del servidor:
@@ -57,6 +58,12 @@ async function main() {
 
   // Login, logout y "quien soy": abiertos (cada ruta decide si pide sesion).
   app.use("/api/auth", authRouter);
+  // Despues de cada cambio que salio bien (expedir, sincronizar, editar,
+  // importar...), el mantenimiento del cuadro corre sin hacer esperar a nadie.
+  app.use("/api", (req, res, next) => {
+    if (req.method !== "GET") res.on("finish", () => res.statusCode < 400 && cuadro.mantenerPronto());
+    next();
+  });
   // Todo lo demas exige una sesion valida.
   app.use("/api/catalogo", exigirSesion, catalogoRouter);
   app.use("/api/despacho", exigirSesion, despachoRouter);
@@ -122,6 +129,12 @@ async function main() {
 
   // Trae del RNDC lo hecho en el portal y los cambios de estado (cada 10 min).
   iniciarSincronizacionAutomatica();
+
+  // Mantenimiento del cuadro aparte de las lecturas (manifiestos nuevos,
+  // reconocidos, vueltas de anticipos y fletes de la matriz): al arrancar,
+  // cada minuto y despues de cada cambio (ver el middleware de arriba).
+  cuadro.mantenerPronto();
+  setInterval(() => cuadro.mantenerPronto(), MANTENIMIENTO_CADA_MS);
 
   app.listen(config.port, () => {
     console.log(`Backend RNDC escuchando en http://localhost:${config.port}`);

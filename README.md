@@ -527,7 +527,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_717 funciones, componentes, métodos y rutas en 50 archivos._
+_723 funciones, componentes, métodos y rutas en 50 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -538,7 +538,7 @@ _717 funciones, componentes, métodos y rutas en 50 archivos._
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/contingencia.ts`](#srccontingenciats) (9)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (39)
+- [`src/cuadro.ts`](#srccuadrots) (43)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (11)
@@ -577,7 +577,7 @@ _717 funciones, componentes, métodos y rutas en 50 archivos._
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
-- [`src/tarifasFlete.ts`](#srctarifasfletets) (12)
+- [`src/tarifasFlete.ts`](#srctarifasfletets) (14)
 - [`src/terceros.ts`](#srctercerosts) (13)
 
 ### `src/alertas.ts`
@@ -1244,6 +1244,9 @@ _717 funciones, componentes, métodos y rutas en 50 archivos._
   estado de papeles valido, placa en mayuscula sin guiones ni espacios, y
   empresa en mayuscula. Lanza ErrorCuadro si algo no es valido.
 
+- **`aPosible(t)`** · _función_
+  Tarifa posible de la matriz como va en la fila.
+
 - **`cuadro`** · _módulo_
   Repositorio del cuadro pagos: viajes, notas y anticipos de bomba.
 
@@ -1275,16 +1278,32 @@ _717 funciones, componentes, métodos y rutas en 50 archivos._
     deja una nota de que reemplaza al anulado y borra la fila anulada. Si no
     la hay (se anulo y no se volvio a expedir), la fila sigue como anulada.
 
+  - **`cuadro.mantener()`** · _método_
+    Mantenimiento del cuadro, aparte de las lecturas: pasa al cuadro los
+    manifiestos nuevos (con los reconocidos de Cartones America), asigna las
+    vueltas de anticipos de ida y vuelta y guarda los fletes exactos de la
+    matriz. Corre cada MANTENIMIENTO_CADA_MS (ver index.ts) y despues de cada
+    cambio (mantenerPronto). Una sola vuelta a la vez.
+
+  - **`cuadro.mantenerPronto()`** · _método_
+    Pide una vuelta de mantenimiento sin esperarla (despues de expedir,
+    editar, importar...). Varias seguidas se juntan en una.
+
   - **`cuadro.listar()`** · _método_
-    Todos los viajes del cuadro, del mas reciente al mas antiguo. Antes de
-    listar sincroniza los manifiestos expedidos, para que siempre esten todos.
+    Todos los viajes del cuadro, del mas reciente al mas antiguo. Solo lee: el
+    mantenimiento corre aparte (ver mantener). Si esta corriendo, espera a que
+    termine; si nunca ha corrido o se atraso, lo corre antes. A los que no
+    tienen flete les pone las tarifas posibles de la matriz (de memoria).
+
+  - **`cuadro.agregarTarifasPosibles(filas)`** · _método_
+    Tarifas posibles de la matriz en las filas sin flete (para elegir). Si la
+    deduccion es exacta y aun no se guardo, va como unica posible.
 
   - **`cuadro.deducirFletes(filas)`** · _método_
     Deduce el flete de la matriz (ver src/tarifasFlete.ts) de los viajes sin
     flete, sin tarifa, no anulados, no enviados a facturar y no puestos a
-    mano. El exacto se guarda en el viaje; si no es exacto, se dejan las
-    tarifas posibles en la fila (tarifasPosibles) para elegir. Devuelve
-    cuantos se guardaron.
+    mano. Solo se guarda el exacto; los demas quedan para elegir (ver
+    agregarTarifasPosibles). Devuelve cuantos se guardaron.
 
   - **`cuadro.aplicarTarifa(id, tarifaId)`** · _método_
     Pone en un viaje el flete de una tarifa de la matriz elegida a mano (una
@@ -4395,8 +4414,16 @@ _717 funciones, componentes, métodos y rutas en 50 archivos._
 - **`fleteDeTarifa(t, pesoKg)`** · _función_
   Lo que va en el viaje con una tarifa: tipo de flete, tarifa por kilo o fijo, adicional y peso a facturar.
 
+- **`invalidarTarifas()`** · _función_
+  La matriz cambio: se vuelve a leer y a deducir.
+
+- **`deducirConMatriz(v)`** · _función_
+  Deduce la tarifa de un viaje con la matriz en memoria y recuerda el
+  resultado: el mismo cliente, ruta, producto, carro y urbano dan siempre lo
+  mismo mientras la matriz no cambie.
+
 - **`cargarTarifas()`** · _función_
-  La matriz de fletes para deducir (sin las observaciones).
+  La matriz de fletes para deducir (sin las observaciones), de memoria si ya se leyo.
 
 ### `src/terceros.ts`
 

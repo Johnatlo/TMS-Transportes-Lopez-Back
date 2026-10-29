@@ -17,7 +17,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
 import { sqlFlota } from "./flota";
-import { cargarTarifas, deducirTarifa, fleteDeTarifa } from "./tarifasFlete";
+import { cargarTarifas, deducirConMatriz, fleteDeTarifa } from "./tarifasFlete";
 import type { TarifaPosible } from "./tarifasFlete";
 // anticipos.ts tambien importa de aqui; solo se usan dentro de funciones, asi
 // que el ciclo no molesta (cuando se llaman, los dos modulos ya cargaron).
@@ -668,6 +668,30 @@ function validar(datos: Record<string, unknown>) {
   if ("empresa" in datos) datos.empresa = String(datos.empresa ?? "").trim().toUpperCase();
 }
 
+/**
+ * Mantenimiento del cuadro (ver cuadro.mantener): corre aparte de las
+ * lecturas. Una sola vuelta a la vez; si se pide otra mientras corre, se
+ * repite al terminar.
+ */
+let mantenimientoEnCurso: Promise<void> | null = null;
+let otraVuelta = false;
+/** Cuando termino la ultima vuelta (ms); 0 = aun no ha corrido desde que arranco el servidor. */
+let ultimoMantenimiento = 0;
+/** Vuelta pedida con mantenerPronto, esperando su turno. */
+let vueltaPedida: NodeJS.Timeout | null = null;
+/** Si la ultima vuelta es mas vieja que esto (el reloj se atraso), listar la corre antes de leer. */
+const MANTENIMIENTO_VENCE_MS = 5 * 60_000;
+/** Cada cuanto corre el mantenimiento solo (ademas de despues de cada cambio). */
+export const MANTENIMIENTO_CADA_MS = 60_000;
+
+/** Tarifa posible de la matriz como va en la fila. */
+const aPosible = (t: { id: number; nombre: string; valor: number | null; tipo: TarifaPosible["tipo"] }): TarifaPosible => ({
+  id: t.id,
+  nombre: t.nombre,
+  valor: t.valor,
+  tipo: t.tipo,
+});
+
 /** Repositorio del cuadro pagos: viajes, notas y anticipos de bomba. */
 export const cuadro = {
   /**
@@ -858,48 +882,103 @@ export const cuadro = {
   },
 
   /**
-   * Todos los viajes del cuadro, del mas reciente al mas antiguo. Antes de
-   * listar sincroniza los manifiestos expedidos, para que siempre esten todos.
+   * Mantenimiento del cuadro, aparte de las lecturas: pasa al cuadro los
+   * manifiestos nuevos (con los reconocidos de Cartones America), asigna las
+   * vueltas de anticipos de ida y vuelta y guarda los fletes exactos de la
+   * matriz. Corre cada MANTENIMIENTO_CADA_MS (ver index.ts) y despues de cada
+   * cambio (mantenerPronto). Una sola vuelta a la vez.
+   */
+  async mantener(): Promise<void> {
+    if (mantenimientoEnCurso) {
+      otraVuelta = true;
+      return mantenimientoEnCurso;
+    }
+    mantenimientoEnCurso = (async () => {
+      do {
+        otraVuelta = false;
+        await cuadro.sincronizarManifiestos();
+        // Las vueltas de anticipos de ida y vuelta pasan al proximo viaje de la placa.
+        await anticipos.asignarVueltasPendientes();
+        const [rows] = await pool.query<RowDataPacket[]>(SELECT_CUADRO);
+        await cuadro.deducirFletes(rows.map(mapear));
+        ultimoMantenimiento = Date.now();
+      } while (otraVuelta);
+    })().finally(() => {
+      mantenimientoEnCurso = null;
+    });
+    return mantenimientoEnCurso;
+  },
+
+  /**
+   * Pide una vuelta de mantenimiento sin esperarla (despues de expedir,
+   * editar, importar...). Varias seguidas se juntan en una.
+   */
+  mantenerPronto(): void {
+    if (vueltaPedida) return;
+    vueltaPedida = setTimeout(() => {
+      vueltaPedida = null;
+      cuadro.mantener().catch((exc) => console.warn("Mantenimiento del cuadro fallo:", (exc as Error).message));
+    }, 300);
+  },
+
+  /**
+   * Todos los viajes del cuadro, del mas reciente al mas antiguo. Solo lee: el
+   * mantenimiento corre aparte (ver mantener). Si esta corriendo, espera a que
+   * termine; si nunca ha corrido o se atraso, lo corre antes. A los que no
+   * tienen flete les pone las tarifas posibles de la matriz (de memoria).
    */
   async listar(): Promise<FilaCuadro[]> {
-    await this.sincronizarManifiestos();
-    // Las vueltas de anticipos de ida y vuelta pasan al proximo viaje de la placa.
-    await anticipos.asignarVueltasPendientes();
-    const consulta = `${SELECT_CUADRO} ORDER BY c.fecha DESC, c.id DESC`;
-    const [rows] = await pool.query<RowDataPacket[]>(consulta);
-    const filas = rows.map(mapear);
-    // Flete de la matriz para los que no tienen: el exacto se guarda; si no, las posibles.
-    if (await this.deducirFletes(filas)) {
-      const [nuevas] = await pool.query<RowDataPacket[]>(consulta);
-      const posibles = new Map(filas.map((f) => [f.id, f.tarifasPosibles]));
-      return nuevas.map(mapear).map((f) => ({ ...f, tarifasPosibles: f.valorFlete === null ? posibles.get(f.id) ?? [] : [] }));
+    try {
+      if (mantenimientoEnCurso) await mantenimientoEnCurso;
+      else if (Date.now() - ultimoMantenimiento > MANTENIMIENTO_VENCE_MS) await cuadro.mantener();
+    } catch (exc) {
+      // Un mantenimiento fallido no deja la pantalla vacia: se lee lo que hay.
+      console.warn("Mantenimiento del cuadro fallo:", (exc as Error).message);
     }
+    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} ORDER BY c.fecha DESC, c.id DESC`);
+    const filas = rows.map(mapear);
+    await this.agregarTarifasPosibles(filas);
     return filas;
+  },
+
+  /**
+   * Tarifas posibles de la matriz en las filas sin flete (para elegir). Si la
+   * deduccion es exacta y aun no se guardo, va como unica posible.
+   */
+  async agregarTarifasPosibles(filas: FilaCuadro[]): Promise<void> {
+    for (const f of filas) {
+      if (f.anulado || f.tarifaKilo !== null || f.valorFijo !== null) continue;
+      const d = await deducirConMatriz({
+        empresa: f.empresa,
+        ruta: f.ruta,
+        urbano: f.urbano,
+        configuracion: f.configuracion,
+        producto: f.producto,
+      });
+      f.tarifasPosibles = d.exacta ? [aPosible(d.exacta)] : d.posibles;
+    }
   },
 
   /**
    * Deduce el flete de la matriz (ver src/tarifasFlete.ts) de los viajes sin
    * flete, sin tarifa, no anulados, no enviados a facturar y no puestos a
-   * mano. El exacto se guarda en el viaje; si no es exacto, se dejan las
-   * tarifas posibles en la fila (tarifasPosibles) para elegir. Devuelve
-   * cuantos se guardaron.
+   * mano. Solo se guarda el exacto; los demas quedan para elegir (ver
+   * agregarTarifasPosibles). Devuelve cuantos se guardaron.
    */
   async deducirFletes(filas: FilaCuadro[]): Promise<number> {
     const pendientes = filas.filter(
       (f) => !f.anulado && f.tarifaKilo === null && f.valorFijo === null && f.tarifaFleteId === null && !f.fleteManual && !f.enviadoFacturarEn
     );
-    if (!pendientes.length) return 0;
-    const tarifas = await cargarTarifas();
     let guardados = 0;
     for (const f of pendientes) {
-      const d = deducirTarifa(
-        { empresa: f.empresa, ruta: f.ruta, urbano: f.urbano, configuracion: f.configuracion, producto: f.producto },
-        tarifas
-      );
-      if (!d.exacta) {
-        f.tarifasPosibles = d.posibles;
-        continue;
-      }
+      const d = await deducirConMatriz({
+        empresa: f.empresa,
+        ruta: f.ruta,
+        urbano: f.urbano,
+        configuracion: f.configuracion,
+        producto: f.producto,
+      });
+      if (!d.exacta) continue;
       const v = fleteDeTarifa(d.exacta, f.pesoKg);
       const [res] = await pool.query<ResultSetHeader>(
         `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?
@@ -946,13 +1025,7 @@ export const cuadro = {
     );
     const fila = mapear(rows[0]);
     // Sin flete: las tarifas de la matriz que podrian ser (para elegir en la ventana del viaje).
-    if (fila.tarifaKilo === null && fila.valorFijo === null && !fila.anulado) {
-      const d = deducirTarifa(
-        { empresa: fila.empresa, ruta: fila.ruta, urbano: fila.urbano, configuracion: fila.configuracion, producto: fila.producto },
-        await cargarTarifas()
-      );
-      fila.tarifasPosibles = d.exacta ? [{ id: d.exacta.id, nombre: d.exacta.nombre, valor: d.exacta.valor, tipo: d.exacta.tipo }] : d.posibles;
-    }
+    await this.agregarTarifasPosibles([fila]);
     return {
       ...fila,
       anticipos: await anticipos.delViaje(id),
