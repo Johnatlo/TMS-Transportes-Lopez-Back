@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buscarEnMatriz, calcular, grupoDe } from "./rentabilidad";
+import { buscarEnMatriz, calcular, grupoDe, leerRetenciones } from "./rentabilidad";
 import type { EntradaRentabilidad } from "./rentabilidad";
 
 /** Entrada de prueba: un viaje de socio de Cartones America, primera fila de todo. */
@@ -24,6 +24,9 @@ const entrada = (c: Partial<EntradaRentabilidad>): EntradaRentabilidad => ({
   rentPoliza: null,
   rentIcaPorMil: null,
   fechaPagoRentabilidad: null,
+  rentRetenciones: {},
+  rentOtrosDescuentos: null,
+  rentOtrosConcepto: null,
   ...c,
 });
 
@@ -69,17 +72,27 @@ describe("calcular: terceros", () => {
       })
     );
     // Lado empresa: 1 % + 0,1 %, ICA 4 por mil, 4 x 1000 + 5.000 y Supertransporte.
-    expect([c.retencion, c.reteIca, c.bancaria, c.supertransporte]).toEqual([60_552, 22_019, 27_019, 6_611]);
+    expect([c.retencion, c.reteIca, c.supertransporte]).toEqual([60_552, 22_019, 6_611]);
     expect(c.comision).toBe(130_000);
-    expect(c.saldoEmpresa).toBe(5_504_688 - 60_552 - 22_019 - 27_019 - 6_611 - 130_000);
+    // La comision bancaria no se le descuenta a la empresa.
+    expect(c.saldoEmpresa).toBe(5_504_688 - 60_552 - 22_019 - 6_611 - 130_000);
     // Lado tercero: 1 % + 0,1 %, ICA, Supertransporte y poliza 3.000 (sin comision). Como en el Excel: 4.445.451,81.
-    expect([c.retencionTercero, c.reteIcaTercero, c.bancariaTercero, c.poliza]).toEqual([49_739, 18_087, 5_431, 3_000]);
-    expect(c.saldoBeneficiario).toBe(4_445_451);
+    // Gestion financiera: 4 x 1000 + 5.000 + Supertransporte, sobre el flete del tercero.
+    expect([c.retencionTercero, c.reteIcaTercero, c.bancaria, c.supertransporteTercero, c.poliza]).toEqual([49_739, 18_087, 23_087, 5_431, 3_000]);
+    expect(c.saldoBeneficiario).toBe(4_521_708 - 49_739 - 18_087 - 23_087 - 5_431 - 3_000);
     expect(c.rentabilidad).toBe(c.saldoEmpresa - c.saldoBeneficiario);
     expect(c.anticipoRenta).toBe(Math.round(c.rentabilidad * 0.035));
     expect(c.ganancia).toBe(c.rentabilidad - c.anticipoRenta);
     // El anticipo no se resta: ya va descontado en el pago al tercero.
     expect(c.anticipo).toBe(2_600_000);
+  });
+
+  test("los otros descuentos bajan el saldo del tercero pero no suben la rentabilidad", () => {
+    const base = { grupo: "TERCEROS", valorEmpresa: 5_000_000, valorTercero: 4_000_000 };
+    const sin = calcular(entrada(base));
+    const con = calcular(entrada({ ...base, rentOtrosDescuentos: 200_000 }));
+    expect(con.saldoBeneficiario).toBe(sin.saldoBeneficiario - 200_000);
+    expect([con.saldoEmpresa, con.rentabilidad, con.anticipoRenta, con.ganancia]).toEqual([sin.saldoEmpresa, sin.rentabilidad, sin.anticipoRenta, sin.ganancia]);
   });
 
   test("sin flete no hay comision", () => {
@@ -90,6 +103,26 @@ describe("calcular: terceros", () => {
     const c = calcular(entrada({ grupo: "TERCEROS", valorEmpresa: 1_000_000, reconocido: true, valorTercero: null }));
     expect([c.poliza, c.saldoBeneficiario]).toEqual([0, 0]);
     expect(c.rentabilidad).toBe(c.saldoEmpresa);
+  });
+});
+
+describe("retenciones editables y otros descuentos", () => {
+  test("desmarcada no se descuenta; el valor escrito manda; lo calculado sigue disponible", () => {
+    const c = calcular(entrada({ rentRetenciones: { reteIca: { valor: null, aplica: false }, retencion: { valor: 50_000, aplica: true } } }));
+    expect([c.reteIca, c.retencion]).toEqual([0, 50_000]);
+    expect(c.retencionesCalculadas.reteIca).toBe(18_791);
+    expect(c.saldoBeneficiario).toBe(calcular(entrada({})).saldoBeneficiario + 18_791 + 12_636);
+  });
+
+  test("otros descuentos: se le restan al dueno y al tercero", () => {
+    expect(calcular(entrada({ rentOtrosDescuentos: 100_000 })).saldoBeneficiario).toBe(calcular(entrada({})).saldoBeneficiario - 100_000);
+    const t = (otros: number | null) => calcular(entrada({ grupo: "TERCEROS", valorTercero: 4_000_000, rentOtrosDescuentos: otros }));
+    expect(t(100_000).saldoBeneficiario).toBe(t(null).saldoBeneficiario - 100_000);
+  });
+
+  test("leerRetenciones ignora lo que no sirve", () => {
+    expect(leerRetenciones("no es json")).toEqual({});
+    expect(leerRetenciones('{"reteIca":{"valor":"10","aplica":false},"otra":{}}')).toEqual({ reteIca: { valor: 10, aplica: false } });
   });
 });
 

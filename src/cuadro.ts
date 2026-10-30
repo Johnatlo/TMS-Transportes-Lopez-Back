@@ -594,6 +594,9 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   rentPoliza: "numero",
   rentIcaPorMil: "numero",
   fechaPagoRentabilidad: "fecha",
+  rentRetenciones: "texto",
+  rentOtrosDescuentos: "numero",
+  rentOtrosConcepto: "texto",
 };
 
 /**

@@ -10,7 +10,9 @@
  *
  * Dos clases de grupo:
  * - TERCEROS: lo que paga el cliente con sus descuentos (saldo empresa) menos
- *   lo que se le paga al tercero con los suyos (saldo tercero) = rentabilidad;
+ *   lo que se le paga al tercero con los suyos (saldo tercero) = rentabilidad,
+ *   sin contar los otros descuentos (prestamos, descuentos del cliente), que
+ *   bajan el saldo del tercero pero no son ganancia de la empresa;
  *   menos el anticipo de renta 3,5 % = ganancia. La comision de la matriz
  *   (como en los demas carros) se le descuenta a la empresa, no al tercero.
  * - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
@@ -116,6 +118,44 @@ export interface AjustesRentabilidad {
   rentPoliza: number | null;
   rentIcaPorMil: number | null;
   fechaPagoRentabilidad: string | null;
+  /** Retenciones corregidas o desmarcadas; las que no estan, se calculan y aplican. */
+  rentRetenciones: Partial<Record<ClaveRetencion, AjusteRetencion>>;
+  /** Otros descuentos al tercero o dueno, y su concepto. */
+  rentOtrosDescuentos: number | null;
+  rentOtrosConcepto: string | null;
+}
+
+/**
+ * Retenciones que se pueden corregir en cada viaje: `retencion`,
+ * `reteIca` y `supertransporte` se sacan del flete de la empresa; las
+ * `...Tercero`, del flete pactado con el tercero; `bancaria` (4 x 1000 + 5.000),
+ * del flete del tercero o del dueno.
+ */
+export const CLAVES_RETENCION = ["retencion", "reteIca", "supertransporte", "bancaria", "retencionTercero", "reteIcaTercero", "supertransporteTercero"] as const;
+export type ClaveRetencion = (typeof CLAVES_RETENCION)[number];
+
+/** Lo escrito en una retencion: su valor (null = el calculado) y si aplica. */
+export interface AjusteRetencion {
+  valor: number | null;
+  aplica: boolean;
+}
+
+/** Texto guardado en rentRetenciones -> ajustes validos (lo demas se ignora). */
+export function leerRetenciones(texto: unknown): Partial<Record<ClaveRetencion, AjusteRetencion>> {
+  let crudo: Record<string, { valor?: unknown; aplica?: unknown }> = {};
+  try {
+    crudo = JSON.parse(String(texto ?? "{}")) ?? {};
+  } catch {
+    return {};
+  }
+  const ajustes: Partial<Record<ClaveRetencion, AjusteRetencion>> = {};
+  for (const clave of CLAVES_RETENCION) {
+    const a = crudo[clave];
+    if (!a) continue;
+    const valor = a.valor === null || a.valor === undefined || a.valor === "" ? null : Number(a.valor);
+    ajustes[clave] = { valor: valor !== null && Number.isFinite(valor) && valor >= 0 ? valor : null, aplica: a.aplica !== false };
+  }
+  return ajustes;
 }
 
 /** Lo que entra al calculo de un viaje. */
@@ -146,8 +186,11 @@ export interface CalculoRentabilidad {
   retencion: number;
   icaPorMil: number;
   reteIca: number;
+  /** Comision bancaria (4 x 1000 + 5.000): al flete del tercero o del dueno, nunca al de la empresa. */
   bancaria: number;
   supertransporte: number;
+  /** Lo que da cada retencion sin ajustes (para mostrarlo en gris al editar). */
+  retencionesCalculadas: Record<ClaveRetencion, number>;
   comision: number;
   tLopez: number;
   descargue: number;
@@ -156,14 +199,16 @@ export interface CalculoRentabilidad {
   anticipoRenta: number;
   /** Terceros: lo que le queda a la empresa del flete despues de sus descuentos. */
   saldoEmpresa: number;
-  /** Terceros: lo pactado con el tercero y sus descuentos (bancariaTercero: solo la Supertransporte). */
+  /** Terceros: lo pactado con el tercero y sus descuentos. */
   fleteTercero: number;
   retencionTercero: number;
   reteIcaTercero: number;
-  bancariaTercero: number;
+  supertransporteTercero: number;
+  /** Otros descuentos al tercero o dueno (prestamos, descuentos del cliente): no son ganancia de la empresa. */
+  otrosDescuentos: number;
   /** Terceros: lo que se le paga al tercero; socios: lo que se le paga al dueno. */
   saldoBeneficiario: number;
-  /** Terceros: saldo empresa - saldo tercero (antes del anticipo de renta). */
+  /** Terceros: saldo empresa - saldo tercero - otros descuentos (antes del anticipo de renta). */
   rentabilidad: number;
   /** Lo que gana la empresa con el viaje. */
   ganancia: number;
@@ -175,25 +220,43 @@ const r = Math.round;
 export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
   const v = e.valorEmpresa;
   const icaPorMil = e.rentIcaPorMil ?? e.icaMatriz ?? icaSugerido(e.empresa);
-  const retencion = r(v * RETENCION_CLIENTE);
-  const reteIca = r((v * icaPorMil) / 1000);
-  const bancaria = v > 0 ? r((v * BANCARIA_POR_MIL) / 1000 + BANCARIA_FIJA) : 0;
-  const supertransporte = r(v * SUPERTRANSPORTE);
+  const p = e.valorTercero ?? 0;
+  const terceros = e.grupo === "TERCEROS";
+  // La comision bancaria sale del flete de quien recibe el pago: el tercero o el dueno.
+  const baseBancaria = terceros ? p : v;
+  const calculadas: Record<ClaveRetencion, number> = {
+    retencion: r(v * RETENCION_CLIENTE),
+    reteIca: r((v * icaPorMil) / 1000),
+    supertransporte: r(v * SUPERTRANSPORTE),
+    bancaria: baseBancaria > 0 ? r((baseBancaria * BANCARIA_POR_MIL) / 1000 + BANCARIA_FIJA) : 0,
+    retencionTercero: r(p * RETENCION_CLIENTE),
+    reteIcaTercero: r((p * e.icaTerceroPorMil) / 1000),
+    supertransporteTercero: r(p * SUPERTRANSPORTE),
+  };
+  /** La retencion con lo escrito en el viaje: desmarcada 0; si no, su valor o el calculado. */
+  const aplicada = (clave: ClaveRetencion) => {
+    const a = e.rentRetenciones[clave];
+    return a && !a.aplica ? 0 : a?.valor ?? calculadas[clave];
+  };
+  const retencion = aplicada("retencion");
+  const reteIca = aplicada("reteIca");
+  const bancaria = aplicada("bancaria");
+  const supertransporte = aplicada("supertransporte");
+  const otrosDescuentos = e.rentOtrosDescuentos ?? 0;
   const anticipo = e.efectivo + e.combustible + e.transferencia;
 
-  if (e.grupo === "TERCEROS") {
-    const p = e.valorTercero ?? 0;
+  if (terceros) {
     // La comision de la matriz, como en los demas carros: una vez por remision y con flete.
     const comision = e.rentComision ?? (e.primeraDeRemision && v > 0 ? e.comisionMatriz?.comision ?? 0 : 0);
     const tLopez = e.rentTLopez ?? 0;
     const poliza = e.rentPoliza ?? (e.primeraDeManifiesto && p > 0 ? POLIZA_RCE : 0);
-    const saldoEmpresa = v - retencion - reteIca - bancaria - supertransporte - comision - tLopez;
-    const retencionTercero = r(p * RETENCION_CLIENTE);
-    const reteIcaTercero = r((p * e.icaTerceroPorMil) / 1000);
-    // Al tercero ya solo se le descuenta la Supertransporte (antes tambien el 4 x 1000 + 5.000).
-    const bancariaTercero = r(p * SUPERTRANSPORTE);
-    const saldoBeneficiario = p - retencionTercero - reteIcaTercero - bancariaTercero - poliza;
-    const rentabilidad = saldoEmpresa - saldoBeneficiario;
+    const saldoEmpresa = v - retencion - reteIca - supertransporte - comision - tLopez;
+    const retencionTercero = aplicada("retencionTercero");
+    const reteIcaTercero = aplicada("reteIcaTercero");
+    const supertransporteTercero = aplicada("supertransporteTercero");
+    // Gestion financiera del tercero = 4 x 1000 + 5.000 (bancaria) + Supertransporte.
+    const saldoBeneficiario = p - retencionTercero - reteIcaTercero - bancaria - supertransporteTercero - poliza - otrosDescuentos;
+    const rentabilidad = saldoEmpresa - saldoBeneficiario - otrosDescuentos;
     const anticipoRenta = r(rentabilidad * ANTICIPO_RENTA);
     return {
       retencion,
@@ -201,6 +264,7 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
       reteIca,
       bancaria,
       supertransporte,
+      retencionesCalculadas: calculadas,
       comision,
       tLopez,
       descargue: 0,
@@ -211,7 +275,8 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
       fleteTercero: p,
       retencionTercero,
       reteIcaTercero,
-      bancariaTercero,
+      supertransporteTercero,
+      otrosDescuentos,
       saldoBeneficiario,
       rentabilidad,
       ganancia: rentabilidad - anticipoRenta,
@@ -229,24 +294,26 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
   const poliza = e.rentPoliza ?? (!sinExtras && e.primeraDeManifiesto ? POLIZA_RCE : 0);
   const anticipoRenta = r(v * ANTICIPO_RENTA);
   const saldoBeneficiario =
-    v - retencion - reteIca - anticipoRenta - bancaria - supertransporte - comision - tLopez - descargue - poliza - anticipo;
+    v - retencion - reteIca - anticipoRenta - bancaria - supertransporte - comision - tLopez - descargue - poliza - anticipo - otrosDescuentos;
   return {
     retencion,
     icaPorMil,
     reteIca,
     bancaria,
     supertransporte,
+    retencionesCalculadas: calculadas,
     comision,
     tLopez,
     descargue,
     poliza,
     anticipo,
     anticipoRenta,
-    saldoEmpresa: v - retencion - reteIca - bancaria - supertransporte,
+    saldoEmpresa: v - retencion - reteIca - supertransporte,
     fleteTercero: 0,
     retencionTercero: 0,
     reteIcaTercero: 0,
-    bancariaTercero: 0,
+    supertransporteTercero: 0,
+    otrosDescuentos,
     saldoBeneficiario,
     rentabilidad: comision + tLopez,
     ganancia: comision + tLopez,
@@ -285,7 +352,8 @@ export const rentabilidad = {
     const [datosTerceros, [ajustes], [bomba], matrices] = await Promise.all([
       terceros.listar(filas),
       pool.query<RowDataPacket[]>(
-        `SELECT id, rentComision, rentTLopez, rentDescargue, rentPoliza, rentIcaPorMil, fechaPagoRentabilidad
+        `SELECT id, rentComision, rentTLopez, rentDescargue, rentPoliza, rentIcaPorMil, fechaPagoRentabilidad,
+                rentRetenciones, rentOtrosDescuentos, rentOtrosConcepto
            FROM cuadro_viajes WHERE anulado = 0`
       ),
       pool.query<RowDataPacket[]>(
@@ -319,6 +387,9 @@ export const rentabilidad = {
         rentPoliza: num(a?.rentPoliza),
         rentIcaPorMil: num(a?.rentIcaPorMil),
         fechaPagoRentabilidad: dia(a?.fechaPagoRentabilidad) ?? null,
+        rentRetenciones: leerRetenciones(a?.rentRetenciones),
+        rentOtrosDescuentos: num(a?.rentOtrosDescuentos),
+        rentOtrosConcepto: a?.rentOtrosConcepto ?? null,
       };
       const t = deTercero.get(f.id);
       const b = bombaPor.get(f.id) ?? { efectivo: 0, combustible: 0 };

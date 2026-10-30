@@ -527,7 +527,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_723 funciones, componentes, métodos y rutas en 50 archivos._
+_724 funciones, componentes, métodos y rutas en 50 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -547,7 +547,7 @@ _723 funciones, componentes, métodos y rutas en 50 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
-- [`src/rentabilidad.ts`](#srcrentabilidadts) (8)
+- [`src/rentabilidad.ts`](#srcrentabilidadts) (9)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/reportes.ts`](#srcreportests) (10)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
@@ -1699,7 +1699,9 @@ _723 funciones, componentes, métodos y rutas en 50 archivos._
 >
 > Dos clases de grupo:
 > - TERCEROS: lo que paga el cliente con sus descuentos (saldo empresa) menos
->   lo que se le paga al tercero con los suyos (saldo tercero) = rentabilidad;
+>   lo que se le paga al tercero con los suyos (saldo tercero) = rentabilidad,
+>   sin contar los otros descuentos (prestamos, descuentos del cliente), que
+>   bajan el saldo del tercero pero no son ganancia de la empresa;
 >   menos el anticipo de renta 3,5 % = ganancia. La comision de la matriz
 >   (como en los demas carros) se le descuenta a la empresa, no al tercero.
 > - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
@@ -1717,6 +1719,9 @@ _723 funciones, componentes, métodos y rutas en 50 archivos._
   La fila de una matriz que le toca a una empresa: la de nombre mas largo que
   aparezca en ella (como el SEARCH del Excel). Las de URBANO solo para urbanos
   y, para un urbano, primero esas.
+
+- **`leerRetenciones(texto)`** · _función_
+  Texto guardado en rentRetenciones -> ajustes validos (lo demas se ignora).
 
 - **`calcular(e)`** · _función_
   Calcula la rentabilidad de un viaje (exportado para las pruebas).

@@ -995,6 +995,11 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "rentPoliza", "DOUBLE"],
     ["cuadro_viajes", "rentIcaPorMil", "DOUBLE"],
     ["cuadro_viajes", "fechaPagoRentabilidad", "DATE"],
+    // Retenciones corregidas o desmarcadas (JSON por retencion) y otros
+    // descuentos al tercero o dueno, con su concepto.
+    ["cuadro_viajes", "rentRetenciones", "VARCHAR(800)"],
+    ["cuadro_viajes", "rentOtrosDescuentos", "DOUBLE"],
+    ["cuadro_viajes", "rentOtrosConcepto", "VARCHAR(200)"],
     // El flete se escribio o se eligio a mano: la deduccion de la matriz no lo toca (ver src/tarifasFlete.ts).
     ["cuadro_viajes", "fleteManual", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Reconocidos de Cartones America (ver generarReconocidosCorame en
