@@ -337,6 +337,10 @@ export interface FilaRentabilidad extends AjustesRentabilidad, CalculoRentabilid
   efectivo: number;
   combustible: number;
   transferencia: number;
+  /** Dias en que se entrego el anticipo: efectivo, combustible y transferencia. */
+  fechasEfectivo: string[];
+  fechasCombustible: string[];
+  fechaTransferencia: string | null;
   /** Cuando pago el cliente (Cartera / Cuadro pagos). */
   fechaPagoEmpresa: string | null;
   /** Cuando se le pago al tercero o al dueno. */
@@ -358,14 +362,22 @@ export const rentabilidad = {
       ),
       pool.query<RowDataPacket[]>(
         `SELECT cuadroViajeId, SUM(COALESCE(efectivo, 0)) AS efectivo,
-                SUM(COALESCE(combustible, valor - COALESCE(efectivo, 0))) AS combustible
+                SUM(COALESCE(combustible, valor - COALESCE(efectivo, 0))) AS combustible,
+                GROUP_CONCAT(DISTINCT CASE WHEN efectivo > 0 THEN DATE_FORMAT(fecha, '%Y-%m-%d') END ORDER BY fecha) AS fechasEfectivo,
+                GROUP_CONCAT(DISTINCT CASE WHEN COALESCE(combustible, valor - COALESCE(efectivo, 0)) > 0 THEN DATE_FORMAT(fecha, '%Y-%m-%d') END ORDER BY fecha) AS fechasCombustible
            FROM cuadro_anticipos GROUP BY cuadroViajeId`
       ),
       this.matrices(),
     ]);
     const deTercero = new Map(datosTerceros.viajes.map((v) => [v.id, v]));
     const ajustePor = new Map(ajustes.map((a) => [Number(a.id), a]));
-    const bombaPor = new Map(bomba.map((b) => [Number(b.cuadroViajeId), { efectivo: Number(b.efectivo), combustible: Number(b.combustible) }]));
+    const dias = (x: unknown) => (x ? String(x).split(",") : []);
+    const bombaPor = new Map(
+      bomba.map((b) => [
+        Number(b.cuadroViajeId),
+        { efectivo: Number(b.efectivo), combustible: Number(b.combustible), fechasEfectivo: dias(b.fechasEfectivo), fechasCombustible: dias(b.fechasCombustible) },
+      ])
+    );
     const vivos = filas.filter((f) => !f.anulado).sort((a, b) => a.id - b.id);
     const remisiones = new Set<string>();
     const manifiestos = new Set<string>();
@@ -392,7 +404,7 @@ export const rentabilidad = {
         rentOtrosConcepto: a?.rentOtrosConcepto ?? null,
       };
       const t = deTercero.get(f.id);
-      const b = bombaPor.get(f.id) ?? { efectivo: 0, combustible: 0 };
+      const b = bombaPor.get(f.id) ?? { efectivo: 0, combustible: 0, fechasEfectivo: [], fechasCombustible: [] };
       const entrada: EntradaRentabilidad = {
         ...ajustes,
         grupo,
@@ -427,6 +439,9 @@ export const rentabilidad = {
         efectivo: b.efectivo,
         combustible: b.combustible,
         transferencia: entrada.transferencia,
+        fechasEfectivo: b.fechasEfectivo,
+        fechasCombustible: b.fechasCombustible,
+        fechaTransferencia: entrada.transferencia ? f.anticipoTransferenciaFecha : null,
         fechaPagoEmpresa: f.facturaFechaPago,
         fechaPagoBeneficiario: f.fechaPagoSaldo,
         concepto: f.concepto,
