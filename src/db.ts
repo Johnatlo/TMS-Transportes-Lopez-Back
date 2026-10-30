@@ -498,6 +498,24 @@ export async function initSchema(): Promise<void> {
       tLopez DOUBLE NOT NULL DEFAULT 0
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Liquidaciones a los duenos (ver src/liquidacionDuenos.ts): foto en JSON de
+  // los viajes y conceptos, y el saldo pendiente que pasa a la siguiente.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS liquidaciones_duenos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      grupo VARCHAR(40) NOT NULL,
+      nombre VARCHAR(80) NOT NULL,
+      fecha DATE NOT NULL,
+      filas MEDIUMTEXT NOT NULL,
+      conceptos MEDIUMTEXT NOT NULL,
+      totalViajes DOUBLE NOT NULL,
+      total DOUBLE NOT NULL,
+      pagado DOUBLE NOT NULL,
+      saldoPendiente DOUBLE NOT NULL,
+      creadaEn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_liquidacion_grupo (grupo)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Matriz Retenciones de la rentabilidad: ReteICA por mil de cada cliente.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS rentabilidad_retenciones (

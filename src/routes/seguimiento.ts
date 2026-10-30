@@ -5,6 +5,7 @@ import { responder } from "./cuadro";
 import { importarCartera, propuestaCartera } from "../importaciones";
 import { terceros } from "../terceros";
 import { rentabilidad } from "../rentabilidad";
+import { liquidacionDuenos } from "../liquidacionDuenos";
 
 /**
  * Seguimiento de papeles, facturacion y cartera (ver src/seguimiento.ts).
@@ -96,6 +97,27 @@ seguimientoRouter.get("/rentabilidad/matrices", async (_req, res) => {
 /** PUT /api/seguimiento/rentabilidad/matrices: reemplaza las matrices ({ comisiones?, retenciones? }). */
 seguimientoRouter.put("/rentabilidad/matrices", async (req, res) => {
   await responder(res, () => rentabilidad.guardarMatrices(req.body ?? {}));
+});
+
+/** GET /api/seguimiento/rentabilidad/liquidaciones: liquidaciones a los duenos ya registradas. */
+seguimientoRouter.get("/rentabilidad/liquidaciones", async (_req, res) => {
+  res.json(await liquidacionDuenos.listar());
+});
+
+/**
+ * POST /api/seguimiento/rentabilidad/liquidaciones: registra la liquidacion a un
+ * dueno y marca sus viajes como pagados ({ grupo, nombre?, fecha, ids, conceptos, pagado? }).
+ */
+seguimientoRouter.post("/rentabilidad/liquidaciones", async (req, res) => {
+  await responder(res, () => liquidacionDuenos.registrar(req.body ?? {}));
+});
+
+/** DELETE /api/seguimiento/rentabilidad/liquidaciones/:id: anula la ultima liquidacion de un grupo. */
+seguimientoRouter.delete("/rentabilidad/liquidaciones/:id", async (req, res) => {
+  await responder(res, async () => {
+    await liquidacionDuenos.anular(Number(req.params.id));
+    return { ok: true };
+  });
 });
 
 /** POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). */

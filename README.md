@@ -504,6 +504,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/seguimiento/rentabilidad` | Todos los viajes no anulados con su grupo (TERCEROS, CELSO, MAURICIO...) y lo que deja cada uno (ver src/rentabilidad.ts). |
 | `GET` | `/api/seguimiento/rentabilidad/matrices` | Comisiones y retenciones por cliente. |
 | `PUT` | `/api/seguimiento/rentabilidad/matrices` | Reemplaza las matrices ({ comisiones?, retenciones? }). |
+| `GET` | `/api/seguimiento/rentabilidad/liquidaciones` | Liquidaciones a los duenos ya registradas. |
+| `POST` | `/api/seguimiento/rentabilidad/liquidaciones` | Registra la liquidacion a un dueno y marca sus viajes como pagados ({ grupo, nombre?, fecha, ids, conceptos, pagado? }). |
+| `DELETE` | `/api/seguimiento/rentabilidad/liquidaciones/:id` | Anula la ultima liquidacion de un grupo. |
 | `POST` | `/api/seguimiento/terceros/pago` | Se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). |
 | `PUT` | `/api/seguimiento/cartera/anticipo` | Anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). |
 | `POST` | `/api/seguimiento/cartera/importar/previa` | Propone como cargar cada factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a sus viajes. No guarda nada. |
@@ -527,7 +530,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_724 funciones, componentes, métodos y rutas en 50 archivos._
+_735 funciones, componentes, métodos y rutas en 51 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -546,6 +549,7 @@ _724 funciones, componentes, métodos y rutas en 50 archivos._
 - [`src/flota.ts`](#srcflotats) (1)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
+- [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (9)
 - [`src/repo.ts`](#srcrepots) (94)
@@ -565,7 +569,7 @@ _724 funciones, componentes, métodos y rutas en 50 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (45)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (20)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
@@ -1602,6 +1606,45 @@ _724 funciones, componentes, métodos y rutas en 50 archivos._
   4. Si existe el frontend compilado, lo sirve, con caida a index.html para
      las rutas de React.
   5. Manejador de errores comun y escucha en el puerto configurado.
+
+### `src/liquidacionDuenos.ts`
+
+> Liquidacion a los duenos (docs/Liq duenos ejemplo.xlsx, "CUENTAS MILLER A
+> ..."): los viajes de un grupo de carros con su saldo, los conceptos que se le
+> suman o descuentan (creditos, sueldos, peajes, gastos compartidos) y lo que
+> se le paga. Si no se le paga todo, el saldo pendiente pasa a la siguiente.
+>
+> Se guarda una foto de los viajes y conceptos: el Excel de una liquidacion
+> vieja no cambia aunque despues se corrija un viaje.
+
+- **`fotoViaje(f)`** · _función_
+  La foto de un viaje de la rentabilidad para la liquidacion.
+
+- **`totalesLiquidacion(filas, conceptos, pagado)`** · _función_
+  Totales (exportado para las pruebas). Sin valor pagado se le paga todo; si el
+  total es negativo no se le paga nada y el dueno queda debiendo.
+
+- **`leerConceptos(x)`** · _función_
+  Lee los conceptos que llegan en la peticion.
+
+- **`aLiquidacion(r)`** · _función_
+  Fila de la tabla a una liquidacion.
+
+- **`liquidacionDuenos`** · _módulo_
+  Repositorio de las liquidaciones a los duenos.
+
+  - **`liquidacionDuenos.listar()`** · _método_
+    Las liquidaciones registradas, las mas recientes primero.
+
+  - **`liquidacionDuenos.registrar(d)`** · _método_
+    Registra la liquidacion ({ grupo, nombre?, fecha, ids, conceptos, pagado? })
+    y marca los viajes como pagados al dueno, todo o nada: si un viaje ya se
+    habia pagado no se registra.
+
+  - **`liquidacionDuenos.anular(id)`** · _método_
+    Anula la ultima liquidacion de su grupo y devuelve sus viajes a sin pagar
+    (solo los que siguen con esa fecha). Las anteriores no: de ellas sale el
+    saldo pendiente que arrastra la siguiente.
 
 ### `src/relacionesBomba.ts`
 
@@ -3860,6 +3903,16 @@ _724 funciones, componentes, métodos y rutas en 50 archivos._
 
 - **`PUT /rentabilidad/matrices`** · _ruta HTTP_
   PUT /api/seguimiento/rentabilidad/matrices: reemplaza las matrices ({ comisiones?, retenciones? }).
+
+- **`GET /rentabilidad/liquidaciones`** · _ruta HTTP_
+  GET /api/seguimiento/rentabilidad/liquidaciones: liquidaciones a los duenos ya registradas.
+
+- **`POST /rentabilidad/liquidaciones`** · _ruta HTTP_
+  POST /api/seguimiento/rentabilidad/liquidaciones: registra la liquidacion a un
+  dueno y marca sus viajes como pagados ({ grupo, nombre?, fecha, ids, conceptos, pagado? }).
+
+- **`DELETE /rentabilidad/liquidaciones/:id`** · _ruta HTTP_
+  DELETE /api/seguimiento/rentabilidad/liquidaciones/:id: anula la ultima liquidacion de un grupo.
 
 - **`POST /terceros/pago`** · _ruta HTTP_
   POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }).
