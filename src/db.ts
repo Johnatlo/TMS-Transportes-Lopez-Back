@@ -1040,6 +1040,8 @@ export async function initSchema(): Promise<void> {
     ["bomba_relaciones", "fechaVencimiento", "DATE"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
+    // Tarifa urbana aunque su nombre no diga URBANO (COOP DE LA SABANA): sus viajes no llevan poliza RCE.
+    ["tarifas_flete", "urbano", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["vehiculos", "gpsUrl", "VARCHAR(300)"],
     ["vehiculos", "gpsUsuario", "VARCHAR(100)"],
     ["vehiculos", "gpsClaveCifrada", "TEXT"],

@@ -1183,9 +1183,10 @@ _736 funciones, componentes, métodos y rutas en 51 archivos._
   Estado del anticipo de la empresa de un viaje.
 
 - **`esUrbano(f)`** · _función_
-  Viaje urbano: su tarifa de la matriz dice URBANO, o dice URBANO en la
-  empresa o la ruta escrita a mano, o sale y llega al mismo municipio. (La
-  tarifa solo se conoce al facturar; por eso se mira tambien la ruta.)
+  Viaje urbano: su tarifa de la matriz esta marcada como urbana o dice
+  URBANO, o dice URBANO en la empresa o la ruta escrita a mano, o sale y llega
+  al mismo municipio. (La tarifa solo se conoce al facturar; por eso se mira
+  tambien la ruta.)
 
 - **`num(v)`** · _función_
   Numero de MySQL (DECIMAL llega como texto) a number; null se conserva.
@@ -1459,7 +1460,7 @@ _736 funciones, componentes, métodos y rutas en 51 archivos._
     Agrega una tarifa a la matriz sin importar el Excel, y la devuelve.
 
   - **`facturacion.actualizarTarifa(id, datos)`** · _método_
-    Cambia una tarifa (nombre, razon social, valor, tipo, pesos, observaciones) y la devuelve.
+    Cambia una tarifa (nombre, razon social, valor, tipo, pesos, observaciones, urbano) y la devuelve.
 
   - **`facturacion.porFacturar()`** · _método_
     Viajes listos para facturar (papeles radicados, sin factura con fecha), y

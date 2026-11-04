@@ -32,6 +32,8 @@ export interface TarifaFlete {
   /** Peso que se factura siempre, sin importar el tiquete (33000 kg). */
   pesoFijoKg: number | null;
   observaciones: string | null;
+  /** Sus viajes son urbanos aunque el nombre no diga URBANO (sin poliza RCE). */
+  urbano: boolean;
 }
 
 /** Texto recortado; vacio -> null. */
@@ -59,6 +61,7 @@ export function normalizarTarifa(t: Record<string, unknown>): Omit<TarifaFlete, 
     pesoMinimoKg: numero(t.pesoMinimoKg) === null ? null : Math.round(numero(t.pesoMinimoKg)!),
     pesoFijoKg: numero(t.pesoFijoKg) === null ? null : Math.round(numero(t.pesoFijoKg)!),
     observaciones: texto(t.observaciones, 500),
+    urbano: t.urbano === true || t.urbano === 1 || t.urbano === "1",
   };
 }
 
@@ -72,6 +75,7 @@ const mapearTarifa = (r: RowDataPacket): TarifaFlete => ({
   pesoMinimoKg: r.pesoMinimoKg ?? null,
   pesoFijoKg: r.pesoFijoKg ?? null,
   observaciones: r.observaciones ?? null,
+  urbano: !!r.urbano,
 });
 
 /** Un viaje listo para facturar, con lo que hace falta para el cuadro de la contadora. */
@@ -99,11 +103,14 @@ export const facturacion = {
     const conexion = await pool.getConnection();
     try {
       await conexion.beginTransaction();
+      // El Excel no trae la marca de urbano: se conserva la de la tarifa del mismo nombre.
+      const [urbanas] = await conexion.query<RowDataPacket[]>("SELECT nombre FROM tarifas_flete WHERE urbano = 1");
+      const nombresUrbanos = new Set(urbanas.map((u) => String(u.nombre)));
       await conexion.query("UPDATE cuadro_viajes SET tarifaFleteId = NULL WHERE tarifaFleteId IS NOT NULL");
       await conexion.query("DELETE FROM tarifas_flete");
       await conexion.query(
-        "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones) VALUES ?",
-        [tarifas.map((t) => [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones])]
+        "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones, urbano) VALUES ?",
+        [tarifas.map((t) => [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano || nombresUrbanos.has(t.nombre)])]
       );
       await conexion.commit();
     } catch (exc) {
@@ -121,21 +128,21 @@ export const facturacion = {
   async crearTarifa(datos: Record<string, unknown>): Promise<TarifaFlete> {
     const t = normalizarTarifa(datos);
     const [res] = await pool.query<ResultSetHeader>(
-      "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones]
+      "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones, urbano) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano]
     );
     invalidarTarifas();
     return { id: res.insertId, ...t };
   },
 
-  /** Cambia una tarifa (nombre, razon social, valor, tipo, pesos, observaciones) y la devuelve. */
+  /** Cambia una tarifa (nombre, razon social, valor, tipo, pesos, observaciones, urbano) y la devuelve. */
   async actualizarTarifa(id: number, datos: Record<string, unknown>): Promise<TarifaFlete | null> {
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM tarifas_flete WHERE id = ?", [id]);
     if (!rows[0]) return null;
     const t = normalizarTarifa({ ...mapearTarifa(rows[0]), ...datos });
     await pool.query(
-      "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, pesoFijoKg = ?, observaciones = ? WHERE id = ?",
-      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, id]
+      "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, pesoFijoKg = ?, observaciones = ?, urbano = ? WHERE id = ?",
+      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano, id]
     );
     invalidarTarifas();
     return { id, ...t };

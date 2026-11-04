@@ -10,7 +10,13 @@ describe("tarifas de la matriz de fletes", () => {
   test("normaliza tipo, valor y peso minimo", () => {
     expect(
       normalizarTarifa({ nombre: " APROREC ", razonSocial: "APROREC SAS", valor: "130000", tipo: "ton", pesoMinimoKg: "34000" })
-    ).toEqual({ nombre: "APROREC", razonSocial: "APROREC SAS", valor: 130000, tipo: "TON", pesoMinimoKg: 34000, pesoFijoKg: null, observaciones: null });
+    ).toEqual({ nombre: "APROREC", razonSocial: "APROREC SAS", valor: 130000, tipo: "TON", pesoMinimoKg: 34000, pesoFijoKg: null, observaciones: null, urbano: false });
+  });
+
+  test("la marca de urbano llega como booleano", () => {
+    expect(normalizarTarifa({ nombre: "COOP DE LA SABANA", urbano: true }).urbano).toBe(true);
+    expect(normalizarTarifa({ nombre: "COOP DE LA SABANA", urbano: 1 }).urbano).toBe(true);
+    expect(normalizarTarifa({ nombre: "COOP DE LA SABANA" }).urbano).toBe(false);
   });
 
   test("valor raro ('?') o vacio queda sin valor; tipo desconocido pasa a TON", () => {

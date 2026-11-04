@@ -191,17 +191,20 @@ export function estadoAnticipoEmpresa(
 }
 
 /**
- * Viaje urbano: su tarifa de la matriz dice URBANO, o dice URBANO en la
- * empresa o la ruta escrita a mano, o sale y llega al mismo municipio. (La
- * tarifa solo se conoce al facturar; por eso se mira tambien la ruta.)
+ * Viaje urbano: su tarifa de la matriz esta marcada como urbana o dice
+ * URBANO, o dice URBANO en la empresa o la ruta escrita a mano, o sale y llega
+ * al mismo municipio. (La tarifa solo se conoce al facturar; por eso se mira
+ * tambien la ruta.)
  */
 export function esUrbano(f: {
   tarifaFlete: string | null;
+  tarifaUrbana?: boolean;
   empresa: string;
   rutaManual: string | null;
   rutaOrigen?: string | null;
   rutaDestino?: string | null;
 }): boolean {
+  if (f.tarifaUrbana) return true;
   if (/URBANO/i.test(`${f.tarifaFlete ?? ""} ${f.empresa} ${f.rutaManual ?? ""}`)) return true;
   return !!f.rutaOrigen && f.rutaOrigen === f.rutaDestino;
 }
@@ -421,7 +424,7 @@ const CODIGO_ORIGEN = "LPAD(COALESCE(pl.municipioOrigen, vj.origenRndc), 8, '0')
 const CODIGO_DESTINO = "LPAD(COALESCE(pl.municipioDestino, vj.destinoRndc), 8, '0')";
 
 export const SELECT_CUADRO = `
-  SELECT c.*, ${sqlFlota()} AS flota, ve.dueno, ve.configuracion, tf.nombre AS tarifaFlete,
+  SELECT c.*, ${sqlFlota()} AS flota, ve.dueno, ve.configuracion, tf.nombre AS tarifaFlete, tf.urbano AS tarifaUrbana,
          ${nombreMunicipio(CODIGO_ORIGEN)} AS rutaOrigen,
          ${nombreMunicipio(CODIGO_DESTINO)} AS rutaDestino,
          uc.nombre AS revisadoContabilidadPor, ug.nombre AS revisadoGerenciaPor, up.nombre AS papelesRevisadoPor,
@@ -543,7 +546,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     ...estadoDe(base),
     estadoAnticipoEmpresa: estadoAnticipoEmpresa(base),
     anticipoEmpresaABomba: CLIENTES_ZORRO.test(base.empresa),
-    urbano: esUrbano({ ...base, rutaOrigen: r.rutaOrigen ?? null, rutaDestino: r.rutaDestino ?? null }),
+    urbano: esUrbano({ ...base, tarifaUrbana: !!r.tarifaUrbana, rutaOrigen: r.rutaOrigen ?? null, rutaDestino: r.rutaDestino ?? null }),
   };
 }
 
