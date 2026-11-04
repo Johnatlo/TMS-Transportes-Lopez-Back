@@ -90,6 +90,7 @@ catalogoRouter.post("/remolques", async (req, res) => {
     placa: String(b.placa).toUpperCase().trim(),
     numEjes: b.numEjes ? Number(b.numEjes) : null,
     capacidadKg: b.capacidadKg ? Number(b.capacidadKg) : null,
+    pesoVehiculoVacio: b.pesoVehiculoVacio ? Number(b.pesoVehiculoVacio) : null,
     fechaVencSoat: b.fechaVencSoat ? new Date(b.fechaVencSoat) : null,
     fechaVencTecnomecanica: b.fechaVencTecnomecanica ? new Date(b.fechaVencTecnomecanica) : null,
   });
@@ -99,7 +100,7 @@ catalogoRouter.post("/remolques", async (req, res) => {
 /** PUT /api/catalogo/remolques/:id: edita solo los campos enviados. */
 catalogoRouter.put("/remolques/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
-    "placa", "numEjes", "capacidadKg", "fechaVencSoat", "fechaVencTecnomecanica", "activo",
+    "placa", "numEjes", "capacidadKg", "pesoVehiculoVacio", "fechaVencSoat", "fechaVencTecnomecanica", "activo",
   ]);
   if ("placa" in datos) datos.placa = mayusculas(datos.placa);
   await responderEdicion(res, () => remolques.update(Number(req.params.id), datos));

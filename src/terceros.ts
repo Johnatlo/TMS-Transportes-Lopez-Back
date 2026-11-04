@@ -138,14 +138,16 @@ const pactado = (f: Pick<FilaCuadro, "pesoKg" | "valorTerceroTon" | "valorTercer
 
 /**
  * Filas (ids) que llevan la poliza RCE: una por manifiesto, la primera ya
- * pactada (la de menor id); las filas sin manifiesto la llevan cada una.
+ * pactada (la de menor id); las filas sin manifiesto la llevan cada una. Los
+ * urbanos no la llevan.
  */
 export function filasConPoliza(
-  filas: Array<Pick<FilaCuadro, "id" | "manifiesto" | "pesoKg" | "valorTerceroTon" | "valorTerceroFijo">>
+  filas: Array<Pick<FilaCuadro, "id" | "manifiesto" | "pesoKg" | "valorTerceroTon" | "valorTerceroFijo" | "urbano">>
 ): Set<number> {
   const ids = new Set<number>();
   const vistos = new Set<string>();
   for (const f of [...filas].sort((a, b) => a.id - b.id)) {
+    if (f.urbano) continue;
     if (!f.manifiesto) {
       ids.add(f.id);
       continue;
@@ -280,7 +282,7 @@ export const terceros = {
           ...f,
           ...l,
           // Sin pactar: la llevaria si su manifiesto aun no la tiene (para el formulario).
-          cobraPoliza: conPoliza.has(f.id) || (!pactado(f) && !manifiestosConPoliza.has(f.manifiesto)),
+          cobraPoliza: conPoliza.has(f.id) || (!f.urbano && !pactado(f) && !manifiestosConPoliza.has(f.manifiesto)),
           tercero: (f.vehiculoId ? nombres.get(f.vehiculoId) : null) ?? f.placa,
           estadoPagoTercero: estadoPagoTercero(f, l, hoy),
           icaSugerido: icaSugerido(f.empresa),

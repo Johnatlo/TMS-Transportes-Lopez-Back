@@ -1018,6 +1018,8 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "rentRetenciones", "VARCHAR(800)"],
     ["cuadro_viajes", "rentOtrosDescuentos", "DOUBLE"],
     ["cuadro_viajes", "rentOtrosConcepto", "VARCHAR(200)"],
+    // Peso vacio del remolque: el RNDC lo exige al registrarlo (VEH090).
+    ["remolques", "pesoVehiculoVacio", "DOUBLE"],
     // El flete se escribio o se eligio a mano: la deduccion de la matriz no lo toca (ver src/tarifasFlete.ts).
     ["cuadro_viajes", "fleteManual", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Reconocidos de Cartones America (ver generarReconocidosCorame en

@@ -21,7 +21,8 @@
  * - Vehiculo: obligatorio el peso vacio (VEH090: de 200 kg al peso bruto, de 3
  *   a 5 digitos). La configuracion y la carroceria las toma del RUNT (se
  *   mando 3S3/55 y 0 y quedo 54 y 7), por eso no se envian.
- * - Remolque: basta la placa.
+ * - Remolque: la placa y, como al vehiculo, el peso vacio (en produccion lo
+ *   exige: VEH090). Se manda con la misma etiqueta PESOVEHICULOVACIO.
  * - Telefono: es opcional, pero si se envia debe tener 10 digitos (fijo con
  *   indicativo 60X o celular). Con el formato viejo de 7 digitos rechaza todo
  *   el registro (TER190); por eso solo se envia si tiene 10 digitos.
@@ -123,27 +124,28 @@ export interface FilaVehiculo {
   numIdTenedor: string | null;
 }
 
+/** Peso en kg sin decimales; vacio -> undefined (la etiqueta no se envia). */
+const pesoRndc = (v: number | string | null | undefined): string | undefined =>
+  v === null || v === undefined || v === "" ? undefined : String(Math.round(Number(v)));
+
 /**
  * Variables del proceso 12 para un vehiculo: placa, peso vacio (en kg, sin
  * decimales) y tenedor si lo hay. Configuracion y carroceria no: el RNDC las
  * toma del RUNT.
  */
 export function variablesVehiculo(v: FilaVehiculo): Record<string, string | undefined> {
-  const peso = v.pesoVehiculoVacio === null || v.pesoVehiculoVacio === undefined || v.pesoVehiculoVacio === ""
-    ? undefined
-    : String(Math.round(Number(v.pesoVehiculoVacio)));
   const tenedor = texto(v.numIdTenedor);
   return {
     NUMPLACA: texto(v.placa)?.toUpperCase(),
-    PESOVEHICULOVACIO: peso,
+    PESOVEHICULOVACIO: pesoRndc(v.pesoVehiculoVacio),
     CODTIPOIDTENEDOR: tenedor ? texto(v.codTipoIdTenedor) ?? "C" : undefined,
     NUMIDTENEDOR: tenedor,
   };
 }
 
-/** Variables del proceso 12 para un remolque: solo la placa. */
-export function variablesRemolque(r: { placa: string }): Record<string, string | undefined> {
-  return { NUMPLACA: texto(r.placa)?.toUpperCase() };
+/** Variables del proceso 12 para un remolque: la placa y su peso vacio. */
+export function variablesRemolque(r: { placa: string; pesoVehiculoVacio?: number | string | null }): Record<string, string | undefined> {
+  return { NUMPLACA: texto(r.placa)?.toUpperCase(), PESOVEHICULOVACIO: pesoRndc(r.pesoVehiculoVacio) };
 }
 
 /** Resultado de registrar un maestro, ya interpretado. */
@@ -191,7 +193,7 @@ export async function registrarMaestro(maestro: Maestro, id: number): Promise<Re
         ? [PROCESO_ID_TERCERO, variablesConductor(fila as unknown as FilaConductor)]
         : maestro === "vehiculos"
           ? [PROCESO_ID_VEHICULO, variablesVehiculo(fila as unknown as FilaVehiculo)]
-          : [PROCESO_ID_VEHICULO, variablesRemolque(fila as unknown as { placa: string })];
+          : [PROCESO_ID_VEHICULO, variablesRemolque(fila as unknown as { placa: string; pesoVehiculoVacio: number | null })];
 
   const credenciales = credencialesRndc();
   const cliente = clienteRegistro();

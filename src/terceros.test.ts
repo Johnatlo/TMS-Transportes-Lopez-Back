@@ -76,15 +76,16 @@ describe("liquidar", () => {
 
 describe("filasConPoliza", () => {
   test("una poliza por manifiesto, en la primera fila pactada; sin manifiesto, cada una", () => {
-    const f = (id: number, manifiesto: string | null, pactada = true) => ({
+    const f = (id: number, manifiesto: string | null, pactada = true, urbano = false) => ({
       id,
       manifiesto,
       pesoKg: 10_000,
       valorTerceroTon: pactada ? 100_000 : null,
       valorTerceroFijo: null,
+      urbano,
     });
-    // 00006755 con tres clientes (la primera sin pactar), 00006767 solo y dos sin manifiesto.
-    const ids = filasConPoliza([f(3, "00006755"), f(1, "00006755", false), f(2, "00006755"), f(4, "00006767"), f(5, null), f(6, null)]);
+    // 00006755 con tres clientes (la primera sin pactar), 00006767 solo, dos sin manifiesto y un urbano.
+    const ids = filasConPoliza([f(3, "00006755"), f(1, "00006755", false), f(2, "00006755"), f(4, "00006767"), f(5, null), f(6, null), f(7, null, true, true)]);
     expect([...ids].sort()).toEqual([2, 4, 5, 6]);
   });
 

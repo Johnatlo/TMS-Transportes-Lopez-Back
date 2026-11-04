@@ -37,7 +37,8 @@ describe("calcular: socios", () => {
     expect([c.comision, c.tLopez, c.descargue, c.poliza, c.anticipo]).toEqual([130_000, 50_000, 198_000, 3_000, 1_800_000]);
     // En el Excel: 3.197.852,84 (sin redondear cada descuento).
     expect(c.saldoBeneficiario).toBe(3_197_852);
-    expect(c.ganancia).toBe(180_000);
+    // La comision y T. Lopez son gastos del dueno, no ganancia de la empresa.
+    expect([c.rentabilidad, c.ganancia]).toEqual([0, 0]);
   });
 
   test("urbano, reconocido y dobletroque: sin descargue ni poliza; comision una vez por remision", () => {
@@ -93,6 +94,12 @@ describe("calcular: terceros", () => {
     const con = calcular(entrada({ ...base, rentOtrosDescuentos: 200_000 }));
     expect(con.saldoBeneficiario).toBe(sin.saldoBeneficiario - 200_000);
     expect([con.saldoEmpresa, con.rentabilidad, con.anticipoRenta, con.ganancia]).toEqual([sin.saldoEmpresa, sin.rentabilidad, sin.anticipoRenta, sin.ganancia]);
+  });
+
+  test("un urbano no lleva poliza RCE", () => {
+    const base = { grupo: "TERCEROS", valorEmpresa: 1_000_000, valorTercero: 900_000 };
+    expect(calcular(entrada(base)).poliza).toBe(3_000);
+    expect(calcular(entrada({ ...base, urbano: true })).poliza).toBe(0);
   });
 
   test("sin flete no hay comision", () => {

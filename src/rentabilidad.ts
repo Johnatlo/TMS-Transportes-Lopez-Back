@@ -17,8 +17,8 @@
  *   (como en los demas carros) se le descuenta a la empresa, no al tercero.
  * - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
  *   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
- *   el anticipo = lo que se le paga al dueno. La empresa se queda con la
- *   comision y T. Lopez.
+ *   el anticipo = lo que se le paga al dueno. La comision y T. Lopez son
+ *   gastos del dueno: estos carros no le dejan rentabilidad a la empresa.
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
@@ -249,7 +249,8 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
     // La comision de la matriz, como en los demas carros: una vez por remision y con flete.
     const comision = e.rentComision ?? (e.primeraDeRemision && v > 0 ? e.comisionMatriz?.comision ?? 0 : 0);
     const tLopez = e.rentTLopez ?? 0;
-    const poliza = e.rentPoliza ?? (e.primeraDeManifiesto && p > 0 ? POLIZA_RCE : 0);
+    // Los urbanos no llevan poliza RCE.
+    const poliza = e.rentPoliza ?? (e.primeraDeManifiesto && !e.urbano && p > 0 ? POLIZA_RCE : 0);
     const saldoEmpresa = v - retencion - reteIca - supertransporte - comision - tLopez;
     const retencionTercero = aplicada("retencionTercero");
     const reteIcaTercero = aplicada("reteIcaTercero");
@@ -315,8 +316,10 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
     supertransporteTercero: 0,
     otrosDescuentos,
     saldoBeneficiario,
-    rentabilidad: comision + tLopez,
-    ganancia: comision + tLopez,
+    // Los carros de los socios no le dejan rentabilidad a la empresa: la
+    // comision y T. Lopez son gastos que se le descuentan al dueno.
+    rentabilidad: 0,
+    ganancia: 0,
   };
 }
 

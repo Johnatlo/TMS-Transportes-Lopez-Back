@@ -92,8 +92,10 @@ describe("vehiculo y remolque (proceso 12)", () => {
     expect(v.NUMIDTENEDOR).toBeUndefined();
   });
 
-  test("remolque: solo la placa", () => {
-    expect(variablesRemolque({ placa: "r37108" })).toEqual({ NUMPLACA: "R37108" });
+  test("remolque: la placa y el peso vacio (VEH090), sin decimales", () => {
+    expect(variablesRemolque({ placa: "r37108", pesoVehiculoVacio: 7000.4 })).toEqual({ NUMPLACA: "R37108", PESOVEHICULOVACIO: "7000" });
+    // Sin peso no se manda la etiqueta.
+    expect(variablesRemolque({ placa: "r37108", pesoVehiculoVacio: null }).PESOVEHICULOVACIO).toBeUndefined();
   });
 });
 

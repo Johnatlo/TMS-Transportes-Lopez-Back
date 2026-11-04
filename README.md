@@ -530,7 +530,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_735 funciones, componentes, métodos y rutas en 51 archivos._
+_736 funciones, componentes, métodos y rutas en 51 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -559,7 +559,7 @@ _735 funciones, componentes, métodos y rutas en 51 archivos._
 - [`src/rndc/conexion.ts`](#srcrndcconexionts) (4)
 - [`src/rndc/consultas.ts`](#srcrndcconsultasts) (16)
 - [`src/rndc/estampado.ts`](#srcrndcestampadots) (4)
-- [`src/rndc/maestros.ts`](#srcrndcmaestrosts) (9)
+- [`src/rndc/maestros.ts`](#srcrndcmaestrosts) (10)
 - [`src/rndc/manifiesto-contingencia.ts`](#srcrndcmanifiestocontingenciats) (5)
 - [`src/rndc/pdf.ts`](#srcrndcpdfts) (4)
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
@@ -1749,8 +1749,8 @@ _735 funciones, componentes, métodos y rutas en 51 archivos._
 >   (como en los demas carros) se le descuenta a la empresa, no al tercero.
 > - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
 >   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
->   el anticipo = lo que se le paga al dueno. La empresa se queda con la
->   comision y T. Lopez.
+>   el anticipo = lo que se le paga al dueno. La comision y T. Lopez son
+>   gastos del dueno: estos carros no le dejan rentabilidad a la empresa.
 
 - **`grupoDe(placa, flota, dueno)`** · _función_
   Grupo de un viaje: por la placa; si no, los terceros, el socio dueno o PROPIOS.
@@ -1837,7 +1837,7 @@ _735 funciones, componentes, métodos y rutas en 51 archivos._
     Un remolque por id, o null.
 
   - **`remolques.create(data)`** · _método_
-    Crea un remolque (placa, ejes, capacidad y vencimientos) y lo devuelve.
+    Crea un remolque (placa, ejes, capacidad, peso vacio y vencimientos) y lo devuelve.
 
   - **`remolques.update(id, datos)`** · _método_
     Edita un remolque desde el catalogo: solo los campos enviados (ver actualizarFila).
@@ -2746,7 +2746,8 @@ _735 funciones, componentes, métodos y rutas en 51 archivos._
 > - Vehiculo: obligatorio el peso vacio (VEH090: de 200 kg al peso bruto, de 3
 >   a 5 digitos). La configuracion y la carroceria las toma del RUNT (se
 >   mando 3S3/55 y 0 y quedo 54 y 7), por eso no se envian.
-> - Remolque: basta la placa.
+> - Remolque: la placa y, como al vehiculo, el peso vacio (en produccion lo
+>   exige: VEH090). Se manda con la misma etiqueta PESOVEHICULOVACIO.
 > - Telefono: es opcional, pero si se envia debe tener 10 digitos (fijo con
 >   indicativo 60X o celular). Con el formato viejo de 7 digitos rechaza todo
 >   el registro (TER190); por eso solo se envia si tiene 10 digitos.
@@ -2774,13 +2775,16 @@ _735 funciones, componentes, métodos y rutas en 51 archivos._
   Variables del proceso 11 para un conductor: en el RNDC es un tercero mas
   (persona natural, sede 0). La licencia la toma el RNDC del RUNT.
 
+- **`pesoRndc(v)`** · _función_
+  Peso en kg sin decimales; vacio -> undefined (la etiqueta no se envia).
+
 - **`variablesVehiculo(v)`** · _función_
   Variables del proceso 12 para un vehiculo: placa, peso vacio (en kg, sin
   decimales) y tenedor si lo hay. Configuracion y carroceria no: el RNDC las
   toma del RUNT.
 
 - **`variablesRemolque(r)`** · _función_
-  Variables del proceso 12 para un remolque: solo la placa.
+  Variables del proceso 12 para un remolque: la placa y su peso vacio.
 
 - **`interpretarRegistro(r)`** · _función_
   Interpreta la respuesta del RNDC. "DUPLICADO:<radicado>" significa que ya
@@ -4517,7 +4521,8 @@ _735 funciones, componentes, métodos y rutas en 51 archivos._
 
 - **`filasConPoliza(filas)`** · _función_
   Filas (ids) que llevan la poliza RCE: una por manifiesto, la primera ya
-  pactada (la de menor id); las filas sin manifiesto la llevan cada una.
+  pactada (la de menor id); las filas sin manifiesto la llevan cada una. Los
+  urbanos no la llevan.
 
 - **`estadoPagoTercero(f, l, hoy)`** · _función_
   Estado del pago de un viaje al tercero (ver EstadoPagoTercero).

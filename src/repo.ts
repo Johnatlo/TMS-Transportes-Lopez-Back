@@ -15,6 +15,8 @@ export interface Remolque {
   placa: string;
   numEjes: number | null;
   capacidadKg: number | null;
+  /** Peso del remolque vacio en kg (el RNDC lo pide al registrarlo). */
+  pesoVehiculoVacio: number | null;
   fechaVencSoat: Date | null;
   fechaVencTecnomecanica: Date | null;
   activo: boolean;
@@ -399,15 +401,16 @@ export const remolques = {
     const row = rows[0] as unknown as Remolque | undefined;
     return row ? mapBool(row) : null;
   },
-  /** Crea un remolque (placa, ejes, capacidad y vencimientos) y lo devuelve. */
-  async create(data: Omit<Remolque, "id" | "activo">): Promise<Remolque> {
+  /** Crea un remolque (placa, ejes, capacidad, peso vacio y vencimientos) y lo devuelve. */
+  async create(data: Omit<Remolque, "id" | "activo" | "pesoVehiculoVacio"> & { pesoVehiculoVacio?: number | null }): Promise<Remolque> {
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO remolques (placa, numEjes, capacidadKg, fechaVencSoat, fechaVencTecnomecanica)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO remolques (placa, numEjes, capacidadKg, pesoVehiculoVacio, fechaVencSoat, fechaVencTecnomecanica)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       [
         data.placa,
         data.numEjes,
         data.capacidadKg,
+        data.pesoVehiculoVacio ?? null,
         fechaMysql(data.fechaVencSoat),
         fechaMysql(data.fechaVencTecnomecanica),
       ]
@@ -420,6 +423,7 @@ export const remolques = {
       placa: "texto",
       numEjes: "numero",
       capacidadKg: "numero",
+      pesoVehiculoVacio: "numero",
       fechaVencSoat: "fecha",
       fechaVencTecnomecanica: "fecha",
       activo: "booleano",
