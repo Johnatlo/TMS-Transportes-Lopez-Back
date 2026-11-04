@@ -17,7 +17,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
 import { sqlFlota } from "./flota";
-import { cargarTarifas, deducirConMatriz, fleteDeTarifa } from "./tarifasFlete";
+import { cargarTarifas, clienteSoloUrbano, deducirConMatriz, fleteDeTarifa } from "./tarifasFlete";
 import type { TarifaPosible } from "./tarifasFlete";
 // anticipos.ts tambien importa de aqui; solo se usan dentro de funciones, asi
 // que el ciclo no molesta (cuando se llaman, los dos modulos ya cargaron).
@@ -943,6 +943,10 @@ export const cuadro = {
     }
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} ORDER BY c.fecha DESC, c.id DESC`);
     const filas = rows.map(mapear);
+    // Sin tarifa asignada (flete escrito a mano o traido del Excel): urbano si
+    // todas las tarifas de su cliente estan marcadas como urbanas.
+    const tarifas = await cargarTarifas();
+    for (const f of filas) if (!f.urbano && f.tarifaFleteId === null && clienteSoloUrbano(f.empresa, tarifas)) f.urbano = true;
     await this.agregarTarifasPosibles(filas);
     return filas;
   },

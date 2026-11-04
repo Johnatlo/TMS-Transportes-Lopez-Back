@@ -22,6 +22,8 @@ export interface TarifaMatriz {
   tipo: "TON" | "FIJO" | "POR" | "POR3";
   pesoMinimoKg: number | null;
   pesoFijoKg: number | null;
+  /** Marcada como urbana en la matriz (sus viajes no llevan poliza RCE). */
+  urbano?: boolean;
 }
 
 /** Lo del viaje que sirve para elegir la tarifa. */
@@ -176,6 +178,26 @@ function nombraOrigenSinDestino(tarifa: TarifaMatriz, v: ViajeParaTarifa): boole
   return !!destino && origen !== destino && nombraCiudad(tarifa, origen) && !nombraCiudad(tarifa, destino);
 }
 
+/**
+ * Las tarifas de un cliente con cuanto se parecen a el: las de su mismo
+ * nombre (o que uno contiene al otro), no las que apenas comparten una palabra.
+ */
+function tarifasDelCliente(empresa: string, tarifas: TarifaMatriz[]): Array<{ t: TarifaMatriz; par: number }> {
+  const conParecido = tarifas.map((t) => ({ t, par: parecido(empresa, t) })).filter((x) => x.par > 0);
+  if (!conParecido.length) return [];
+  const minimo = Math.min(Math.max(...conParecido.map((x) => x.par)), 2);
+  return conParecido.filter((x) => x.par >= minimo);
+}
+
+/**
+ * true si todas las tarifas del cliente estan marcadas como urbanas (COOP DE
+ * LA SABANA): sus viajes son urbanos aunque no tengan la tarifa asignada.
+ */
+export function clienteSoloUrbano(empresa: string, tarifas: TarifaMatriz[]): boolean {
+  const delCliente = tarifasDelCliente(empresa, tarifas);
+  return delCliente.length > 0 && delCliente.every((x) => x.t.urbano);
+}
+
 /** Cuantas tarifas posibles se muestran como mucho. */
 const MAX_POSIBLES = 8;
 
@@ -186,15 +208,11 @@ const MAX_POSIBLES = 8;
  * posibles: la mejor, las que quedan cerca y las de varios clientes.
  */
 export function deducirTarifa(v: ViajeParaTarifa, tarifas: TarifaMatriz[]): Deduccion {
-  const conParecido = tarifas.map((t) => ({ t, par: parecido(v.empresa, t) })).filter((x) => x.par > 0);
-  if (!conParecido.length) return { exacta: null, posibles: [] };
-  // Solo las del cliente (mismo nombre o uno contiene al otro), no las que apenas comparten una palabra.
-  const minimo = Math.min(Math.max(...conParecido.map((x) => x.par)), 2);
-  const delCliente = conParecido
-    .filter((x) => x.par >= minimo)
+  const delCliente = tarifasDelCliente(v.empresa, tarifas)
     .map((x) => ({ ...x, p: puntajeTarifa(x.t, v) }))
     .sort((a, b) => b.p - a.p || b.par - a.par || a.t.nombre.length - b.t.nombre.length);
   const mejor = delCliente[0];
+  if (!mejor) return { exacta: null, posibles: [] };
   // Empate (o casi): a menos de medio punto de la mejor. Si empata con una que
   // se parece menos al cliente ("EMPAQUES" para Empaques y Papeles WY), gana la de su nombre.
   const cerca = delCliente.slice(1).filter((x) => x.p > mejor.p - 0.5 && x.par >= mejor.par);
@@ -266,7 +284,7 @@ export async function deducirConMatriz(v: ViajeParaTarifa): Promise<Deduccion> {
 export async function cargarTarifas(): Promise<TarifaMatriz[]> {
   if (matriz) return matriz;
   const [rows] = await pool.query<RowDataPacket[]>(
-    "SELECT id, nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg FROM tarifas_flete ORDER BY nombre, id"
+    "SELECT id, nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, urbano FROM tarifas_flete ORDER BY nombre, id"
   );
   const num = (x: unknown) => (x === null || x === undefined ? null : Number(x));
   matriz = rows.map((r) => ({
@@ -277,6 +295,7 @@ export async function cargarTarifas(): Promise<TarifaMatriz[]> {
     tipo: (["TON", "FIJO", "POR", "POR3"].includes(r.tipo) ? r.tipo : "TON") as TarifaMatriz["tipo"],
     pesoMinimoKg: num(r.pesoMinimoKg),
     pesoFijoKg: num(r.pesoFijoKg),
+    urbano: !!r.urbano,
   }));
   return matriz;
 }

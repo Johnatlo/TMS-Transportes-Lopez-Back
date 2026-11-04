@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { deducirTarifa, fleteDeTarifa, parecido } from "./tarifasFlete";
+import { clienteSoloUrbano, deducirTarifa, fleteDeTarifa, parecido } from "./tarifasFlete";
 import type { TarifaMatriz, ViajeParaTarifa } from "./tarifasFlete";
 
 let id = 0;
@@ -35,6 +35,18 @@ const MATRIZ = [
   tarifa("DEKORANDO J&N PORCELATINOS S.A.S 2 CLIENTES", "PORCELATINOS S.A.S", 195000, "POR"),
   tarifa("PEGANTE NEIVA", "TP FORMULADOS SAS", null, "FIJO"),
 ];
+
+describe("clienteSoloUrbano", () => {
+  test("urbano solo si todas las tarifas del cliente estan marcadas", () => {
+    const sabana = { ...tarifa("COOP DE LA SABANA", "COOP DE LA SABANA", 750000, "FIJO"), urbano: true };
+    expect(clienteSoloUrbano("COOP DE LA SABANA", [...MATRIZ, sabana])).toBe(true);
+    expect(clienteSoloUrbano("COOP DE LA SABANA", [...MATRIZ, { ...sabana, urbano: false }])).toBe(false);
+    // Cartones America tiene tarifas urbanas y no urbanas: no se sabe sin la tarifa.
+    const corameUrbana = MATRIZ.map((t) => (t.nombre === "CORAME URBANO" ? { ...t, urbano: true } : t));
+    expect(clienteSoloUrbano("CARTONES AMERICA", corameUrbana)).toBe(false);
+    expect(clienteSoloUrbano("CLIENTE SIN TARIFAS", MATRIZ)).toBe(false);
+  });
+});
 
 const viaje = (c: Partial<ViajeParaTarifa>): ViajeParaTarifa => ({
   empresa: "CARTONES AMERICA",

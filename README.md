@@ -530,7 +530,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_736 funciones, componentes, métodos y rutas en 51 archivos._
+_738 funciones, componentes, métodos y rutas en 51 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -581,7 +581,7 @@ _736 funciones, componentes, métodos y rutas en 51 archivos._
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
-- [`src/tarifasFlete.ts`](#srctarifasfletets) (14)
+- [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
 
 ### `src/alertas.ts`
@@ -4467,6 +4467,14 @@ _736 funciones, componentes, métodos y rutas en 51 archivos._
 
 - **`nombraOrigenSinDestino(tarifa, v)`** · _función_
   true si el nombre de la tarifa trae la ciudad de origen del viaje pero no la de destino.
+
+- **`tarifasDelCliente(empresa, tarifas)`** · _función_
+  Las tarifas de un cliente con cuanto se parecen a el: las de su mismo
+  nombre (o que uno contiene al otro), no las que apenas comparten una palabra.
+
+- **`clienteSoloUrbano(empresa, tarifas)`** · _función_
+  true si todas las tarifas del cliente estan marcadas como urbanas (COOP DE
+  LA SABANA): sus viajes son urbanos aunque no tengan la tarifa asignada.
 
 - **`deducirTarifa(v, tarifas)`** · _función_
   Deduce la tarifa de un viaje. Exacta solo si: el cliente tiene tarifas, la
