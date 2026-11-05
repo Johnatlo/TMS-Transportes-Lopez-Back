@@ -129,9 +129,24 @@ export interface AjustesRentabilidad {
  * Retenciones que se pueden corregir en cada viaje: `retencion`,
  * `reteIca` y `supertransporte` se sacan del flete de la empresa; las
  * `...Tercero`, del flete pactado con el tercero; `bancaria` (4 x 1000 + 5.000),
- * del flete del tercero o del dueno.
+ * del flete del tercero o del dueno; `anticipoRenta` (3,5 %), del flete del
+ * dueno o, en terceros, de la rentabilidad. `comision`, `tLopez`, `descargue` y
+ * `poliza` solo se desmarcan (su valor se escribe en su propio campo).
  */
-export const CLAVES_RETENCION = ["retencion", "reteIca", "supertransporte", "bancaria", "retencionTercero", "reteIcaTercero", "supertransporteTercero"] as const;
+export const CLAVES_RETENCION = [
+  "retencion",
+  "reteIca",
+  "supertransporte",
+  "bancaria",
+  "retencionTercero",
+  "reteIcaTercero",
+  "supertransporteTercero",
+  "anticipoRenta",
+  "comision",
+  "tLopez",
+  "descargue",
+  "poliza",
+] as const;
 export type ClaveRetencion = (typeof CLAVES_RETENCION)[number];
 
 /** Lo escrito en una retencion: su valor (null = el calculado) y si aplica. */
@@ -232,11 +247,26 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
     retencionTercero: r(p * RETENCION_CLIENTE),
     reteIcaTercero: r((p * e.icaTerceroPorMil) / 1000),
     supertransporteTercero: r(p * SUPERTRANSPORTE),
+    // Socios: del flete; terceros: de la rentabilidad (se calcula abajo).
+    anticipoRenta: r(v * ANTICIPO_RENTA),
+    // Se llenan abajo con lo que da cada una (ver desmarcable).
+    comision: 0,
+    tLopez: 0,
+    descargue: 0,
+    poliza: 0,
   };
   /** La retencion con lo escrito en el viaje: desmarcada 0; si no, su valor o el calculado. */
   const aplicada = (clave: ClaveRetencion) => {
     const a = e.rentRetenciones[clave];
     return a && !a.aplica ? 0 : a?.valor ?? calculadas[clave];
+  };
+  /**
+   * Comision, T. Lopez, descargue y poliza: el valor sale de su campo o de la
+   * matriz; aqui se guarda para mostrarlo y se quita si se desmarco.
+   */
+  const desmarcable = (clave: ClaveRetencion, valor: number) => {
+    calculadas[clave] = valor;
+    return e.rentRetenciones[clave]?.aplica === false ? 0 : valor;
   };
   const retencion = aplicada("retencion");
   const reteIca = aplicada("reteIca");
@@ -247,10 +277,10 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
 
   if (terceros) {
     // La comision de la matriz, como en los demas carros: una vez por remision y con flete.
-    const comision = e.rentComision ?? (e.primeraDeRemision && v > 0 ? e.comisionMatriz?.comision ?? 0 : 0);
-    const tLopez = e.rentTLopez ?? 0;
+    const comision = desmarcable("comision", e.rentComision ?? (e.primeraDeRemision && v > 0 ? e.comisionMatriz?.comision ?? 0 : 0));
+    const tLopez = desmarcable("tLopez", e.rentTLopez ?? 0);
     // Los urbanos no llevan poliza RCE.
-    const poliza = e.rentPoliza ?? (e.primeraDeManifiesto && !e.urbano && p > 0 ? POLIZA_RCE : 0);
+    const poliza = desmarcable("poliza", e.rentPoliza ?? (e.primeraDeManifiesto && !e.urbano && p > 0 ? POLIZA_RCE : 0));
     const saldoEmpresa = v - retencion - reteIca - supertransporte - comision - tLopez;
     const retencionTercero = aplicada("retencionTercero");
     const reteIcaTercero = aplicada("reteIcaTercero");
@@ -258,7 +288,8 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
     // Gestion financiera del tercero = 4 x 1000 + 5.000 (bancaria) + Supertransporte.
     const saldoBeneficiario = p - retencionTercero - reteIcaTercero - bancaria - supertransporteTercero - poliza - otrosDescuentos;
     const rentabilidad = saldoEmpresa - saldoBeneficiario - otrosDescuentos;
-    const anticipoRenta = r(rentabilidad * ANTICIPO_RENTA);
+    calculadas.anticipoRenta = r(rentabilidad * ANTICIPO_RENTA);
+    const anticipoRenta = aplicada("anticipoRenta");
     return {
       retencion,
       icaPorMil,
@@ -288,12 +319,12 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
   const sinExtras = SIN_DESCARGUE_NI_POLIZA.has(e.grupo) || e.reconocido || e.urbano || v <= 0;
   // Comision y T. Lopez una vez por remision, y solo cuando el viaje ya tiene flete.
   const cobra = e.primeraDeRemision && v > 0;
-  const comision = e.rentComision ?? (cobra ? e.comisionMatriz?.comision ?? 0 : 0);
-  const tLopez = e.rentTLopez ?? (cobra ? e.comisionMatriz?.tLopez ?? 0 : 0);
+  const comision = desmarcable("comision", e.rentComision ?? (cobra ? e.comisionMatriz?.comision ?? 0 : 0));
+  const tLopez = desmarcable("tLopez", e.rentTLopez ?? (cobra ? e.comisionMatriz?.tLopez ?? 0 : 0));
   const corame = /CORAME|CARTONES\s+AMERICA/i.test(e.empresa);
-  const descargue = e.rentDescargue ?? (corame && !sinExtras && e.primeraDeManifiesto ? DESCARGUE_CAME : 0);
-  const poliza = e.rentPoliza ?? (!sinExtras && e.primeraDeManifiesto ? POLIZA_RCE : 0);
-  const anticipoRenta = r(v * ANTICIPO_RENTA);
+  const descargue = desmarcable("descargue", e.rentDescargue ?? (corame && !sinExtras && e.primeraDeManifiesto ? DESCARGUE_CAME : 0));
+  const poliza = desmarcable("poliza", e.rentPoliza ?? (!sinExtras && e.primeraDeManifiesto ? POLIZA_RCE : 0));
+  const anticipoRenta = aplicada("anticipoRenta");
   const saldoBeneficiario =
     v - retencion - reteIca - anticipoRenta - bancaria - supertransporte - comision - tLopez - descargue - poliza - anticipo - otrosDescuentos;
   return {

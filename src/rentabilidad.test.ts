@@ -47,6 +47,28 @@ describe("filaPrincipalPorManifiesto", () => {
   });
 });
 
+describe("descuentos desmarcables", () => {
+  const quitar = (...claves: string[]) => Object.fromEntries(claves.map((c) => [c, { valor: null, aplica: false }]));
+
+  test("socios: anticipo de renta, comision, T. Lopez, descargue y poliza se pueden quitar", () => {
+    const normal = calcular(entrada({}));
+    expect([normal.anticipoRenta, normal.comision, normal.tLopez, normal.descargue, normal.poliza]).toEqual([199_297, 130_000, 50_000, 198_000, 3_000]);
+    const sin = calcular(entrada({ rentRetenciones: quitar("anticipoRenta", "comision", "tLopez", "descargue", "poliza") }));
+    expect([sin.anticipoRenta, sin.comision, sin.tLopez, sin.descargue, sin.poliza]).toEqual([0, 0, 0, 0, 0]);
+    expect(sin.saldoBeneficiario).toBe(normal.saldoBeneficiario + 199_297 + 130_000 + 50_000 + 198_000 + 3_000);
+    // Lo que daria se sigue mostrando (en gris).
+    expect(sin.retencionesCalculadas.comision).toBe(130_000);
+  });
+
+  test("en terceros sale de la rentabilidad y tambien se puede quitar", () => {
+    const base = { grupo: "TERCEROS", valorEmpresa: 5_000_000, valorTercero: 4_000_000 };
+    const c = calcular(entrada(base));
+    expect(c.anticipoRenta).toBe(Math.round(c.rentabilidad * 0.035));
+    const sin = calcular(entrada({ ...base, rentRetenciones: { anticipoRenta: { valor: null, aplica: false } } }));
+    expect([sin.anticipoRenta, sin.ganancia]).toEqual([0, sin.rentabilidad]);
+  });
+});
+
 describe("calcular: socios", () => {
   test("igual que la hoja CELSO, fila 396 (TEK-298, Cartones America)", () => {
     const c = calcular(entrada({}));
