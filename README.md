@@ -530,7 +530,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_738 funciones, componentes, métodos y rutas en 51 archivos._
+_739 funciones, componentes, métodos y rutas en 51 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (31)
@@ -551,7 +551,7 @@ _738 funciones, componentes, métodos y rutas en 51 archivos._
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
-- [`src/rentabilidad.ts`](#srcrentabilidadts) (9)
+- [`src/rentabilidad.ts`](#srcrentabilidadts) (10)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/reportes.ts`](#srcreportests) (10)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
@@ -1772,6 +1772,12 @@ _738 funciones, componentes, métodos y rutas en 51 archivos._
 
 - **`calcular(e)`** · _función_
   Calcula la rentabilidad de un viaje (exportado para las pruebas).
+
+- **`filaPrincipalPorManifiesto(filas)`** · _función_
+  Fila que lleva los descuentos de su manifiesto (descargue, poliza y
+  anticipos) cuando tiene varias remesas: la de flete mas alto; si empatan, la
+  primera registrada. Devuelve manifiesto -> id de esa fila (exportado para las
+  pruebas).
 
 - **`rentabilidad`** · _módulo_
   Repositorio de la rentabilidad y sus matrices.

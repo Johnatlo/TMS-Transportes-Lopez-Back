@@ -351,6 +351,23 @@ export interface FilaRentabilidad extends AjustesRentabilidad, CalculoRentabilid
   concepto: string | null;
 }
 
+/**
+ * Fila que lleva los descuentos de su manifiesto (descargue, poliza y
+ * anticipos) cuando tiene varias remesas: la de flete mas alto; si empatan, la
+ * primera registrada. Devuelve manifiesto -> id de esa fila (exportado para las
+ * pruebas).
+ */
+export function filaPrincipalPorManifiesto(filas: Array<{ id: number; manifiesto: string | null; valorFlete: number | null }>): Map<string, number> {
+  const mejor = new Map<string, { id: number; flete: number }>();
+  for (const f of [...filas].sort((a, b) => a.id - b.id)) {
+    if (!f.manifiesto) continue;
+    const flete = f.valorFlete ?? 0;
+    const actual = mejor.get(f.manifiesto);
+    if (!actual || flete > actual.flete) mejor.set(f.manifiesto, { id: f.id, flete });
+  }
+  return new Map([...mejor].map(([m, x]) => [m, x.id]));
+}
+
 /** Repositorio de la rentabilidad y sus matrices. */
 export const rentabilidad = {
   /** Todos los viajes no anulados, con su grupo y su rentabilidad (los mas recientes primero). */
@@ -384,16 +401,44 @@ export const rentabilidad = {
     );
     const vivos = filas.filter((f) => !f.anulado).sort((a, b) => a.id - b.id);
     const remisiones = new Set<string>();
-    const manifiestos = new Set<string>();
+    // Varias remesas en un manifiesto: descargue, poliza y todos sus anticipos van
+    // a la fila de flete mas alto (las demas quedan sin ellos).
+    const principal = filaPrincipalPorManifiesto(vivos);
+    const sinAnticipo = { efectivo: 0, combustible: 0, transferencia: 0, fechasEfectivo: [] as string[], fechasCombustible: [] as string[], fechaTransferencia: null as string | null };
+    const anticipoManifiesto = new Map<string, typeof sinAnticipo>();
+    const anticipoDe = (f: FilaCuadro) => {
+      const b = bombaPor.get(f.id);
+      const transferencia = f.anticipoTransferencia ?? 0;
+      return {
+        efectivo: b?.efectivo ?? 0,
+        combustible: b?.combustible ?? 0,
+        transferencia,
+        fechasEfectivo: b?.fechasEfectivo ?? [],
+        fechasCombustible: b?.fechasCombustible ?? [],
+        fechaTransferencia: transferencia ? f.anticipoTransferenciaFecha : null,
+      };
+    };
+    for (const f of vivos) {
+      if (!f.manifiesto) continue;
+      const x = anticipoDe(f);
+      const g = anticipoManifiesto.get(f.manifiesto) ?? { ...sinAnticipo, fechasEfectivo: [], fechasCombustible: [] };
+      g.efectivo += x.efectivo;
+      g.combustible += x.combustible;
+      g.transferencia += x.transferencia;
+      g.fechasEfectivo = [...new Set([...g.fechasEfectivo, ...x.fechasEfectivo])].sort();
+      g.fechasCombustible = [...new Set([...g.fechasCombustible, ...x.fechasCombustible])].sort();
+      g.fechaTransferencia = g.fechaTransferencia ?? x.fechaTransferencia;
+      anticipoManifiesto.set(f.manifiesto, g);
+    }
     const resultado = vivos.map((f: FilaCuadro): FilaRentabilidad => {
       const grupo = grupoDe(f.placa, f.flota, f.dueno);
-      // Comision una vez por remision y descargue/poliza una vez por manifiesto (la primera fila).
+      // Comision una vez por remision; descargue, poliza y anticipos una vez por
+      // manifiesto, en su fila de flete mas alto.
       const claveRemision = `${f.placa}|${f.remision || f.manifiesto || `id${f.id}`}`;
       const primeraDeRemision = !remisiones.has(claveRemision);
       remisiones.add(claveRemision);
-      const claveManifiesto = f.manifiesto ? `m${f.manifiesto}` : `id${f.id}`;
-      const primeraDeManifiesto = !manifiestos.has(claveManifiesto);
-      manifiestos.add(claveManifiesto);
+      const primeraDeManifiesto = !f.manifiesto || principal.get(f.manifiesto) === f.id;
+      const b = !f.manifiesto ? anticipoDe(f) : primeraDeManifiesto ? anticipoManifiesto.get(f.manifiesto) ?? sinAnticipo : sinAnticipo;
       const a = ajustePor.get(f.id);
       const num = (x: unknown) => (x === null || x === undefined ? null : Number(x));
       const ajustes: AjustesRentabilidad = {
@@ -408,7 +453,6 @@ export const rentabilidad = {
         rentOtrosConcepto: a?.rentOtrosConcepto ?? null,
       };
       const t = deTercero.get(f.id);
-      const b = bombaPor.get(f.id) ?? { efectivo: 0, combustible: 0, fechasEfectivo: [], fechasCombustible: [] };
       const entrada: EntradaRentabilidad = {
         ...ajustes,
         grupo,
@@ -420,7 +464,7 @@ export const rentabilidad = {
         primeraDeManifiesto,
         efectivo: b.efectivo,
         combustible: b.combustible,
-        transferencia: f.anticipoTransferencia ?? 0,
+        transferencia: b.transferencia,
         valorTercero: t?.valorTercero ?? null,
         icaTerceroPorMil: t?.icaPorMil ?? 0,
         comisionMatriz: buscarEnMatriz(matrices.comisiones, f.empresa, f.urbano),
@@ -445,7 +489,7 @@ export const rentabilidad = {
         transferencia: entrada.transferencia,
         fechasEfectivo: b.fechasEfectivo,
         fechasCombustible: b.fechasCombustible,
-        fechaTransferencia: entrada.transferencia ? f.anticipoTransferenciaFecha : null,
+        fechaTransferencia: b.fechaTransferencia,
         fechaPagoEmpresa: f.facturaFechaPago,
         fechaPagoBeneficiario: f.fechaPagoSaldo,
         concepto: f.concepto,

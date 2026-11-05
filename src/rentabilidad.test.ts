@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buscarEnMatriz, calcular, grupoDe, leerRetenciones } from "./rentabilidad";
+import { buscarEnMatriz, calcular, filaPrincipalPorManifiesto, grupoDe, leerRetenciones } from "./rentabilidad";
 import type { EntradaRentabilidad } from "./rentabilidad";
 
 /** Entrada de prueba: un viaje de socio de Cartones America, primera fila de todo. */
@@ -28,6 +28,23 @@ const entrada = (c: Partial<EntradaRentabilidad>): EntradaRentabilidad => ({
   rentOtrosDescuentos: null,
   rentOtrosConcepto: null,
   ...c,
+});
+
+describe("filaPrincipalPorManifiesto", () => {
+  test("los descuentos del manifiesto van a la fila de flete mas alto; si empatan, a la primera", () => {
+    const p = filaPrincipalPorManifiesto([
+      { id: 1, manifiesto: "00006850", valorFlete: 1_000_000 },
+      { id: 2, manifiesto: "00006850", valorFlete: 3_000_000 },
+      { id: 3, manifiesto: "00006850", valorFlete: 2_000_000 },
+      { id: 4, manifiesto: "00006851", valorFlete: null },
+      { id: 5, manifiesto: "00006851", valorFlete: null },
+      { id: 6, manifiesto: null, valorFlete: 500_000 },
+    ]);
+    expect([...p]).toEqual([
+      ["00006850", 2],
+      ["00006851", 4],
+    ]);
+  });
 });
 
 describe("calcular: socios", () => {
