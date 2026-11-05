@@ -289,7 +289,7 @@ cuadroRouter.delete("/:id", async (req, res) => {
  */
 cuadroRouter.post("/:id/revision", async (req, res) => {
   const id = Number(req.params.id);
-  const quien = req.body?.quien === "GERENCIA" ? "GERENCIA" : "CONTABILIDAD";
+  const quien = req.body?.quien === "GERENCIA" ? "GERENCIA" : req.body?.quien === "RENTABILIDAD" ? "RENTABILIDAD" : "CONTABILIDAD";
   await cuadro.revisar(id, quien, req.usuario?.id ?? null, req.body?.revisado !== false);
   res.json(await cuadro.obtener(id));
 });

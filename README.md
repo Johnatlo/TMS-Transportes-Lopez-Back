@@ -1337,7 +1337,7 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
     Solo los viajes creados a mano (sin manifiesto) se pueden borrar.
 
   - **`cuadro.revisar(id, quien, usuarioId, revisado)`** · _método_
-    Revisado por contabilidad o por la gerente (o se quita la marca).
+    Revisado por contabilidad, por la gerente o en Rentabilidad (o se quita la marca).
 
   - **`cuadro.facturar(ids, datos)`** · _método_
     Una factura que cubre varios viajes (los urbanos se facturan juntos).

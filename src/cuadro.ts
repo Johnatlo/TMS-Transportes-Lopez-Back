@@ -1124,9 +1124,9 @@ export const cuadro = {
     return res.affectedRows > 0;
   },
 
-  /** Revisado por contabilidad o por la gerente (o se quita la marca). */
-  async revisar(id: number, quien: "CONTABILIDAD" | "GERENCIA", usuarioId: number | null, revisado: boolean) {
-    const col = quien === "CONTABILIDAD" ? "revisadoContabilidad" : "revisadoGerencia";
+  /** Revisado por contabilidad, por la gerente o en Rentabilidad (o se quita la marca). */
+  async revisar(id: number, quien: "CONTABILIDAD" | "GERENCIA" | "RENTABILIDAD", usuarioId: number | null, revisado: boolean) {
+    const col = quien === "CONTABILIDAD" ? "revisadoContabilidad" : quien === "GERENCIA" ? "revisadoGerencia" : "rentRevisado";
     await pool.query(`UPDATE cuadro_viajes SET ${col}PorId = ?, ${col}En = ? WHERE id = ?`, [
       revisado ? usuarioId : null,
       revisado ? new Date() : null,

@@ -349,6 +349,9 @@ export interface FilaRentabilidad extends AjustesRentabilidad, CalculoRentabilid
   /** Cuando se le pago al tercero o al dueno. */
   fechaPagoBeneficiario: string | null;
   concepto: string | null;
+  /** Marcado como revisado en Rentabilidad: cuando (ISO) y quien. */
+  rentRevisadoEn: string | null;
+  rentRevisadoPor: string | null;
 }
 
 /**
@@ -377,9 +380,10 @@ export const rentabilidad = {
     const [datosTerceros, [ajustes], [bomba], matrices] = await Promise.all([
       terceros.listar(filas),
       pool.query<RowDataPacket[]>(
-        `SELECT id, rentComision, rentTLopez, rentDescargue, rentPoliza, rentIcaPorMil, fechaPagoRentabilidad,
-                rentRetenciones, rentOtrosDescuentos, rentOtrosConcepto
-           FROM cuadro_viajes WHERE anulado = 0`
+        `SELECT c.id, c.rentComision, c.rentTLopez, c.rentDescargue, c.rentPoliza, c.rentIcaPorMil, c.fechaPagoRentabilidad,
+                c.rentRetenciones, c.rentOtrosDescuentos, c.rentOtrosConcepto, c.rentRevisadoEn, u.nombre AS rentRevisadoPor
+           FROM cuadro_viajes c LEFT JOIN usuarios u ON u.id = c.rentRevisadoPorId
+          WHERE c.anulado = 0`
       ),
       pool.query<RowDataPacket[]>(
         `SELECT cuadroViajeId, SUM(COALESCE(efectivo, 0)) AS efectivo,
@@ -493,6 +497,8 @@ export const rentabilidad = {
         fechaPagoEmpresa: f.facturaFechaPago,
         fechaPagoBeneficiario: f.fechaPagoSaldo,
         concepto: f.concepto,
+        rentRevisadoEn: a?.rentRevisadoEn ? new Date(a.rentRevisadoEn).toISOString() : null,
+        rentRevisadoPor: a?.rentRevisadoPor ?? null,
       };
     });
     return resultado.sort((x, y) => y.fecha.localeCompare(x.fecha) || y.id - x.id);
