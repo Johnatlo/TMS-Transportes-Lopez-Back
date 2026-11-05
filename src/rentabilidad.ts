@@ -355,7 +355,8 @@ export interface FilaRentabilidad extends AjustesRentabilidad, CalculoRentabilid
 export const rentabilidad = {
   /** Todos los viajes no anulados, con su grupo y su rentabilidad (los mas recientes primero). */
   async listar(): Promise<FilaRentabilidad[]> {
-    const filas = await cuadro.listar();
+    // Sin esperar el mantenimiento que arranca al guardar: el cambio se ve de una vez.
+    const filas = await cuadro.listar({ esperarMantenimiento: false });
     const [datosTerceros, [ajustes], [bomba], matrices] = await Promise.all([
       terceros.listar(filas),
       pool.query<RowDataPacket[]>(

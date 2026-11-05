@@ -932,11 +932,15 @@ export const cuadro = {
    * mantenimiento corre aparte (ver mantener). Si esta corriendo, espera a que
    * termine; si nunca ha corrido o se atraso, lo corre antes. A los que no
    * tienen flete les pone las tarifas posibles de la matriz (de memoria).
+   *
+   * esperarMantenimiento false (la rentabilidad): no espera la vuelta en curso
+   * si la ultima termino hace poco; asi lo recien guardado se ve de una vez.
    */
-  async listar(): Promise<FilaCuadro[]> {
+  async listar({ esperarMantenimiento = true }: { esperarMantenimiento?: boolean } = {}): Promise<FilaCuadro[]> {
     try {
-      if (mantenimientoEnCurso) await mantenimientoEnCurso;
-      else if (Date.now() - ultimoMantenimiento > MANTENIMIENTO_VENCE_MS) await cuadro.mantener();
+      const atrasado = Date.now() - ultimoMantenimiento > MANTENIMIENTO_VENCE_MS;
+      if (mantenimientoEnCurso && (esperarMantenimiento || atrasado)) await mantenimientoEnCurso;
+      else if (!mantenimientoEnCurso && atrasado) await cuadro.mantener();
     } catch (exc) {
       // Un mantenimiento fallido no deja la pantalla vacia: se lee lo que hay.
       console.warn("Mantenimiento del cuadro fallo:", (exc as Error).message);

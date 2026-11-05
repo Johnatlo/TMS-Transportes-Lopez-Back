@@ -1294,11 +1294,14 @@ _738 funciones, componentes, métodos y rutas en 51 archivos._
     Pide una vuelta de mantenimiento sin esperarla (despues de expedir,
     editar, importar...). Varias seguidas se juntan en una.
 
-  - **`cuadro.listar()`** · _método_
+  - **`cuadro.listar({...})`** · _método_
     Todos los viajes del cuadro, del mas reciente al mas antiguo. Solo lee: el
     mantenimiento corre aparte (ver mantener). Si esta corriendo, espera a que
     termine; si nunca ha corrido o se atraso, lo corre antes. A los que no
     tienen flete les pone las tarifas posibles de la matriz (de memoria).
+
+    esperarMantenimiento false (la rentabilidad): no espera la vuelta en curso
+    si la ultima termino hace poco; asi lo recien guardado se ve de una vez.
 
   - **`cuadro.agregarTarifasPosibles(filas)`** · _método_
     Tarifas posibles de la matriz en las filas sin flete (para elegir). Si la
