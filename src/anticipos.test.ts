@@ -62,7 +62,7 @@ describe("cuentas con la bomba", () => {
         { bombaId: null, valor: 900_000, fechaPago: null },
       ],
       1_000_000,
-      { cupoBomba: 500_000_000, precioGalonBomba: 11390, descuentoGalonBomba: 250 }
+      { cupoBomba: 500_000_000, precioGalonBomba: 11390 }
     );
     expect(r).toMatchObject({ deuda: 7_000_000, pagado: 2_200_000, abonadoSocio: 1_000_000, pendiente: 3_800_000, cupoDisponible: 496_200_000 });
   });
@@ -75,7 +75,7 @@ describe("cuentas con la bomba", () => {
         { bombaId: 1, valor: 1_800_000, fechaPago: null },
       ],
       1_000_000,
-      { cupoBomba: 500_000_000, precioGalonBomba: 11390, descuentoGalonBomba: 250 },
+      { cupoBomba: 500_000_000, precioGalonBomba: 11390 },
       0
     );
     expect(r).toMatchObject({ abonadoSocio: 1_000_000, pendiente: 1_800_000 });

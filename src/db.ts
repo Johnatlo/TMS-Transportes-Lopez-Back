@@ -352,6 +352,19 @@ export async function initSchema(): Promise<void> {
       UNIQUE KEY uq_bomba (nombre, ciudad)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Descuento por galon de cada bomba (estacion), con vigencia (ver
+  // anticipos.descuentosGalon): solo Chuzaca lo tiene. Un cambio agrega una
+  // fila que rige desde una fecha; los anticipos ya cruzados no cambian.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS descuentos_galon_bomba (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      bombaId INT NOT NULL,
+      descuentoGalon DOUBLE NOT NULL DEFAULT 0,
+      vigenteDesde DATE,
+      KEY idx_descuento_bomba (bombaId),
+      CONSTRAINT fk_descuento_bomba FOREIGN KEY (bombaId) REFERENCES bombas(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cuadro_viajes (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -957,6 +970,8 @@ export async function initSchema(): Promise<void> {
     ["parametros_empresa", "cupoBomba", "DOUBLE NOT NULL DEFAULT 500000000"],
     ["parametros_empresa", "precioGalonBomba", "DOUBLE NOT NULL DEFAULT 11390"],
     ["parametros_empresa", "descuentoGalonBomba", "DOUBLE NOT NULL DEFAULT 250"],
+    // Ya se paso el descuento por galon de arriba a la bomba de Chuzaca (una sola vez).
+    ["parametros_empresa", "descuentosBombaMigrado", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["cuadro_viajes", "tarifaFleteId", "INT"],
     ["cuadro_viajes", "pesoFacturadoKg", "DOUBLE"],
     ["cuadro_viajes", "notaFactura", "VARCHAR(300)"],
@@ -1022,6 +1037,12 @@ export async function initSchema(): Promise<void> {
     ["remolques", "pesoVehiculoVacio", "DOUBLE"],
     // El flete se escribio o se eligio a mano: la deduccion de la matriz no lo toca (ver src/tarifasFlete.ts).
     ["cuadro_viajes", "fleteManual", "TINYINT(1) NOT NULL DEFAULT 0"],
+    // Matrices con vigencia (ver src/vigencias.ts): desde cuando rige cada fila
+    // (null = desde siempre) y si desde esa fecha se quito.
+    ["rentabilidad_comisiones", "vigenteDesde", "DATE"],
+    ["rentabilidad_comisiones", "eliminado", "TINYINT(1) NOT NULL DEFAULT 0"],
+    ["rentabilidad_retenciones", "vigenteDesde", "DATE"],
+    ["rentabilidad_retenciones", "eliminado", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Revisado en Rentabilidad: quien y cuando (ver cuadro.revisar).
     ["cuadro_viajes", "rentRevisadoPorId", "INT"],
     ["cuadro_viajes", "rentRevisadoEn", "DATETIME"],
@@ -1203,6 +1224,20 @@ export async function initSchema(): Promise<void> {
       WHERE p.municipioDestino IS NULL
         AND td.codMunicipioRndc REGEXP '^[0-9]{8}$'`
   );
+
+  // El descuento por galon era uno solo para todas las bombas; ahora va por
+  // bomba y solo Chuzaca lo tiene. Una sola vez: a las bombas de Chuzaca se
+  // les pasa el valor que habia (desde siempre).
+  const [[migracion]] = await pool.query<RowDataPacket[]>(
+    "SELECT descuentosBombaMigrado AS hecho, descuentoGalonBomba AS valor FROM parametros_empresa WHERE id = 1"
+  );
+  if (migracion && !migracion.hecho) {
+    await pool.query(
+      "INSERT INTO descuentos_galon_bomba (bombaId, descuentoGalon) SELECT id, ? FROM bombas WHERE UPPER(nombre) REGEXP 'CHUSACA|CHUZACA'",
+      [Number(migracion.valor ?? 0)]
+    );
+    await pool.query("UPDATE parametros_empresa SET descuentosBombaMigrado = 1 WHERE id = 1");
+  }
 
   await unificarCollation();
 }

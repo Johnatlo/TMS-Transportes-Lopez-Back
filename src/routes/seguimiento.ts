@@ -5,6 +5,7 @@ import { responder } from "./cuadro";
 import { importarCartera, propuestaCartera } from "../importaciones";
 import { terceros } from "../terceros";
 import { rentabilidad } from "../rentabilidad";
+import { fechaVigencia } from "../vigencias";
 import { liquidacionDuenos } from "../liquidacionDuenos";
 
 /**
@@ -89,12 +90,16 @@ seguimientoRouter.get("/rentabilidad", async (_req, res) => {
   res.json(await rentabilidad.listar());
 });
 
-/** GET /api/seguimiento/rentabilidad/matrices: comisiones y retenciones por cliente. */
-seguimientoRouter.get("/rentabilidad/matrices", async (_req, res) => {
-  res.json(await rentabilidad.matrices());
+/** GET /api/seguimiento/rentabilidad/matrices?fecha=: comisiones y retenciones por cliente como rigen en esa fecha (hoy si no se da). */
+seguimientoRouter.get("/rentabilidad/matrices", async (req, res) => {
+  res.json(await rentabilidad.matrices(fechaVigencia(req.query.fecha) ?? undefined));
 });
 
-/** PUT /api/seguimiento/rentabilidad/matrices: reemplaza las matrices ({ comisiones?, retenciones? }). */
+/**
+ * PUT /api/seguimiento/rentabilidad/matrices: guarda las matrices desde una
+ * fecha ({ vigenteDesde?, comisiones?, retenciones? }); los viajes anteriores
+ * conservan sus valores.
+ */
 seguimientoRouter.put("/rentabilidad/matrices", async (req, res) => {
   await responder(res, () => rentabilidad.guardarMatrices(req.body ?? {}));
 });

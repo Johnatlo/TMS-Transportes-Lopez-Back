@@ -1905,6 +1905,8 @@ export interface FilaConsecutivo {
   fechaPlanillada: Date;
   placa: string | null;
   cliente: string | null;
+  /** NIT del cliente (contratante de la plantilla o propietario de la carga de la remesa). */
+  clienteNit: string | null;
   pesoReal: number | null;
   valorManifiesto: number | null;
   /** Valor a facturar de la remesa en el Cuadro pagos (null si aun no tiene tarifa). */
@@ -1948,7 +1950,7 @@ export const consecutivos = {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT v.id AS viajeId, vr.id AS remesaId, vr.orden,
               v.fechaCreacion AS fechaPlanillada, COALESCE(ve.placa, v.placaRndc) AS placa,
-              COALESCE(con.nombre, tpro.nombre, vr.propietarioNit) AS cliente, vr.pesoReal,
+              COALESCE(con.nombre, tpro.nombre, vr.propietarioNit) AS cliente, COALESCE(con.nit, vr.propietarioNit) AS clienteNit, vr.pesoReal,
               CASE WHEN vr.orden = 1 THEN v.valorFleteReal ELSE NULL END AS valorManifiesto,
               CASE WHEN vr.orden = 1 THEN v.retencionFopat ELSE NULL END AS retencionFopat,
               CASE WHEN vr.orden = 1 THEN v.valorAnticipoManifiesto ELSE NULL END AS valorAnticipo,

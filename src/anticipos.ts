@@ -32,7 +32,8 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { anioPosible, dia, ErrorCuadro } from "./cuadro";
+import { anioPosible, dia, ErrorCuadro, hoyColombia } from "./cuadro";
+import { fechaVigencia } from "./vigencias";
 import { sqlFlota } from "./flota";
 
 export type Tramo = "IDA" | "VUELTA";
@@ -150,7 +151,19 @@ export interface FilaAnticipo {
   efectivoEntregado: number | null;
   /** Factura (relacion) de la bomba con que se cruzo el vale. */
   relacionId: number | null;
+  /** Descuento por galon de su bomba vigente en su fecha (0 si la bomba no tiene). */
+  descuentoGalon: number;
 }
+
+/**
+ * Descuento por galon de una bomba vigente en una fecha: la fila de
+ * descuentos_galon_bomba que rige mas reciente (sin fecha = desde siempre); 0
+ * si no tiene. bomba y fecha son expresiones SQL.
+ */
+const sqlDescuentoGalon = (bomba: string, fecha: string) => `COALESCE((
+    SELECT d.descuentoGalon FROM descuentos_galon_bomba d
+     WHERE d.bombaId = ${bomba} AND (d.vigenteDesde IS NULL OR d.vigenteDesde <= ${fecha})
+     ORDER BY COALESCE(d.vigenteDesde, '1000-01-01') DESC, d.id DESC LIMIT 1), 0)`;
 
 const SELECT_ANTICIPOS = `
   SELECT a.id, a.tanqueoId, a.tramo, a.fecha, COALESCE(a.placa, c.placa) AS placa, a.cuadroViajeId,
@@ -161,7 +174,7 @@ const SELECT_ANTICIPOS = `
          a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
          c.fecha AS fechaViaje, rv.vale, COALESCE(rv.relacionId, re.relacionId) AS relacionId,
          re.vale AS valeEfectivo, rv.id IS NOT NULL AS cruzadoCombustible, re.id IS NOT NULL AS cruzadoEfectivo,
-         a.efectivoEntregado
+         a.efectivoEntregado, ${sqlDescuentoGalon("a.bombaId", "a.fecha")} AS descuentoGalon
     FROM cuadro_anticipos a
     LEFT JOIN bomba_relacion_vales rv ON rv.cuadroAnticipoId = a.id AND rv.tipo = 'COMBUSTIBLE'
     LEFT JOIN bomba_relacion_vales re ON re.cuadroAnticipoId = a.id AND re.tipo = 'EFECTIVO'
@@ -201,6 +214,7 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   cruzadoEfectivo: !!Number(r.cruzadoEfectivo),
   efectivoEntregado: r.efectivoEntregado === null || r.efectivoEntregado === undefined ? null : Number(r.efectivoEntregado),
   relacionId: r.relacionId ?? null,
+  descuentoGalon: Number(r.descuentoGalon ?? 0),
 });
 
 /** Tanqueo de un solo tramo (como quedaron los cargados del Excel), para juntar ida y vuelta. */
@@ -255,11 +269,13 @@ export function parejasIdaYVuelta(sueltos: TanqueoSuelto[]): Array<{ ida: Tanque
     .map((g) => elegirIdaYVuelta(g[0], g[1]));
 }
 
-/** Cupo con la bomba y valores sugeridos para el cruce (parametros de la empresa). */
+/**
+ * Cupo con la bomba y precio por galon sugerido para el cruce (parametros de
+ * la empresa). El descuento por galon va por bomba (ver descuentosGalon).
+ */
 export interface ParametrosBomba {
   cupoBomba: number;
   precioGalonBomba: number;
-  descuentoGalonBomba: number;
 }
 
 /** Descuento sugerido en pesos: galones x descuento por galon, redondeado. */
@@ -586,7 +602,9 @@ export const anticipos = {
       return n;
     };
     const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT efectivo, combustible, galones, precioGalon, descuento, combustibleEntregado FROM cuadro_anticipos WHERE id = ?",
+      `SELECT a.efectivo, a.combustible, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
+              ${sqlDescuentoGalon("a.bombaId", "a.fecha")} AS descuentoGalon
+         FROM cuadro_anticipos a WHERE a.id = ?`,
       [id]
     );
     const t = rows[0];
@@ -610,7 +628,8 @@ export const anticipos = {
     const nDescuento = numero("descuento");
     // Si cambian los galones y el descuento no se escribio, se vuelve a sugerir.
     const descuentoGuardado = t.descuento === null || nGalones !== undefined ? null : Number(t.descuento);
-    const descuento = (nDescuento === undefined ? descuentoGuardado : nDescuento) ?? descuentoSugerido(galones, p.descuentoGalonBomba);
+    // El descuento sugerido es el de su bomba en su fecha (solo Chuzaca tiene); queda guardado en pesos.
+    const descuento = (nDescuento === undefined ? descuentoGuardado : nDescuento) ?? descuentoSugerido(galones, Number(t.descuentoGalon ?? 0));
     const combustible = combustibleSegunFormula(galones, precio, descuento);
     await pool.query(
       `UPDATE cuadro_anticipos SET galones = ?, precioGalon = ?, descuento = ?, combustibleEntregado = ?,
@@ -642,16 +661,47 @@ export const anticipos = {
     }
   },
 
-  /** Cupo con la bomba, precio por galon y descuento por galon sugeridos. */
+  /** Las bombas con su descuento por galon vigente en una fecha (hoy si no se da). */
+  async descuentosGalon(fecha = hoyColombia()): Promise<Array<{ bombaId: number; bomba: string; ciudad: string | null; descuentoGalon: number }>> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT b.id, b.nombre, b.ciudad, ${sqlDescuentoGalon("b.id", "?")} AS descuentoGalon
+         FROM bombas b WHERE b.activa = 1 ORDER BY b.nombre`,
+      [fecha]
+    );
+    return rows.map((r) => ({ bombaId: Number(r.id), bomba: String(r.nombre), ciudad: r.ciudad ?? null, descuentoGalon: Number(r.descuentoGalon) }));
+  },
+
+  /**
+   * Guarda el descuento por galon de las bombas desde una fecha ({ vigenteDesde?,
+   * descuentos: [{ bombaId, descuentoGalon }] }): agrega una fila por bomba que
+   * cambio (un segundo cambio el mismo dia reemplaza al primero). Los anticipos
+   * de antes de esa fecha, y los ya cruzados, no cambian.
+   */
+  async guardarDescuentosGalon(d: Record<string, unknown>) {
+    const desde = fechaVigencia(d.vigenteDesde) ?? hoyColombia();
+    const lista = Array.isArray(d.descuentos) ? (d.descuentos as Record<string, unknown>[]) : [];
+    const actuales = new Map((await this.descuentosGalon(desde)).map((x) => [x.bombaId, x.descuentoGalon]));
+    for (const x of lista) {
+      const bombaId = Number(x.bombaId);
+      const valor = Number(x.descuentoGalon ?? 0);
+      if (!actuales.has(bombaId)) continue;
+      if (!Number.isFinite(valor) || valor < 0) throw new ErrorCuadro("El descuento por galon debe ser un numero positivo.");
+      if (actuales.get(bombaId) === valor) continue;
+      await pool.query("DELETE FROM descuentos_galon_bomba WHERE bombaId = ? AND vigenteDesde = ?", [bombaId, desde]);
+      await pool.query("INSERT INTO descuentos_galon_bomba (bombaId, descuentoGalon, vigenteDesde) VALUES (?, ?, ?)", [bombaId, valor, desde]);
+    }
+    return this.descuentosGalon(desde);
+  },
+
+  /** Cupo con la bomba y precio por galon sugerido (el descuento va por bomba: ver descuentosGalon). */
   async parametrosBomba(): Promise<ParametrosBomba> {
     const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT cupoBomba, precioGalonBomba, descuentoGalonBomba FROM parametros_empresa WHERE id = 1"
+      "SELECT cupoBomba, precioGalonBomba FROM parametros_empresa WHERE id = 1"
     );
     const r = rows[0] ?? {};
     return {
       cupoBomba: Number(r.cupoBomba ?? 500000000),
       precioGalonBomba: Number(r.precioGalonBomba ?? 11390),
-      descuentoGalonBomba: Number(r.descuentoGalonBomba ?? 250),
     };
   },
 
@@ -659,7 +709,7 @@ export const anticipos = {
   async guardarParametrosBomba(d: Record<string, unknown>): Promise<ParametrosBomba> {
     const sets: string[] = [];
     const valores: unknown[] = [];
-    for (const campo of ["cupoBomba", "precioGalonBomba", "descuentoGalonBomba"]) {
+    for (const campo of ["cupoBomba", "precioGalonBomba"]) {
       if (!(campo in d)) continue;
       const n = Number(d[campo]);
       if (!Number.isFinite(n) || n < 0) throw new ErrorCuadro(`"${campo}" debe ser un numero positivo.`);

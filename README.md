@@ -428,7 +428,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/cuadro/anticipos/importar/previa` | Propone el viaje de cada fila del Excel de anticipos ({ filas }). No guarda nada. |
 | `POST` | `/api/cuadro/anticipos/importar` | Carga las filas confirmadas ({ filas: [{ ...fila, viajeId }] }). |
 | `GET` | `/api/cuadro/anticipos/resumen` | Deuda, pagado, abonado por el socio, pendiente y cupo con la bomba. |
-| `PUT` | `/api/cuadro/anticipos/parametros` | Cupo de credito con la bomba y precio y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }). Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id. |
+| `PUT` | `/api/cuadro/anticipos/parametros` | Cupo de credito con la bomba y precio por galon sugerido ({ cupoBomba, precioGalonBomba }). Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id. |
+| `GET` | `/api/cuadro/anticipos/descuentos-galon` | Descuento por galon de cada bomba vigente en esa fecha (hoy si no se da). |
+| `PUT` | `/api/cuadro/anticipos/descuentos-galon` | Descuento por galon de las bombas desde una fecha ({ vigenteDesde?, descuentos: [{ bombaId, descuentoGalon }] }). |
 | `POST` | `/api/cuadro/anticipos/juntar` | Junta dos tanqueos de la misma placa como ida y vuelta ({ ida, vuelta }: ids de tanqueo). Devuelve el cuadro. |
 | `POST` | `/api/cuadro/anticipos/separar/:tanqueoId` | Separa la vuelta de un tanqueo de ida y vuelta. |
 | `GET` | `/api/cuadro/relaciones-bomba` | Facturas (relaciones de vales) de la bomba ya cruzadas. |
@@ -502,8 +504,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/seguimiento/terceros/nombres/previa` | A que vehiculos se le pone cada nombre de la Matriz Terceros ({ terceros: [{ nombre, cedula, placas }] }). No guarda. |
 | `POST` | `/api/seguimiento/terceros/nombres` | Pone esos nombres como titular de los vehiculos. |
 | `GET` | `/api/seguimiento/rentabilidad` | Todos los viajes no anulados con su grupo (TERCEROS, CELSO, MAURICIO...) y lo que deja cada uno (ver src/rentabilidad.ts). |
-| `GET` | `/api/seguimiento/rentabilidad/matrices` | Comisiones y retenciones por cliente. |
-| `PUT` | `/api/seguimiento/rentabilidad/matrices` | Reemplaza las matrices ({ comisiones?, retenciones? }). |
+| `GET` | `/api/seguimiento/rentabilidad/matrices` | Comisiones y retenciones por cliente como rigen en esa fecha (hoy si no se da). |
+| `PUT` | `/api/seguimiento/rentabilidad/matrices` | Guarda las matrices desde una fecha ({ vigenteDesde?, comisiones?, retenciones? }); los viajes anteriores conservan sus valores. |
 | `GET` | `/api/seguimiento/rentabilidad/liquidaciones` | Liquidaciones a los duenos ya registradas. |
 | `POST` | `/api/seguimiento/rentabilidad/liquidaciones` | Registra la liquidacion a un dueno y marca sus viajes como pagados ({ grupo, nombre?, fecha, ids, conceptos, pagado? }). |
 | `DELETE` | `/api/seguimiento/rentabilidad/liquidaciones/:id` | Anula la ultima liquidacion de un grupo. |
@@ -530,10 +532,10 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_739 funciones, componentes, métodos y rutas en 51 archivos._
+_750 funciones, componentes, métodos y rutas en 52 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
-- [`src/anticipos.ts`](#srcanticiposts) (31)
+- [`src/anticipos.ts`](#srcanticiposts) (34)
 - [`src/auth.ts`](#srcauthts) (35)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
@@ -551,7 +553,7 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
-- [`src/rentabilidad.ts`](#srcrentabilidadts) (10)
+- [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
 - [`src/repo.ts`](#srcrepots) (94)
 - [`src/reportes.ts`](#srcreportests) (10)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
@@ -567,7 +569,7 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (45)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (47)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -583,6 +585,7 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
+- [`src/vigencias.ts`](#srcvigenciasts) (3)
 
 ### `src/alertas.ts`
 
@@ -671,6 +674,11 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
   - Si hay combustible (ida o vuelta), la bomba es obligatoria.
   - Ida y vuelta: la vuelta debe tener algun valor.
   - Compatibilidad: "valor" sin desglose se toma como combustible.
+
+- **`sqlDescuentoGalon(bomba, fecha)`** · _función_
+  Descuento por galon de una bomba vigente en una fecha: la fila de
+  descuentos_galon_bomba que rige mas reciente (sin fecha = desde siempre); 0
+  si no tiene. bomba y fecha son expresiones SQL.
 
 - **`mapear(r)`** · _función_
   Fila de SELECT_ANTICIPOS -> FilaAnticipo.
@@ -769,8 +777,17 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
     quita la vuelta que aun no se asigno a ningun viaje. Si el tanqueo queda
     sin tramos, se borra.
 
+  - **`anticipos.descuentosGalon(fecha)`** · _método_
+    Las bombas con su descuento por galon vigente en una fecha (hoy si no se da).
+
+  - **`anticipos.guardarDescuentosGalon(d)`** · _método_
+    Guarda el descuento por galon de las bombas desde una fecha ({ vigenteDesde?,
+    descuentos: [{ bombaId, descuentoGalon }] }): agrega una fila por bomba que
+    cambio (un segundo cambio el mismo dia reemplaza al primero). Los anticipos
+    de antes de esa fecha, y los ya cruzados, no cambian.
+
   - **`anticipos.parametrosBomba()`** · _método_
-    Cupo con la bomba, precio por galon y descuento por galon sugeridos.
+    Cupo con la bomba y precio por galon sugerido (el descuento va por bomba: ver descuentosGalon).
 
   - **`anticipos.guardarParametrosBomba(d)`** · _método_
     Cambia el cupo con la bomba y/o los valores sugeridos del cruce.
@@ -1779,19 +1796,31 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
   primera registrada. Devuelve manifiesto -> id de esa fila (exportado para las
   pruebas).
 
+- **`claveComision(c)`** · _función_
+  Clave de una comision: el cliente.
+
+- **`claveRetencion(r)`** · _función_
+  Clave de una retencion: el cliente y su ciudad (un cliente puede tener varias).
+
 - **`rentabilidad`** · _módulo_
   Repositorio de la rentabilidad y sus matrices.
 
   - **`rentabilidad.listar()`** · _método_
     Todos los viajes no anulados, con su grupo y su rentabilidad (los mas recientes primero).
 
-  - **`rentabilidad.matrices()`** · _método_
-    Las dos matrices (comisiones y retenciones por cliente).
+  - **`rentabilidad.historialMatrices()`** · _método_
+    Todas las filas de las dos matrices, con su vigencia (la historia de cada cliente).
+
+  - **`rentabilidad.matrices(fecha)`** · _método_
+    Las dos matrices como rigen en una fecha (hoy si no se da).
 
   - **`rentabilidad.guardarMatrices(d)`** · _método_
-    Reemplaza las matrices ({ comisiones: [{ cliente, comision, tLopez }],
-    retenciones: [{ cliente, reteicaPorMil, ciudad }] }). Las filas sin
-    cliente se ignoran. En una transaccion.
+    Guarda las matrices como deben regir desde una fecha ({ vigenteDesde?,
+    comisiones: [{ cliente, comision, tLopez }], retenciones: [{ cliente,
+    reteicaPorMil, ciudad }] }). No borra lo anterior: agrega una fila por
+    cliente nuevo o cambiado, y marca como quitados los que ya no estan, todo
+    desde esa fecha (hoy si no se da). Los viajes de antes conservan sus
+    valores. Las filas sin cliente se ignoran. En una transaccion.
 
 ### `src/repo.ts`
 
@@ -3422,8 +3451,15 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
 
 - **`PUT /anticipos/parametros`** · _ruta HTTP_
   PUT /api/cuadro/anticipos/parametros: cupo de credito con la bomba y precio
-  y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }).
+  por galon sugerido ({ cupoBomba, precioGalonBomba }).
   Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id.
+
+- **`GET /anticipos/descuentos-galon`** · _ruta HTTP_
+  GET /api/cuadro/anticipos/descuentos-galon?fecha=: descuento por galon de cada bomba vigente en esa fecha (hoy si no se da).
+
+- **`PUT /anticipos/descuentos-galon`** · _ruta HTTP_
+  PUT /api/cuadro/anticipos/descuentos-galon: descuento por galon de las bombas
+  desde una fecha ({ vigenteDesde?, descuentos: [{ bombaId, descuentoGalon }] }).
 
 - **`POST /anticipos/juntar`** · _ruta HTTP_
   POST /api/cuadro/anticipos/juntar: junta dos tanqueos de la misma placa como
@@ -3913,10 +3949,12 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
   (TERCEROS, CELSO, MAURICIO...) y lo que deja cada uno (ver src/rentabilidad.ts).
 
 - **`GET /rentabilidad/matrices`** · _ruta HTTP_
-  GET /api/seguimiento/rentabilidad/matrices: comisiones y retenciones por cliente.
+  GET /api/seguimiento/rentabilidad/matrices?fecha=: comisiones y retenciones por cliente como rigen en esa fecha (hoy si no se da).
 
 - **`PUT /rentabilidad/matrices`** · _ruta HTTP_
-  PUT /api/seguimiento/rentabilidad/matrices: reemplaza las matrices ({ comisiones?, retenciones? }).
+  PUT /api/seguimiento/rentabilidad/matrices: guarda las matrices desde una
+  fecha ({ vigenteDesde?, comisiones?, retenciones? }); los viajes anteriores
+  conservan sus valores.
 
 - **`GET /rentabilidad/liquidaciones`** · _ruta HTTP_
   GET /api/seguimiento/rentabilidad/liquidaciones: liquidaciones a los duenos ya registradas.
@@ -4571,5 +4609,29 @@ _739 funciones, componentes, métodos y rutas en 51 archivos._
     Registra el pago al tercero de varios viajes ({ ids, fecha, cuentaCobro? }):
     pone la fecha de pago (y el numero de la cuenta de cobro, si se escribe y
     el viaje no lo tiene) en los que aun no estaban pagados.
+
+### `src/vigencias.ts`
+
+> Matrices con vigencia (comisiones, ReteICA por cliente, descuento por galon
+> de la bomba): un cambio no borra el valor anterior, sino que agrega una fila
+> que rige desde una fecha. Cada viaje o anticipo usa el valor vigente en su
+> fecha, asi que los viajes viejos conservan el valor que tenian.
+>
+> - vigenteDesde null: rige desde siempre (las filas de antes de las vigencias).
+> - eliminado: desde esa fecha la fila ya no esta en la matriz.
+
+- **`vigentesEn(filas, clave, fecha)`** · _función_
+  Las filas que rigen en una fecha: por clave, la de vigenteDesde mas reciente
+  que no pase de la fecha (si empatan, la ultima guardada), sin las quitadas.
+  Salen en el orden en que se agrego cada clave por primera vez (importa: si un
+  cliente aparece dos veces, la matriz usa la primera).
+
+- **`cambiosDeMatriz(actuales, nuevas, claveActual, claveNueva, igual)`** · _función_
+  Lo que hay que guardar para pasar de las filas vigentes a las nuevas: las
+  que son nuevas o cambiaron (por `igual`) y las claves que ya no estan. Si una
+  clave se repite en las nuevas, vale la ultima.
+
+- **`fechaVigencia(x)`** · _función_
+  "2026-11-06" valido o null.
 
 <!-- REFERENCIA:FIN -->

@@ -4,6 +4,7 @@ import { facturacion } from "../facturacion";
 import { anticipos } from "../anticipos";
 import { relacionesBomba } from "../relacionesBomba";
 import { reportes } from "../reportes";
+import { fechaVigencia } from "../vigencias";
 import { importarAnticipos, propuestaAnticipos } from "../importaciones";
 
 /**
@@ -68,11 +69,22 @@ cuadroRouter.get("/anticipos/resumen", async (_req, res) => {
 });
 /**
  * PUT /api/cuadro/anticipos/parametros: cupo de credito con la bomba y precio
- * y descuento por galon sugeridos ({ cupoBomba, precioGalonBomba, descuentoGalonBomba }).
+ * por galon sugerido ({ cupoBomba, precioGalonBomba }).
  * Va antes de /anticipos/:anticipoId para que "parametros" no se tome como id.
  */
 cuadroRouter.put("/anticipos/parametros", async (req, res) => {
   await responder(res, () => anticipos.guardarParametrosBomba(req.body ?? {}));
+});
+/** GET /api/cuadro/anticipos/descuentos-galon?fecha=: descuento por galon de cada bomba vigente en esa fecha (hoy si no se da). */
+cuadroRouter.get("/anticipos/descuentos-galon", async (req, res) => {
+  res.json(await anticipos.descuentosGalon(fechaVigencia(req.query.fecha) ?? undefined));
+});
+/**
+ * PUT /api/cuadro/anticipos/descuentos-galon: descuento por galon de las bombas
+ * desde una fecha ({ vigenteDesde?, descuentos: [{ bombaId, descuentoGalon }] }).
+ */
+cuadroRouter.put("/anticipos/descuentos-galon", async (req, res) => {
+  await responder(res, () => anticipos.guardarDescuentosGalon(req.body ?? {}));
 });
 /**
  * POST /api/cuadro/anticipos/juntar: junta dos tanqueos de la misma placa como

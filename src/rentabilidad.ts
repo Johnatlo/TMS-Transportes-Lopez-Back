@@ -22,9 +22,11 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { cuadro, dia, ErrorCuadro } from "./cuadro";
+import { cuadro, dia, ErrorCuadro, hoyColombia } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 import { icaSugerido, terceros } from "./terceros";
+import { cambiosDeMatriz, fechaVigencia, vigentesEn } from "./vigencias";
+import type { FilaVigente } from "./vigencias";
 
 /** Retefuente 1 % + FOPAT 0,1 % (el FOPAT se suma desde que se genera el manifiesto). */
 export const RETENCION_CLIENTE = 0.011;
@@ -402,13 +404,23 @@ export function filaPrincipalPorManifiesto(filas: Array<{ id: number; manifiesto
   return new Map([...mejor].map(([m, x]) => [m, x.id]));
 }
 
+/** Una fila guardada de la Matriz Comisiones, con su vigencia. */
+interface FilaComision extends ComisionCliente, FilaVigente {}
+/** Una fila guardada de la Matriz Retenciones, con su vigencia. */
+interface FilaRetencionCliente extends RetencionCliente, FilaVigente {}
+
+/** Clave de una comision: el cliente. */
+const claveComision = (c: { cliente: string }) => c.cliente.trim().toUpperCase();
+/** Clave de una retencion: el cliente y su ciudad (un cliente puede tener varias). */
+const claveRetencion = (r: { cliente: string; ciudad: string | null }) => `${r.cliente.trim().toUpperCase()}|${(r.ciudad ?? "").trim().toUpperCase()}`;
+
 /** Repositorio de la rentabilidad y sus matrices. */
 export const rentabilidad = {
   /** Todos los viajes no anulados, con su grupo y su rentabilidad (los mas recientes primero). */
   async listar(): Promise<FilaRentabilidad[]> {
     // Sin esperar el mantenimiento que arranca al guardar: el cambio se ve de una vez.
     const filas = await cuadro.listar({ esperarMantenimiento: false });
-    const [datosTerceros, [ajustes], [bomba], matrices] = await Promise.all([
+    const [datosTerceros, [ajustes], [bomba], historial] = await Promise.all([
       terceros.listar(filas),
       pool.query<RowDataPacket[]>(
         `SELECT c.id, c.rentComision, c.rentTLopez, c.rentDescargue, c.rentPoliza, c.rentIcaPorMil, c.fechaPagoRentabilidad,
@@ -423,8 +435,18 @@ export const rentabilidad = {
                 GROUP_CONCAT(DISTINCT CASE WHEN COALESCE(combustible, valor - COALESCE(efectivo, 0)) > 0 THEN DATE_FORMAT(fecha, '%Y-%m-%d') END ORDER BY fecha) AS fechasCombustible
            FROM cuadro_anticipos GROUP BY cuadroViajeId`
       ),
-      this.matrices(),
+      this.historialMatrices(),
     ]);
+    // Cada viaje usa las matrices vigentes en su fecha (un cambio no toca los viajes anteriores).
+    const porFecha = new Map<string, { comisiones: FilaComision[]; retenciones: FilaRetencionCliente[] }>();
+    const matricesEn = (fecha: string) => {
+      let m = porFecha.get(fecha);
+      if (!m) {
+        m = { comisiones: vigentesEn(historial.comisiones, claveComision, fecha), retenciones: vigentesEn(historial.retenciones, claveRetencion, fecha) };
+        porFecha.set(fecha, m);
+      }
+      return m;
+    };
     const deTercero = new Map(datosTerceros.viajes.map((v) => [v.id, v]));
     const ajustePor = new Map(ajustes.map((a) => [Number(a.id), a]));
     const dias = (x: unknown) => (x ? String(x).split(",") : []);
@@ -502,8 +524,8 @@ export const rentabilidad = {
         transferencia: b.transferencia,
         valorTercero: t?.valorTercero ?? null,
         icaTerceroPorMil: t?.icaPorMil ?? 0,
-        comisionMatriz: buscarEnMatriz(matrices.comisiones, f.empresa, f.urbano),
-        icaMatriz: buscarEnMatriz(matrices.retenciones, f.empresa)?.reteicaPorMil ?? null,
+        comisionMatriz: buscarEnMatriz(matricesEn(f.fecha).comisiones, f.empresa, f.urbano),
+        icaMatriz: buscarEnMatriz(matricesEn(f.fecha).retenciones, f.empresa)?.reteicaPorMil ?? null,
       };
       return {
         ...ajustes,
@@ -535,24 +557,38 @@ export const rentabilidad = {
     return resultado.sort((x, y) => y.fecha.localeCompare(x.fecha) || y.id - x.id);
   },
 
-  /** Las dos matrices (comisiones y retenciones por cliente). */
-  async matrices(): Promise<{ comisiones: ComisionCliente[]; retenciones: RetencionCliente[] }> {
+  /** Todas las filas de las dos matrices, con su vigencia (la historia de cada cliente). */
+  async historialMatrices(): Promise<{ comisiones: FilaComision[]; retenciones: FilaRetencionCliente[] }> {
     const [[c], [rt]] = await Promise.all([
-      pool.query<RowDataPacket[]>("SELECT cliente, comision, tLopez FROM rentabilidad_comisiones ORDER BY id"),
-      pool.query<RowDataPacket[]>("SELECT cliente, reteicaPorMil, ciudad FROM rentabilidad_retenciones ORDER BY id"),
+      pool.query<RowDataPacket[]>("SELECT id, cliente, comision, tLopez, vigenteDesde, eliminado FROM rentabilidad_comisiones ORDER BY id"),
+      pool.query<RowDataPacket[]>("SELECT id, cliente, reteicaPorMil, ciudad, vigenteDesde, eliminado FROM rentabilidad_retenciones ORDER BY id"),
     ]);
+    const vigencia = (x: RowDataPacket): FilaVigente => ({ id: Number(x.id), vigenteDesde: dia(x.vigenteDesde) ?? null, eliminado: !!x.eliminado });
     return {
-      comisiones: c.map((x) => ({ cliente: String(x.cliente), comision: Number(x.comision), tLopez: Number(x.tLopez) })),
-      retenciones: rt.map((x) => ({ cliente: String(x.cliente), reteicaPorMil: Number(x.reteicaPorMil), ciudad: x.ciudad ?? null })),
+      comisiones: c.map((x) => ({ ...vigencia(x), cliente: String(x.cliente), comision: Number(x.comision), tLopez: Number(x.tLopez) })),
+      retenciones: rt.map((x) => ({ ...vigencia(x), cliente: String(x.cliente), reteicaPorMil: Number(x.reteicaPorMil), ciudad: x.ciudad ?? null })),
+    };
+  },
+
+  /** Las dos matrices como rigen en una fecha (hoy si no se da). */
+  async matrices(fecha = hoyColombia()): Promise<{ comisiones: ComisionCliente[]; retenciones: RetencionCliente[] }> {
+    const h = await this.historialMatrices();
+    return {
+      comisiones: vigentesEn(h.comisiones, claveComision, fecha).map((x) => ({ cliente: x.cliente, comision: x.comision, tLopez: x.tLopez })),
+      retenciones: vigentesEn(h.retenciones, claveRetencion, fecha).map((x) => ({ cliente: x.cliente, reteicaPorMil: x.reteicaPorMil, ciudad: x.ciudad })),
     };
   },
 
   /**
-   * Reemplaza las matrices ({ comisiones: [{ cliente, comision, tLopez }],
-   * retenciones: [{ cliente, reteicaPorMil, ciudad }] }). Las filas sin
-   * cliente se ignoran. En una transaccion.
+   * Guarda las matrices como deben regir desde una fecha ({ vigenteDesde?,
+   * comisiones: [{ cliente, comision, tLopez }], retenciones: [{ cliente,
+   * reteicaPorMil, ciudad }] }). No borra lo anterior: agrega una fila por
+   * cliente nuevo o cambiado, y marca como quitados los que ya no estan, todo
+   * desde esa fecha (hoy si no se da). Los viajes de antes conservan sus
+   * valores. Las filas sin cliente se ignoran. En una transaccion.
    */
   async guardarMatrices(d: Record<string, unknown>) {
+    const desde = fechaVigencia(d.vigenteDesde) ?? hoyColombia();
     const lista = (x: unknown) => (Array.isArray(x) ? (x as Record<string, unknown>[]) : null);
     const comisiones = lista(d.comisiones);
     const retenciones = lista(d.retenciones);
@@ -563,27 +599,43 @@ export const rentabilidad = {
       return n;
     };
     const texto = (x: unknown) => String(x ?? "").trim().toUpperCase().slice(0, 160);
+    const nuevasC: ComisionCliente[] | null = comisiones
+      ? comisiones.filter((x) => texto(x.cliente)).map((c) => ({ cliente: texto(c.cliente), comision: numero(c.comision, "comision"), tLopez: numero(c.tLopez, "T. Lopez") }))
+      : null;
+    const nuevasR: RetencionCliente[] | null = retenciones
+      ? retenciones.filter((x) => texto(x.cliente)).map((r) => ({ cliente: texto(r.cliente), reteicaPorMil: numero(r.reteicaPorMil, "ReteICA"), ciudad: texto(r.ciudad) || null }))
+      : null;
+    const historial = await this.historialMatrices();
     const con = await pool.getConnection();
     try {
       await con.beginTransaction();
-      if (comisiones) {
-        await con.query("DELETE FROM rentabilidad_comisiones");
-        for (const c of comisiones.filter((x) => texto(x.cliente))) {
-          await con.query<ResultSetHeader>("INSERT INTO rentabilidad_comisiones (cliente, comision, tLopez) VALUES (?, ?, ?)", [
-            texto(c.cliente),
-            numero(c.comision, "comision"),
-            numero(c.tLopez, "T. Lopez"),
-          ]);
+      if (nuevasC) {
+        const actuales = vigentesEn(historial.comisiones, claveComision, desde);
+        const { guardar, quitar } = cambiosDeMatriz(actuales, nuevasC, claveComision, claveComision, (a, n) => a.comision === n.comision && a.tLopez === n.tLopez);
+        const quitados = actuales.filter((a) => quitar.includes(claveComision(a))).map((a) => ({ ...a, eliminado: true }));
+        for (const c of [...guardar.map((g) => ({ ...g, eliminado: false })), ...quitados]) {
+          // Un segundo cambio el mismo dia reemplaza al primero.
+          await con.query("DELETE FROM rentabilidad_comisiones WHERE cliente = ? AND vigenteDesde = ?", [c.cliente, desde]);
+          await con.query<ResultSetHeader>(
+            "INSERT INTO rentabilidad_comisiones (cliente, comision, tLopez, vigenteDesde, eliminado) VALUES (?, ?, ?, ?, ?)",
+            [c.cliente, c.comision, c.tLopez, desde, c.eliminado]
+          );
         }
       }
-      if (retenciones) {
-        await con.query("DELETE FROM rentabilidad_retenciones");
-        for (const rt of retenciones.filter((x) => texto(x.cliente))) {
-          await con.query<ResultSetHeader>("INSERT INTO rentabilidad_retenciones (cliente, reteicaPorMil, ciudad) VALUES (?, ?, ?)", [
-            texto(rt.cliente),
-            numero(rt.reteicaPorMil, "ReteICA"),
-            texto(rt.ciudad) || null,
+      if (nuevasR) {
+        const actuales = vigentesEn(historial.retenciones, claveRetencion, desde);
+        const { guardar, quitar } = cambiosDeMatriz(actuales, nuevasR, claveRetencion, claveRetencion, (a, n) => a.reteicaPorMil === n.reteicaPorMil);
+        const quitados = actuales.filter((a) => quitar.includes(claveRetencion(a))).map((a) => ({ ...a, eliminado: true }));
+        for (const rt of [...guardar.map((g) => ({ ...g, eliminado: false })), ...quitados]) {
+          await con.query("DELETE FROM rentabilidad_retenciones WHERE cliente = ? AND COALESCE(ciudad, '') = ? AND vigenteDesde = ?", [
+            rt.cliente,
+            rt.ciudad ?? "",
+            desde,
           ]);
+          await con.query<ResultSetHeader>(
+            "INSERT INTO rentabilidad_retenciones (cliente, reteicaPorMil, ciudad, vigenteDesde, eliminado) VALUES (?, ?, ?, ?, ?)",
+            [rt.cliente, rt.reteicaPorMil, rt.ciudad, desde, rt.eliminado]
+          );
         }
       }
       await con.commit();
@@ -593,6 +645,6 @@ export const rentabilidad = {
     } finally {
       con.release();
     }
-    return this.matrices();
+    return this.matrices(desde);
   },
 };
