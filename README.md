@@ -447,6 +447,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `DELETE` | `/api/cuadro/relaciones-bomba/:relacionId` | Borra la relacion y deshace el cruce. |
 | `GET` | `/api/cuadro/abonos-socio` | Abonos del socio a la bomba, con sus viajes. |
 | `POST` | `/api/cuadro/abonos-socio` | Registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }). |
+| `PUT` | `/api/cuadro/abonos-socio/:abonoId/cruce` | Lo marca cruzado o por cruzar ({ cruzado, fecha }). Devuelve los abonos. |
 | `DELETE` | `/api/cuadro/abonos-socio/:abonoId` | Borra un abono. |
 | `PUT` | `/api/cuadro/anticipos/:anticipoId` | Fecha de pago, nota, viaje o datos del cruce (galones, precio y descuento: recalcula el combustible) de un tramo. |
 | `PUT` | `/api/cuadro/tanqueos/:tanqueoId` | Factura de la bomba (numero, fecha) o la bomba del tanqueo. |
@@ -534,10 +535,10 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_775 funciones, componentes, métodos y rutas en 55 archivos._
+_777 funciones, componentes, métodos y rutas en 55 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
-- [`src/anticipos.ts`](#srcanticiposts) (34)
+- [`src/anticipos.ts`](#srcanticiposts) (35)
 - [`src/auth.ts`](#srcauthts) (35)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
@@ -573,7 +574,7 @@ _775 funciones, componentes, métodos y rutas en 55 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (47)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (48)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
@@ -709,13 +710,14 @@ _775 funciones, componentes, métodos y rutas en 55 archivos._
   columna COMBUST. del Excel): round(galones x precio - descuento).
   Ej.: 100,182 galones x 11.230 - 25.044 = 1.100.000.
 
-- **`resumirBomba(tramos, abonadoSocio, p, abonosSinUsar)`** · _función_
+- **`resumirBomba(tramos, abonadoSocio, p, abonosSinUsar, abonadoPorCruzar)`** · _función_
   Cuentas con la bomba a partir de los tramos: solo cuentan los entregados en
   una bomba (los de solo efectivo sin bomba no son deuda con ella).
 
-  Los abonos de los socios que ya se descontaron en un pago a la bomba estan
-  dentro de lo pagado (sus tramos quedaron pagados): a la deuda solo se le
-  restan los que aun no se han usado (`abonosSinUsar`; por defecto, todos).
+  Los abonos de los socios solo cuentan cuando se cruzan. Los cruzados en un
+  pago a la bomba estan dentro de lo pagado (sus tramos quedaron pagados): a
+  la deuda solo se le restan los cruzados a mano que aun no estan en un pago
+  (`abonosSinUsar`; por defecto, todos los cruzados).
 
 - **`anticipos`** · _módulo_
   Anticipos por tanqueo y por tramo: registrar, asignar vueltas, listar y corregir.
@@ -807,8 +809,15 @@ _775 funciones, componentes, métodos y rutas en 55 archivos._
     Registra un abono del socio: socio, fecha, nota y los viajes con el valor
     de cada uno (al menos uno). El valor del abono es la suma de los viajes.
 
+  - **`anticipos.marcarCruceAbono(id, d)`** · _método_
+    Marca a mano un abono del socio como cruzado (desde esa fecha se descuenta
+    de la deuda con la bomba) o lo devuelve a por cruzar. Los que ya se usaron
+    en un pago a la bomba no se tocan: hay que deshacer el pago.
+
   - **`anticipos.borrarAbono(id)`** · _método_
-    Borra un abono del socio (y su reparto en los viajes).
+    Borra un abono del socio (y su reparto en los viajes). A sus viajes se les
+    quita la fecha de pago del anticipo del Zorro si era la del abono y ningun
+    otro abono los cubre; el valor escrito se deja (sigue por cobrar).
 
 ### `src/auth.ts`
 
@@ -3597,6 +3606,9 @@ _775 funciones, componentes, métodos y rutas en 55 archivos._
 
 - **`POST /abonos-socio`** · _ruta HTTP_
   POST /api/cuadro/abonos-socio: registra un abono ({ socio, fecha, nota, viajes: [{ cuadroViajeId, valor }] }).
+
+- **`PUT /abonos-socio/:abonoId/cruce`** · _ruta HTTP_
+  PUT /api/cuadro/abonos-socio/:abonoId/cruce: lo marca cruzado o por cruzar ({ cruzado, fecha }). Devuelve los abonos.
 
 - **`DELETE /abonos-socio/:abonoId`** · _ruta HTTP_
   DELETE /api/cuadro/abonos-socio/:abonoId: borra un abono.

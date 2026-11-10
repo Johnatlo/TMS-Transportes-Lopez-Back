@@ -250,7 +250,12 @@ export const reportes = {
          JOIN bombas b ON b.id = a.bombaId
          LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId`
     );
-    const [abonos] = await pool.query<RowDataPacket[]>("SELECT fecha, socio, valor FROM abonos_socio");
+    // Los abonos del socio cuentan el dia en que se cruzan (el del pago a la bomba o el marcado a mano).
+    const [abonos] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(p.fecha, a.cruzadoFecha) AS fecha, a.socio, a.valor
+         FROM abonos_socio a LEFT JOIN bomba_pagos p ON p.id = a.pagoId
+        WHERE a.pagoId IS NOT NULL OR a.cruzadoFecha IS NOT NULL`
+    );
     const [pagos] = await pool.query<RowDataPacket[]>(
       `SELECT p.id, p.fecha, p.valorPagado,
               (SELECT GROUP_CONCAT(numero ORDER BY numero SEPARATOR ', ') FROM bomba_relaciones WHERE pagoId = p.id) AS facturas

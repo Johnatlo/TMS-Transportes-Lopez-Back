@@ -179,6 +179,13 @@ cuadroRouter.post("/abonos-socio", async (req, res) => {
     return anticipos.abonos();
   });
 });
+/** PUT /api/cuadro/abonos-socio/:abonoId/cruce: lo marca cruzado o por cruzar ({ cruzado, fecha }). Devuelve los abonos. */
+cuadroRouter.put("/abonos-socio/:abonoId/cruce", async (req, res) => {
+  await responder(res, async () => {
+    await anticipos.marcarCruceAbono(Number(req.params.abonoId), req.body ?? {});
+    return anticipos.abonos();
+  });
+});
 /** DELETE /api/cuadro/abonos-socio/:abonoId: borra un abono. */
 cuadroRouter.delete("/abonos-socio/:abonoId", async (req, res) => {
   await anticipos.borrarAbono(Number(req.params.abonoId));

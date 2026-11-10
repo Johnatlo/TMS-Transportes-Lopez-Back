@@ -295,8 +295,10 @@ export interface ResumenBomba extends ParametrosBomba {
   deuda: number;
   /** Lo que la empresa ya le pago a la bomba. */
   pagado: number;
-  /** Lo que abono el socio directamente a la bomba. */
+  /** Lo que abono el socio directamente a la bomba y ya se cruzo (solo eso cuenta). */
   abonadoSocio: number;
+  /** Abonos del socio registrados que aun no se cruzan: no se descuentan de la deuda. */
+  abonadoPorCruzar: number;
   /** Lo que falta por pagarle: deuda - pagado - abonado (minimo 0). */
   pendiente: number;
   /** Cupo de credito que queda: cupo - pendiente. */
@@ -307,21 +309,23 @@ export interface ResumenBomba extends ParametrosBomba {
  * Cuentas con la bomba a partir de los tramos: solo cuentan los entregados en
  * una bomba (los de solo efectivo sin bomba no son deuda con ella).
  *
- * Los abonos de los socios que ya se descontaron en un pago a la bomba estan
- * dentro de lo pagado (sus tramos quedaron pagados): a la deuda solo se le
- * restan los que aun no se han usado (`abonosSinUsar`; por defecto, todos).
+ * Los abonos de los socios solo cuentan cuando se cruzan. Los cruzados en un
+ * pago a la bomba estan dentro de lo pagado (sus tramos quedaron pagados): a
+ * la deuda solo se le restan los cruzados a mano que aun no estan en un pago
+ * (`abonosSinUsar`; por defecto, todos los cruzados).
  */
 export function resumirBomba(
   tramos: Pick<FilaAnticipo, "bombaId" | "valor" | "fechaPago">[],
   abonadoSocio: number,
   p: ParametrosBomba,
-  abonosSinUsar = abonadoSocio
+  abonosSinUsar = abonadoSocio,
+  abonadoPorCruzar = 0
 ): ResumenBomba {
   const conBomba = tramos.filter((t) => t.bombaId !== null);
   const deuda = conBomba.reduce((s, t) => s + t.valor, 0);
   const pagado = conBomba.filter((t) => !!t.fechaPago).reduce((s, t) => s + t.valor, 0);
   const pendiente = Math.max(0, deuda - pagado - abonosSinUsar);
-  return { ...p, deuda, pagado, abonadoSocio, pendiente, cupoDisponible: p.cupoBomba - pendiente };
+  return { ...p, deuda, pagado, abonadoSocio, abonadoPorCruzar, pendiente, cupoDisponible: p.cupoBomba - pendiente };
 }
 
 /** Un abono del socio, con los viajes a los que corresponde. */
@@ -333,8 +337,34 @@ export interface AbonoSocio {
   nota: string | null;
   /** Pago a la bomba en que se desconto; null = aun no se ha usado. */
   pagoId: number | null;
-  viajes: Array<{ cuadroViajeId: number; valor: number; placa: string | null; empresa: string | null; manifiesto: string | null; fecha: string | null }>;
+  /** Ya se cruzo (en un pago a la bomba o a mano): solo asi se descuenta de la deuda. */
+  cruzado: boolean;
+  /** Fecha del cruce: la del pago a la bomba o la que se puso a mano. */
+  cruzadoFecha: string | null;
+  viajes: Array<{
+    cuadroViajeId: number;
+    valor: number;
+    placa: string | null;
+    empresa: string | null;
+    manifiesto: string | null;
+    remesa: string | null;
+    fecha: string | null;
+  }>;
 }
+
+/**
+ * Registra en los viajes de unos abonos del socio el anticipo de la empresa
+ * pagado (cuadro de anticipos del Zorro): el valor abonado si el viaje aun no
+ * tenia anticipo escrito y la fecha del abono si aun no tenia fecha de pago.
+ * Lo ya escrito a mano no se pisa.
+ */
+export const SQL_PAGO_ANTICIPO_ABONOS = `UPDATE cuadro_viajes c
+       JOIN (SELECT av.cuadroViajeId, SUM(av.valor) AS valor, MIN(a.fecha) AS fecha
+               FROM abonos_socio_viajes av JOIN abonos_socio a ON a.id = av.abonoId
+              WHERE av.abonoId IN (?) GROUP BY av.cuadroViajeId) x ON x.cuadroViajeId = c.id
+        SET c.anticipoEmpresa = IF(c.anticipoEmpresa IS NULL OR c.anticipoEmpresa = 0, x.valor, c.anticipoEmpresa),
+            c.anticipoEmpresaFechaPago = COALESCE(c.anticipoEmpresaFechaPago, x.fecha),
+            c.anticipoEmpresaNoAplica = 0`;
 
 /** Anticipos por tanqueo y por tramo: registrar, asignar vueltas, listar y corregir. */
 export const anticipos = {
@@ -723,22 +753,29 @@ export const anticipos = {
   /** Cuentas con la bomba: deuda, pagado, abonado por el socio, pendiente y cupo disponible. */
   async resumen(): Promise<ResumenBomba> {
     const [tramos] = await pool.query<RowDataPacket[]>("SELECT bombaId, valor, fechaPago FROM cuadro_anticipos");
+    // Solo cuentan los abonos cruzados (en un pago o a mano); los demas quedan por cruzar.
     const [[abonos]] = await pool.query<RowDataPacket[]>(
-      "SELECT COALESCE(SUM(valor), 0) AS total, COALESCE(SUM(IF(pagoId IS NULL, valor, 0)), 0) AS sinUsar FROM abonos_socio"
+      `SELECT COALESCE(SUM(IF(pagoId IS NOT NULL OR cruzadoFecha IS NOT NULL, valor, 0)), 0) AS cruzado,
+              COALESCE(SUM(IF(pagoId IS NULL AND cruzadoFecha IS NOT NULL, valor, 0)), 0) AS sinUsar,
+              COALESCE(SUM(IF(pagoId IS NULL AND cruzadoFecha IS NULL, valor, 0)), 0) AS porCruzar
+         FROM abonos_socio`
     );
     return resumirBomba(
       tramos.map((t) => ({ bombaId: t.bombaId ?? null, valor: Number(t.valor), fechaPago: dia(t.fechaPago) })),
-      Number(abonos.total),
+      Number(abonos.cruzado),
       await this.parametrosBomba(),
-      Number(abonos.sinUsar)
+      Number(abonos.sinUsar),
+      Number(abonos.porCruzar)
     );
   },
 
   /** Abonos del socio, el mas reciente primero, con sus viajes. */
   async abonos(): Promise<AbonoSocio[]> {
-    const [abonos] = await pool.query<RowDataPacket[]>("SELECT * FROM abonos_socio ORDER BY fecha DESC, id DESC");
+    const [abonos] = await pool.query<RowDataPacket[]>(
+      "SELECT a.*, p.fecha AS fechaPago FROM abonos_socio a LEFT JOIN bomba_pagos p ON p.id = a.pagoId ORDER BY a.fecha DESC, a.id DESC"
+    );
     const [viajes] = await pool.query<RowDataPacket[]>(
-      `SELECT av.abonoId, av.cuadroViajeId, av.valor, c.placa, c.empresa, c.manifiesto, c.fecha
+      `SELECT av.abonoId, av.cuadroViajeId, av.valor, c.placa, c.empresa, c.manifiesto, c.remesa, c.fecha
          FROM abonos_socio_viajes av LEFT JOIN cuadro_viajes c ON c.id = av.cuadroViajeId ORDER BY av.id`
     );
     return abonos.map((a) => ({
@@ -748,6 +785,8 @@ export const anticipos = {
       valor: Number(a.valor),
       nota: a.nota ?? null,
       pagoId: a.pagoId ?? null,
+      cruzado: !!a.pagoId || !!a.cruzadoFecha,
+      cruzadoFecha: dia(a.fechaPago) ?? dia(a.cruzadoFecha),
       viajes: viajes
         .filter((v) => v.abonoId === a.id)
         .map((v) => ({
@@ -756,6 +795,7 @@ export const anticipos = {
           placa: v.placa ?? null,
           empresa: v.empresa ?? null,
           manifiesto: v.manifiesto ?? null,
+          remesa: v.remesa ?? null,
           fecha: dia(v.fecha),
         })),
     }));
@@ -784,6 +824,8 @@ export const anticipos = {
       await conexion.query("INSERT INTO abonos_socio_viajes (abonoId, cuadroViajeId, valor) VALUES ?", [
         viajes.map((v) => [a.insertId, v.id, v.valor]),
       ]);
+      // Los viajes quedan con el anticipo del Zorro pagado (valor y fecha del abono).
+      await conexion.query(SQL_PAGO_ANTICIPO_ABONOS, [[a.insertId]]);
       await conexion.commit();
     } catch (exc) {
       await conexion.rollback();
@@ -793,8 +835,35 @@ export const anticipos = {
     }
   },
 
-  /** Borra un abono del socio (y su reparto en los viajes). */
+  /**
+   * Marca a mano un abono del socio como cruzado (desde esa fecha se descuenta
+   * de la deuda con la bomba) o lo devuelve a por cruzar. Los que ya se usaron
+   * en un pago a la bomba no se tocan: hay que deshacer el pago.
+   */
+  async marcarCruceAbono(id: number, d: Record<string, unknown>): Promise<void> {
+    const [filas] = await pool.query<RowDataPacket[]>("SELECT pagoId FROM abonos_socio WHERE id = ?", [id]);
+    if (!filas[0]) throw new ErrorCuadro("Ese abono no existe.");
+    if (filas[0].pagoId) throw new ErrorCuadro("Ese abono ya se cruzo en un pago a la bomba: deshaz el pago para cambiarlo.");
+    const cruzado = d.cruzado === true || d.cruzado === "true";
+    const f = cruzado ? fecha(d.fecha ?? hoyColombia(), "la fecha del cruce") : null;
+    await pool.query("UPDATE abonos_socio SET cruzadoFecha = ? WHERE id = ?", [f, id]);
+  },
+
+  /**
+   * Borra un abono del socio (y su reparto en los viajes). A sus viajes se les
+   * quita la fecha de pago del anticipo del Zorro si era la del abono y ningun
+   * otro abono los cubre; el valor escrito se deja (sigue por cobrar).
+   */
   async borrarAbono(id: number): Promise<void> {
+    await pool.query(
+      `UPDATE cuadro_viajes c
+         JOIN abonos_socio_viajes av ON av.cuadroViajeId = c.id AND av.abonoId = ?
+         JOIN abonos_socio a ON a.id = av.abonoId
+          SET c.anticipoEmpresaFechaPago = NULL
+        WHERE c.anticipoEmpresaFechaPago = a.fecha
+          AND NOT EXISTS (SELECT 1 FROM abonos_socio_viajes o WHERE o.cuadroViajeId = c.id AND o.abonoId <> av.abonoId)`,
+      [id]
+    );
     await pool.query("DELETE FROM abonos_socio WHERE id = ?", [id]);
   },
 };

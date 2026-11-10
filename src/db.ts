@@ -1098,6 +1098,8 @@ export async function initSchema(): Promise<void> {
     // Pago a la bomba en que quedo cada factura y cada abono del socio.
     ["bomba_relaciones", "pagoId", "INT"],
     ["abonos_socio", "pagoId", "INT"],
+    // Abono del socio cruzado a mano (sin pago a la bomba): desde esa fecha se descuenta de la deuda.
+    ["abonos_socio", "cruzadoFecha", "DATE"],
     // Fecha de vencimiento de la factura de la bomba: avisa cuando hay que pagarla.
     ["bomba_relaciones", "fechaVencimiento", "DATE"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
@@ -1148,6 +1150,13 @@ export async function initSchema(): Promise<void> {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'dueno'`
   );
   const duenoEsNuevo = (conDueno as unknown[]).length === 0;
+  // Al crear el cruce de los abonos del socio se pasan una sola vez los abonos
+  // que ya habia al cuadro de anticipos del Zorro (ver despues del ciclo).
+  const [conCruceAbono] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'abonos_socio' AND COLUMN_NAME = 'cruzadoFecha'`
+  );
+  const cruceAbonoEsNuevo = (conCruceAbono as unknown[]).length === 0;
 
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(
@@ -1157,6 +1166,24 @@ export async function initSchema(): Promise<void> {
     );
     if ((filas as unknown[]).length === 0) {
       await pool.query(`ALTER TABLE \`${tabla}\` ADD COLUMN \`${columna}\` ${definicion}`);
+    }
+  }
+
+  // Correccion unica: los viajes de los abonos que ya habia quedan con el
+  // anticipo del Zorro pagado (valor y fecha del abono), sin pisar lo escrito.
+  if (cruceAbonoEsNuevo) {
+    const [abonos] = await pool.query<RowDataPacket[]>("SELECT id FROM abonos_socio");
+    if (abonos.length) {
+      await pool.query(
+        `UPDATE cuadro_viajes c
+       JOIN (SELECT av.cuadroViajeId, SUM(av.valor) AS valor, MIN(a.fecha) AS fecha
+               FROM abonos_socio_viajes av JOIN abonos_socio a ON a.id = av.abonoId
+              WHERE av.abonoId IN (?) GROUP BY av.cuadroViajeId) x ON x.cuadroViajeId = c.id
+        SET c.anticipoEmpresa = IF(c.anticipoEmpresa IS NULL OR c.anticipoEmpresa = 0, x.valor, c.anticipoEmpresa),
+            c.anticipoEmpresaFechaPago = COALESCE(c.anticipoEmpresaFechaPago, x.fecha),
+            c.anticipoEmpresaNoAplica = 0`,
+        [abonos.map((a) => a.id)]
+      );
     }
   }
 
