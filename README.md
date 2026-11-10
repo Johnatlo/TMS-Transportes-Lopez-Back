@@ -420,6 +420,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `DELETE` | `/api/catalogo/plantillas/:id` | "Elimina" una plantilla (en realidad la desactiva: ver plantillas.desactivar en el repo). No se borra de verdad porque el historial de viajes y remesas la referencia por id. |
 | `POST` | `/api/catalogo/plantillas` | Valida el cuerpo (plantillaDesdeCuerpo) y crea la plantilla. 422 con el problema si algo no es valido. |
 | `PUT` | `/api/catalogo/plantillas/:id` | Edita una plantilla. |
+| `GET` | `/api/catalogo/perfiles-vehiculos` | Perfil de los vehiculos que no son de terceros. |
+| `GET` | `/api/catalogo/perfiles-vehiculos/:placa` | Perfil de un vehiculo (404 si es de un tercero o no existe). |
 | `GET` | `/api/cuadro` | Todos los viajes del cuadro (sincroniza antes los manifiestos). |
 | `GET` | `/api/cuadro/bombas` | Catalogo de bombas aliadas. |
 | `POST` | `/api/cuadro/bombas` | Crea una bomba ({ nombre, ciudad }). Devuelve su id. |
@@ -532,7 +534,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_750 funciones, componentes, métodos y rutas en 52 archivos._
+_775 funciones, componentes, métodos y rutas en 55 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (34)
@@ -552,6 +554,8 @@ _750 funciones, componentes, métodos y rutas en 52 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
+- [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
+- [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
 - [`src/repo.ts`](#srcrepots) (94)
@@ -568,9 +572,10 @@ _750 funciones, componentes, métodos y rutas en 52 archivos._
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
-- [`src/routes/catalogo.ts`](#srcroutescatalogots) (46)
+- [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (47)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
+- [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
@@ -1666,6 +1671,87 @@ _750 funciones, componentes, métodos y rutas en 52 archivos._
     Anula la ultima liquidacion de su grupo y devuelve sus viajes a sin pagar
     (solo los que siguen con esa fecha). Las anteriores no: de ellas sale el
     saldo pendiente que arrastra la siguiente.
+
+### `src/perfilVehiculos.ts`
+
+> Perfil de los vehiculos de los socios y la flota propia (no los terceros):
+> lo que hay que consultar de cada uno en un solo lugar. Datos del catalogo,
+> documentos, conductor habitual, el ultimo preoperacional (con sus novedades,
+> equipo, extintor y ultimo mantenimiento) y los ultimos viajes.
+>
+> Es solo lectura: el registro de mantenimientos llega con su modulo.
+
+- **`sinGuion(p)`** · _función_
+  Placa sin guion ni espacios.
+
+- **`perfilVehiculos`** · _módulo_
+  Repositorio de los perfiles.
+
+  - **`perfilVehiculos.listar(placa)`** · _método_
+    Los vehiculos activos que no son de terceros, con su perfil. Con placa,
+    solo ese (y sus ultimos 10 viajes en vez de 3).
+
+### `src/preoperacional.ts`
+
+> Inspeccion preoperacional de vehiculos (Resolucion 40595, Plan Estrategico
+> de Seguridad Vial): reemplaza el Google Forms "Inspeccion Preoperacional de
+> Vehiculos" y la hoja de respuestas. Se llena con cada viaje despachado (la
+> ventana sale al expedir el manifiesto) y queda el historico.
+>
+> Las respuestas se guardan como JSON por clave (las preguntas y su orden
+> viven en el frontend, ver preguntasPreoperacional.ts); aparte van la fecha,
+> la placa, el conductor, el viaje y si aprobo, para filtrar.
+>
+> Respuestas sugeridas (todo en "Si" / "Cumple", como los enlaces
+> precargados): la ultima inspeccion de la placa con ese conductor; si no hay,
+> la base importada de la Matriz Control Integral (un juego por placa y
+> conductor, y EPS / ARL / pension por cedula); encima, lo del viaje (placa,
+> conductor, origen) y los vencimientos de SOAT y tecnomecanica del catalogo.
+
+- **`normal(s)`** · _función_
+  Texto sin tildes ni signos, en mayuscula, para comparar nombres.
+
+- **`placaComparable(p)`** · _función_
+  Placa sin guion ni espacios ("JTY-219" -> "JTY219").
+
+- **`mismoConductor(a, b)`** · _función_
+  El mismo conductor aunque el nombre venga distinto ("MAURICIO LOPEZ CUENCA"
+  y "CELSO MAURICIO LÓPEZ CUENCA"): todas las palabras del nombre corto estan
+  en el largo (y al menos dos).
+
+- **`sinLoDelDia(r)`** · _función_
+  Respuestas sin las que son de cada inspeccion (fecha, kilometraje, novedades).
+
+- **`leerRespuestas(x)`** · _función_
+  Lee un JSON de respuestas (lo que no sea texto se ignora).
+
+- **`mapear(r)`** · _función_
+  Fila de la tabla -> inspeccion.
+
+- **`preoperacional`** · _módulo_
+  Repositorio de las inspecciones preoperacionales.
+
+  - **`preoperacional.listar()`** · _método_
+    Todas las inspecciones, las mas recientes primero.
+
+  - **`preoperacional.pendientes(dias)`** · _método_
+    Viajes con manifiesto de los ultimos dias (no anulados) que aun no tienen inspeccion.
+
+  - **`preoperacional.sugerido(d)`** · _método_
+    Respuestas sugeridas para un viaje ({ viajeId }) o una placa y conductor
+    ({ placa, conductor }). Ver el comentario del archivo.
+
+  - **`preoperacional.guardar(d, usuarioId, id)`** · _método_
+    Guarda una inspeccion ({ viajeId?, respuestas }). Si el viaje ya tiene
+    una, la reemplaza. Necesita placa, conductor y fecha de inspeccion.
+
+  - **`preoperacional.borrar(id)`** · _método_
+    Borra una inspeccion.
+
+  - **`preoperacional.importarBase(d)`** · _método_
+    Reemplaza la base de respuestas importada de la Matriz Control Integral
+    ({ vehiculos: [{ placa, conductor, respuestas }], conductores: [{ cedula,
+    nombre, eps, arl, pension }] }). En una transaccion.
 
 ### `src/relacionesBomba.ts`
 
@@ -3418,6 +3504,12 @@ _750 funciones, componentes, métodos y rutas en 52 archivos._
   plantilla guardada), asi un cliente que mande solo algunos campos no borra
   el resto con los valores por defecto.
 
+- **`GET /perfiles-vehiculos`** · _ruta HTTP_
+  GET /api/catalogo/perfiles-vehiculos: perfil de los vehiculos que no son de terceros.
+
+- **`GET /perfiles-vehiculos/:placa`** · _ruta HTTP_
+  GET /api/catalogo/perfiles-vehiculos/:placa: perfil de un vehiculo (404 si es de un tercero o no existe).
+
 ### `src/routes/cuadro.ts`
 
 - **`responder(res, fn)`** · _función_
@@ -3905,6 +3997,29 @@ _750 funciones, componentes, métodos y rutas en 52 archivos._
 
 - **`GET /:id`** · _ruta HTTP_
   Detalle de un viaje con sus remesas.
+
+### `src/routes/preoperacional.ts`
+
+- **`GET /`** · _ruta HTTP_
+  GET /api/preoperacional: todas las inspecciones (las mas recientes primero).
+
+- **`GET /pendientes`** · _ruta HTTP_
+  GET /api/preoperacional/pendientes: viajes con manifiesto de los ultimos 30 dias sin inspeccion.
+
+- **`GET /sugerido`** · _ruta HTTP_
+  GET /api/preoperacional/sugerido?viajeId= (o ?placa=&conductor=): respuestas sugeridas.
+
+- **`PUT /base`** · _ruta HTTP_
+  PUT /api/preoperacional/base: reemplaza la base importada de la Matriz Control Integral.
+
+- **`POST /`** · _ruta HTTP_
+  POST /api/preoperacional: guarda una inspeccion ({ viajeId?, respuestas }).
+
+- **`PUT /:id`** · _ruta HTTP_
+  PUT /api/preoperacional/:id: corrige una inspeccion ({ viajeId?, respuestas }).
+
+- **`DELETE /:id`** · _ruta HTTP_
+  DELETE /api/preoperacional/:id: borra una inspeccion.
 
 ### `src/routes/seguimiento.ts`
 

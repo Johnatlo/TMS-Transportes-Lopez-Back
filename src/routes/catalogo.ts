@@ -10,6 +10,7 @@ import { config } from "../config";
 import { revisarVencimientos } from "../alertas";
 import { MAESTROS, MaestroNoEncontrado, registrarMaestro } from "../rndc/maestros";
 import { cifrar, descifrar, ErrorCifrado } from "../cifrado";
+import { perfilVehiculos } from "../perfilVehiculos";
 import type { Maestro } from "../rndc/maestros";
 import {
   consultarSicetac,
@@ -942,4 +943,20 @@ catalogoRouter.put("/plantillas/:id", async (req, res) => {
   const r = await plantillaDesdeCuerpo({ ...actual, ...req.body });
   if ("error" in r) return res.status(422).json({ error: r.error });
   res.json(await plantillas.update(actual.id, r.datos));
+});
+
+// ---------- PERFIL DE LOS VEHICULOS (socios y flota propia) ----------
+/** GET /api/catalogo/perfiles-vehiculos: perfil de los vehiculos que no son de terceros. */
+catalogoRouter.get("/perfiles-vehiculos", async (_req, res) => {
+  res.json(await perfilVehiculos.listar());
+});
+
+/** GET /api/catalogo/perfiles-vehiculos/:placa: perfil de un vehiculo (404 si es de un tercero o no existe). */
+catalogoRouter.get("/perfiles-vehiculos/:placa", async (req, res) => {
+  const [perfil] = await perfilVehiculos.listar(String(req.params.placa));
+  if (!perfil) {
+    res.status(404).json({ error: "Ese vehiculo no existe o es de un tercero." });
+    return;
+  }
+  res.json(perfil);
 });

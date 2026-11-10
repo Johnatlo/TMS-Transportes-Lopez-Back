@@ -19,6 +19,7 @@ import { authRouter } from "./routes/auth";
 import { usuariosRouter } from "./routes/usuarios";
 import { cuadroRouter } from "./routes/cuadro";
 import { seguimientoRouter } from "./routes/seguimiento";
+import { preoperacionalRouter } from "./routes/preoperacional";
 import { exigirSesion } from "./auth";
 import { iniciarSincronizacionAutomatica } from "./rndc/sincronizacion";
 import { cuadro, MANTENIMIENTO_CADA_MS } from "./cuadro";
@@ -70,6 +71,7 @@ async function main() {
   app.use("/api/usuarios", exigirSesion, usuariosRouter);
   app.use("/api/cuadro", exigirSesion, cuadroRouter);
   app.use("/api/seguimiento", exigirSesion, seguimientoRouter);
+  app.use("/api/preoperacional", exigirSesion, preoperacionalRouter);
 
   /**
    * Frontend compilado (despliegue).

@@ -352,6 +352,44 @@ export async function initSchema(): Promise<void> {
       UNIQUE KEY uq_bomba (nombre, ciudad)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Inspeccion preoperacional de vehiculos (ver src/preoperacional.ts): una por
+  // viaje despachado, con las respuestas en JSON; y la base importada de la
+  // Matriz Control Integral (respuestas por placa y conductor, y EPS / ARL /
+  // pension por cedula) para sugerir las respuestas.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS preoperacionales (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      viajeId INT NULL,
+      fecha DATE NOT NULL,
+      placa VARCHAR(15) NOT NULL,
+      conductor VARCHAR(150) NOT NULL,
+      aprobo TINYINT(1) NOT NULL DEFAULT 1,
+      respuestas MEDIUMTEXT NOT NULL,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_preop_viaje (viajeId),
+      KEY idx_preop_placa (placa),
+      KEY idx_preop_fecha (fecha)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS preoperacional_base (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      placa VARCHAR(15) NOT NULL,
+      conductor VARCHAR(150) NOT NULL DEFAULT '',
+      respuestas MEDIUMTEXT NOT NULL,
+      KEY idx_preop_base_placa (placa)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS preoperacional_conductores (
+      cedula VARCHAR(20) PRIMARY KEY,
+      nombre VARCHAR(150) NOT NULL DEFAULT '',
+      eps VARCHAR(80),
+      arl VARCHAR(80),
+      pension VARCHAR(80)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Descuento por galon de cada bomba (estacion), con vigencia (ver
   // anticipos.descuentosGalon): solo Chuzaca lo tiene. Un cambio agrega una
   // fila que rige desde una fecha; los anticipos ya cruzados no cambian.
