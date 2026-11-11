@@ -763,7 +763,8 @@ _777 funciones, componentes, métodos y rutas en 55 archivos._
     fecha y, si hace falta, la bomba (cambia tambien en sus tramos).
 
   - **`anticipos.actualizarTramo(id, d)`** · _método_
-    Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, a que
+    Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, cruce
+    a mano (cruzadoManual: fecha, true = hoy, null = quitarlo), a que
     viaje se suma (para corregir una vuelta asignada al viaje equivocado), el
     efectivo o el combustible a mano (para corregir lo que no coincide con la
     bomba; el valor total se recalcula), aceptar lo que cobro la bomba

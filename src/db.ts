@@ -1100,6 +1100,8 @@ export async function initSchema(): Promise<void> {
     ["abonos_socio", "pagoId", "INT"],
     // Abono del socio cruzado a mano (sin pago a la bomba): desde esa fecha se descuenta de la deuda.
     ["abonos_socio", "cruzadoFecha", "DATE"],
+    // Tramo de anticipo marcado a mano como cruzado con la bomba (sin vale): fecha en que se marco.
+    ["cuadro_anticipos", "cruzadoManual", "DATE"],
     // Fecha de vencimiento de la factura de la bomba: avisa cuando hay que pagarla.
     ["bomba_relaciones", "fechaVencimiento", "DATE"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).

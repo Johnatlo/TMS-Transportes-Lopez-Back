@@ -151,6 +151,8 @@ export interface FilaAnticipo {
   efectivoEntregado: number | null;
   /** Factura (relacion) de la bomba con que se cruzo el vale. */
   relacionId: number | null;
+  /** Marcado a mano como cruzado con la bomba (fecha); null = segun los vales. */
+  cruzadoManual: string | null;
   /** Descuento por galon de su bomba vigente en su fecha (0 si la bomba no tiene). */
   descuentoGalon: number;
 }
@@ -174,7 +176,7 @@ const SELECT_ANTICIPOS = `
          a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
          c.fecha AS fechaViaje, rv.vale, COALESCE(rv.relacionId, re.relacionId) AS relacionId,
          re.vale AS valeEfectivo, rv.id IS NOT NULL AS cruzadoCombustible, re.id IS NOT NULL AS cruzadoEfectivo,
-         a.efectivoEntregado, ${sqlDescuentoGalon("a.bombaId", "a.fecha")} AS descuentoGalon
+         a.efectivoEntregado, a.cruzadoManual, ${sqlDescuentoGalon("a.bombaId", "a.fecha")} AS descuentoGalon
     FROM cuadro_anticipos a
     LEFT JOIN bomba_relacion_vales rv ON rv.cuadroAnticipoId = a.id AND rv.tipo = 'COMBUSTIBLE'
     LEFT JOIN bomba_relacion_vales re ON re.cuadroAnticipoId = a.id AND re.tipo = 'EFECTIVO'
@@ -214,6 +216,7 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   cruzadoEfectivo: !!Number(r.cruzadoEfectivo),
   efectivoEntregado: r.efectivoEntregado === null || r.efectivoEntregado === undefined ? null : Number(r.efectivoEntregado),
   relacionId: r.relacionId ?? null,
+  cruzadoManual: dia(r.cruzadoManual),
   descuentoGalon: Number(r.descuentoGalon ?? 0),
 });
 
@@ -575,7 +578,8 @@ export const anticipos = {
   },
 
   /**
-   * Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, a que
+   * Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, cruce
+   * a mano (cruzadoManual: fecha, true = hoy, null = quitarlo), a que
    * viaje se suma (para corregir una vuelta asignada al viaje equivocado), el
    * efectivo o el combustible a mano (para corregir lo que no coincide con la
    * bomba; el valor total se recalcula), aceptar lo que cobro la bomba
@@ -595,6 +599,11 @@ export const anticipos = {
     if ("nota" in d) {
       sets.push("nota = ?");
       valores.push(String(d.nota ?? "").trim().slice(0, 200) || null);
+    }
+    // Cruce a mano (sin vale de la bomba): fecha en que se marco, o null para quitarlo.
+    if ("cruzadoManual" in d) {
+      sets.push("cruzadoManual = ?");
+      valores.push(d.cruzadoManual ? fecha(d.cruzadoManual === true ? hoyColombia() : d.cruzadoManual, "la fecha del cruce") : null);
     }
     if ("cuadroViajeId" in d) {
       sets.push("cuadroViajeId = ?");
