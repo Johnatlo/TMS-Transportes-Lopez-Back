@@ -633,7 +633,8 @@ export const anticipos = {
   },
 
   /**
-   * Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, cruce
+   * Cambia un tramo desde el cuadro de anticipos: fecha de pago, nota, si es
+   * ida o vuelta (tramo: IDA / VUELTA), cruce
    * a mano (cruzadoManual: fecha, true = hoy, null = quitarlo), a que
    * viaje se suma (para corregir una vuelta asignada al viaje equivocado), el
    * efectivo o el combustible a mano (para corregir lo que no coincide con la
@@ -659,6 +660,12 @@ export const anticipos = {
     if ("cruzadoManual" in d) {
       sets.push("cruzadoManual = ?");
       valores.push(d.cruzadoManual ? fecha(d.cruzadoManual === true ? hoyColombia() : d.cruzadoManual, "la fecha del cruce") : null);
+    }
+    // Ida o vuelta a mano (cuando quedo mal marcado).
+    if ("tramo" in d) {
+      if (d.tramo !== "IDA" && d.tramo !== "VUELTA") throw new ErrorCuadro("El tramo debe ser IDA o VUELTA.");
+      sets.push("tramo = ?");
+      valores.push(d.tramo);
     }
     if ("cuadroViajeId" in d) {
       sets.push("cuadroViajeId = ?");
