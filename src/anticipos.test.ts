@@ -4,7 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 vi.mock("./db", () => ({ pool: {} }));
 
 import { ErrorCuadro } from "./cuadro";
-import { combustibleSegunFormula, descuentoSugerido, placaNormal, resumirBomba, validarAnticipo } from "./anticipos";
+import { avisosRepetido, combustibleSegunFormula, descuentoSugerido, placaNormal, resumirBomba, validarAnticipo } from "./anticipos";
 
 describe("anticipo que se registra en un viaje", () => {
   test("un solo recorrido: efectivo y combustible, sin vuelta", () => {
@@ -104,5 +104,32 @@ describe("cuentas con la bomba", () => {
     // En el Excel el descuento ronda los 250 por galon (25.044 / 100,182).
     expect(descuentoSugerido(100.182, 250)).toBe(25046);
     expect(descuentoSugerido(91.075, 250)).toBe(22769);
+  });
+});
+
+describe("aviso de anticipo repetido", () => {
+  // Casos reales encontrados al cuadrar con el reporte de la empresa.
+  test("mismo valor el mismo dia (SDO-355: la ida otra vez)", () => {
+    const avisos = avisosRepetido([1_200_000], [
+      { tramo: "IDA", total: 1_200_000, manifiesto: "00006816" },
+      { tramo: "VUELTA", total: 1_200_000, manifiesto: null },
+    ]);
+    expect(avisos[0]).toBe("Ya hay un anticipo de 1.200.000 ese dia en esta placa (ida del manifiesto 00006816).");
+  });
+
+  test("el total de dos ya registrados (SWN-623: 2.435.962 = 1.300.000 + 1.135.962)", () => {
+    const existentes = [
+      { tramo: "IDA" as const, total: 1_300_000, manifiesto: "00006922" },
+      { tramo: "IDA" as const, total: 1_135_962, manifiesto: "00006922" },
+    ];
+    expect(avisosRepetido([2_435_962], existentes)).toEqual(["2.435.962 es la suma de dos anticipos ya registrados ese dia (1.300.000 + 1.135.962)."]);
+    // Al reves: ya estaba el total y se registra una parte.
+    const alReves = avisosRepetido([1_135_962], [existentes[0], { tramo: "IDA", total: 2_435_962, manifiesto: "00006922" }]);
+    expect(alReves).toEqual(["Ya hay un anticipo de 2.435.962 ese dia que seria la suma de este y otro (ida del manifiesto 00006922)."]);
+  });
+
+  test("sin anticipos ese dia, o con otro valor, no avisa", () => {
+    expect(avisosRepetido([2_200_000], [])).toEqual([]);
+    expect(avisosRepetido([2_200_000, 0], [{ tramo: "IDA", total: 1_800_000, manifiesto: null }])).toEqual([]);
   });
 });

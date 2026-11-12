@@ -104,6 +104,43 @@ export function validarAnticipo(d: Record<string, unknown>): NuevoAnticipo {
   };
 }
 
+/** Anticipo ya registrado de la placa ese dia (para avisar si el nuevo se repite). */
+export interface AnticipoDelDia {
+  tramo: Tramo;
+  total: number;
+  manifiesto: string | null;
+}
+
+/** Diferencia que se toma como el mismo valor (redondeos). */
+const MISMO_VALOR = 1000;
+
+/**
+ * Avisos antes de registrar un anticipo, contra los ya registrados de la misma
+ * placa el mismo dia (los errores que se encontraron al cuadrar con el reporte
+ * de la empresa):
+ * - ya hay uno con el mismo valor (se registro dos veces);
+ * - el nuevo es la suma de dos ya registrados (se escribio el total y ademas
+ *   cada parte);
+ * - uno ya registrado es la suma del nuevo y otro (lo mismo, al reves).
+ * Solo avisa: la ida y la vuelta pueden ser del mismo valor el mismo dia.
+ */
+export function avisosRepetido(valores: number[], existentes: AnticipoDelDia[]): string[] {
+  const cerca = (a: number, b: number) => Math.abs(a - b) <= MISMO_VALOR;
+  const pesosTexto = (v: number) => Math.round(v).toLocaleString("es-CO");
+  const cual = (e: AnticipoDelDia) => `${e.tramo === "VUELTA" ? "vuelta" : "ida"}${e.manifiesto ? ` del manifiesto ${e.manifiesto}` : ""}`;
+  const avisos: string[] = [];
+  for (const v of valores.filter((x) => x > 0)) {
+    const igual = existentes.find((e) => cerca(e.total, v));
+    if (igual) avisos.push(`Ya hay un anticipo de ${pesosTexto(v)} ese dia en esta placa (${cual(igual)}).`);
+    const pares = existentes.flatMap((a, i) => existentes.slice(i + 1).map((b) => [a, b] as const));
+    const suma = pares.find(([a, b]) => cerca(a.total + b.total, v));
+    if (suma) avisos.push(`${pesosTexto(v)} es la suma de dos anticipos ya registrados ese dia (${pesosTexto(suma[0].total)} + ${pesosTexto(suma[1].total)}).`);
+    const contiene = existentes.find((e) => existentes.some((o) => o !== e && cerca(o.total + v, e.total)));
+    if (contiene) avisos.push(`Ya hay un anticipo de ${pesosTexto(contiene.total)} ese dia que seria la suma de este y otro (${cual(contiene)}).`);
+  }
+  return [...new Set(avisos)];
+}
+
 /** Un tramo del cuadro de anticipos (una fila por viaje). */
 export interface FilaAnticipo {
   id: number;
@@ -406,6 +443,24 @@ export const anticipos = {
       conexion.release();
     }
     await this.asignarVueltasPendientes();
+  },
+
+  /**
+   * Revisa si el anticipo que se va a registrar en un viaje se repite con los
+   * de la misma placa ese dia (ver avisosRepetido). No guarda nada.
+   */
+  async revisarRepetido(cuadroViajeId: number, d: Record<string, unknown>): Promise<string[]> {
+    const a = validarAnticipo(d);
+    const [viajes] = await pool.query<RowDataPacket[]>("SELECT placa FROM cuadro_viajes WHERE id = ?", [cuadroViajeId]);
+    if (!viajes[0]) throw new ErrorCuadro("Viaje no encontrado en el cuadro.");
+    const [filas] = await pool.query<RowDataPacket[]>(
+      `SELECT a.tramo, COALESCE(a.efectivo, 0) + COALESCE(a.combustible, 0) AS total, c.manifiesto
+         FROM cuadro_anticipos a LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId
+        WHERE REPLACE(COALESCE(a.placa, c.placa), '-', '') = ? AND a.fecha = ?`,
+      [placaNormal(viajes[0].placa), a.fecha]
+    );
+    const existentes = filas.map((f) => ({ tramo: (f.tramo === "VUELTA" ? "VUELTA" : "IDA") as Tramo, total: Number(f.total), manifiesto: f.manifiesto ?? null }));
+    return avisosRepetido([a.efectivo + a.combustible, a.idaYVuelta ? a.efectivoVuelta + a.combustibleVuelta : 0], existentes);
   },
 
   /**

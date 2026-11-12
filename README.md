@@ -466,6 +466,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/cuadro/:id/revision` | Marca o quita la revision de CONTABILIDAD o GERENCIA ({ quien, revisado }), con el usuario y la hora. |
 | `POST` | `/api/cuadro/:id/notas` | Agrega una nota ({ texto }) con su autor. |
 | `DELETE` | `/api/cuadro/:id/notas/:notaId` | Borra una nota. |
+| `POST` | `/api/cuadro/:id/anticipos/revisar` | Avisos si el anticipo se repite con los de la misma placa ese dia (mismo valor, o suma de otros). No guarda. |
 | `POST` | `/api/cuadro/:id/anticipos` | Registra un anticipo de bomba ({ bombaId, valor, fecha, fechaPago?, nota? }). |
 | `PUT` | `/api/cuadro/:id/anticipos/:anticipoId` | Cambia la fecha de pago a la bomba y/o la nota del anticipo. |
 | `DELETE` | `/api/cuadro/:id/anticipos/:anticipoId` | Quita un anticipo. |
@@ -535,10 +536,10 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_777 funciones, componentes, métodos y rutas en 55 archivos._
+_780 funciones, componentes, métodos y rutas en 55 archivos._
 
 - [`src/alertas.ts`](#srcalertasts) (5)
-- [`src/anticipos.ts`](#srcanticiposts) (35)
+- [`src/anticipos.ts`](#srcanticiposts) (37)
 - [`src/auth.ts`](#srcauthts) (35)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
@@ -574,7 +575,7 @@ _777 funciones, componentes, métodos y rutas en 55 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (48)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
@@ -681,6 +682,16 @@ _777 funciones, componentes, métodos y rutas en 55 archivos._
   - Ida y vuelta: la vuelta debe tener algun valor.
   - Compatibilidad: "valor" sin desglose se toma como combustible.
 
+- **`avisosRepetido(valores, existentes)`** · _función_
+  Avisos antes de registrar un anticipo, contra los ya registrados de la misma
+  placa el mismo dia (los errores que se encontraron al cuadrar con el reporte
+  de la empresa):
+  - ya hay uno con el mismo valor (se registro dos veces);
+  - el nuevo es la suma de dos ya registrados (se escribio el total y ademas
+    cada parte);
+  - uno ya registrado es la suma del nuevo y otro (lo mismo, al reves).
+  Solo avisa: la ida y la vuelta pueden ser del mismo valor el mismo dia.
+
 - **`sqlDescuentoGalon(bomba, fecha)`** · _función_
   Descuento por galon de una bomba vigente en una fecha: la fila de
   descuentos_galon_bomba que rige mas reciente (sin fecha = desde siempre); 0
@@ -726,6 +737,10 @@ _777 funciones, componentes, métodos y rutas en 55 archivos._
     Registra un anticipo en un viaje del cuadro: crea el tanqueo, el tramo de
     IDA en este viaje y, si es de ida y vuelta, el tramo de VUELTA pendiente
     (se asigna solo al proximo viaje de la placa). Todo en una transaccion.
+
+  - **`anticipos.revisarRepetido(cuadroViajeId, d)`** · _método_
+    Revisa si el anticipo que se va a registrar en un viaje se repite con los
+    de la misma placa ese dia (ver avisosRepetido). No guarda nada.
 
   - **`anticipos.asignarVueltasPendientes()`** · _método_
     Asigna cada vuelta pendiente al proximo viaje de su placa: el primero del
@@ -3672,6 +3687,10 @@ _777 funciones, componentes, métodos y rutas en 55 archivos._
 
 - **`DELETE /:id/notas/:notaId`** · _ruta HTTP_
   DELETE /api/cuadro/:id/notas/:notaId: borra una nota.
+
+- **`POST /:id/anticipos/revisar`** · _ruta HTTP_
+  POST /api/cuadro/:id/anticipos/revisar: avisos si el anticipo se repite con
+  los de la misma placa ese dia (mismo valor, o suma de otros). No guarda.
 
 - **`POST /:id/anticipos`** · _ruta HTTP_
   POST /api/cuadro/:id/anticipos: registra un anticipo de bomba

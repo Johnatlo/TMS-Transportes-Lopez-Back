@@ -329,6 +329,13 @@ cuadroRouter.delete("/:id/notas/:notaId", async (req, res) => {
 });
 
 /**
+ * POST /api/cuadro/:id/anticipos/revisar: avisos si el anticipo se repite con
+ * los de la misma placa ese dia (mismo valor, o suma de otros). No guarda.
+ */
+cuadroRouter.post("/:id/anticipos/revisar", async (req, res) => {
+  await responder(res, async () => ({ avisos: await anticipos.revisarRepetido(Number(req.params.id), req.body ?? {}) }));
+});
+/**
  * POST /api/cuadro/:id/anticipos: registra un anticipo de bomba
  * ({ bombaId, valor, fecha, fechaPago?, nota? }).
  */
