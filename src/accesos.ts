@@ -61,8 +61,8 @@ export async function accesoCuadro(req: Request, res: Response, next: NextFuncti
 }
 
 /**
- * Seguimiento: Rentabilidad y la liquidacion a duenos son de CUENTAS (las
- * matrices solo las cambia el rol total); lo demas (cartera, terceros,
+ * Seguimiento: Rentabilidad es de CUENTAS (las matrices solo las cambia el
+ * rol total) y la liquidacion a duenos de LIQUIDACION; lo demas (cartera, terceros,
  * papeles, anticipos de empresas) es de OPERACION. Las alertas de la campana
  * a quien no tiene OPERACION le llegan vacias.
  */
@@ -72,7 +72,8 @@ export function accesoSeguimiento(req: Request, res: Response, next: NextFunctio
     if (req.method === "PUT" && req.path.startsWith("/rentabilidad/matrices") && rol !== "TOTAL") {
       return res.status(403).json({ error: "Solo el rol total puede cambiar las matrices." });
     }
-    return puede(rol, "CUENTAS") ? next() : res.status(403).json({ error: SIN_PERMISO });
+    const area = req.path.startsWith("/rentabilidad/liquidaciones") ? "LIQUIDACION" : "CUENTAS";
+    return puede(rol, area) ? next() : res.status(403).json({ error: SIN_PERMISO });
   }
   if (req.method === "GET" && req.path === "/alertas" && !puede(rol, "OPERACION")) {
     return res.json({ hoy: new Date().toISOString().slice(0, 10), urgentes: 0, alertas: [] });

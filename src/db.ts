@@ -10,7 +10,7 @@ import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import "dotenv/config";
 import { PLACAS_POR_DUENO } from "./duenos";
-import { EMPRESA_INICIAL, NOMBRES_TOTAL_INICIAL, VISIBLES_PARA_TODOS_INICIAL } from "./roles";
+import { CORREOS_SIEMPRE_TOTAL, EMPRESA_INICIAL, NOMBRES_TOTAL_INICIAL, VISIBLES_PARA_TODOS_INICIAL } from "./roles";
 
 export const pool = mysql.createPool({
   host: process.env.DB_HOST ?? "localhost",
@@ -1188,6 +1188,8 @@ export async function initSchema(): Promise<void> {
     }
   }
 
+  // La cuenta principal de la empresa siempre con acceso total (nunca queda el sistema sin quien administre).
+  await pool.query("UPDATE usuarios SET rol = 'TOTAL' WHERE LOWER(email) IN (?) AND rol <> 'TOTAL'", [CORREOS_SIEMPRE_TOTAL]);
   // Una sola vez: Principal y Admin con acceso total; los demas quedan administrativos (el valor por defecto).
   if (rolEsNuevo) {
     await pool.query("UPDATE usuarios SET rol = 'TOTAL' WHERE UPPER(TRIM(nombre)) IN (?)", [NOMBRES_TOTAL_INICIAL]);

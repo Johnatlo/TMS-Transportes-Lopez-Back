@@ -622,8 +622,8 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
   desde Rentabilidad los viajes de sus vehiculos (PUT /:id y POST /:id/revision).
 
 - **`accesoSeguimiento(req, res, next)`** · _función_
-  Seguimiento: Rentabilidad y la liquidacion a duenos son de CUENTAS (las
-  matrices solo las cambia el rol total); lo demas (cartera, terceros,
+  Seguimiento: Rentabilidad es de CUENTAS (las matrices solo las cambia el
+  rol total) y la liquidacion a duenos de LIQUIDACION; lo demas (cartera, terceros,
   papeles, anticipos de empresas) es de OPERACION. Las alertas de la campana
   a quien no tiene OPERACION le llegan vacias.
 
@@ -3348,9 +3348,8 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
 >
 > - TOTAL: todo el aplicativo (hoy Principal y Admin).
 > - ADMINISTRATIVO: lo operativo del TMS (despacho, RNDC, Cuadro pagos,
->   anticipos, cartera, pago a terceros...), sin las cuentas de los
->   vehiculos (Rentabilidad, liquidacion a duenos, reparto de ganancias) ni
->   la liquidacion de los empleados.
+>   anticipos, cartera, pago a terceros...) y Rentabilidad, sin liquidar a
+>   los duenos, repartir ganancias ni liquidar a los empleados.
 > - MYC: Transportes M&C. Lo del RNDC (despachar, RNDC, plantillas, clientes,
 >   flota, conductores, preoperacional) y las cuentas solo de sus vehiculos
 >   (Rentabilidad, liquidacion y reparto de ganancias), sin los de Transportes
@@ -3367,9 +3366,8 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
   El rol tiene acceso a esa area.
 
 - **`veCuentasDe(rol, v)`** · _función_
-  El rol ve las cuentas de ese vehiculo: TOTAL todos (propios y terceros);
-  MYC solo los de M&C y los marcados para todos; ADMINISTRATIVO ninguno (no
-  ve cuentas de vehiculos).
+  El rol ve las cuentas de ese vehiculo: TOTAL y ADMINISTRATIVO todos
+  (propios y terceros); MYC solo los de M&C y los marcados para todos.
 
 - **`veVehiculo(rol, v)`** · _función_
   El rol ve ese vehiculo en lo operativo filtrado por empresa (perfil de

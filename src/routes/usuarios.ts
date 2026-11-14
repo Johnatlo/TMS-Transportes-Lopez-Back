@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { ROLES } from "../roles";
+import { CORREOS_SIEMPRE_TOTAL, ROLES } from "../roles";
 import type { Rol } from "../roles";
 import { claveTemporal, emailValido, normalizarEmail, sesiones, usuarios } from "../auth";
 import { correoClaveTemporal, correoConfigurado, enviarCorreo } from "../correo";
@@ -84,6 +84,9 @@ usuariosRouter.put("/:id", async (req, res) => {
   if (req.body?.rol !== undefined) {
     const rol = String(req.body.rol);
     if (!ROLES.includes(rol as Rol)) return res.status(422).json({ error: "El rol debe ser TOTAL, ADMINISTRATIVO o MYC." });
+    if (rol !== "TOTAL" && CORREOS_SIEMPRE_TOTAL.includes(objetivo.email.toLowerCase())) {
+      return res.status(422).json({ error: "La cuenta principal de la empresa siempre tiene acceso total." });
+    }
     // Siempre debe quedar alguien con acceso total.
     if (objetivo.rol === "TOTAL" && rol !== "TOTAL" && (await usuarios.contarTotales()) <= 1) {
       return res.status(422).json({ error: "Debe quedar al menos un usuario activo con acceso total." });

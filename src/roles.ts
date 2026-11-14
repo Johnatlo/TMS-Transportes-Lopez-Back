@@ -3,9 +3,8 @@
  *
  * - TOTAL: todo el aplicativo (hoy Principal y Admin).
  * - ADMINISTRATIVO: lo operativo del TMS (despacho, RNDC, Cuadro pagos,
- *   anticipos, cartera, pago a terceros...), sin las cuentas de los
- *   vehiculos (Rentabilidad, liquidacion a duenos, reparto de ganancias) ni
- *   la liquidacion de los empleados.
+ *   anticipos, cartera, pago a terceros...) y Rentabilidad, sin liquidar a
+ *   los duenos, repartir ganancias ni liquidar a los empleados.
  * - MYC: Transportes M&C. Lo del RNDC (despachar, RNDC, plantillas, clientes,
  *   flota, conductores, preoperacional) y las cuentas solo de sus vehiculos
  *   (Rentabilidad, liquidacion y reparto de ganancias), sin los de Transportes
@@ -32,17 +31,19 @@ export type Area =
   | "RNDC"
   /** Cuadro pagos, anticipos, cartera, pago a terceros, papeles y alertas. */
   | "OPERACION"
-  /** Rentabilidad, liquidacion a duenos y reparto de ganancias (filtradas por vehiculo segun el rol). */
+  /** Rentabilidad (filtrada por vehiculo segun el rol). */
   | "CUENTAS"
+  /** Liquidacion a duenos, reparto de ganancias y (despues) liquidacion de empleados. */
+  | "LIQUIDACION"
   /** Configuracion de la empresa y la empresa de cada vehiculo. */
   | "ADMINISTRACION"
   /** Usuarios y sus roles. */
   | "USUARIOS";
 
 const AREAS: Record<Rol, Area[]> = {
-  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "ADMINISTRACION", "USUARIOS"],
-  ADMINISTRATIVO: ["RNDC", "OPERACION", "ADMINISTRACION"],
-  MYC: ["RNDC", "CUENTAS"],
+  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "ADMINISTRACION", "USUARIOS"],
+  ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "ADMINISTRACION"],
+  MYC: ["RNDC", "CUENTAS", "LIQUIDACION"],
 };
 
 /** El rol tiene acceso a esa area. */
@@ -55,14 +56,12 @@ export interface VisibilidadVehiculo {
 }
 
 /**
- * El rol ve las cuentas de ese vehiculo: TOTAL todos (propios y terceros);
- * MYC solo los de M&C y los marcados para todos; ADMINISTRATIVO ninguno (no
- * ve cuentas de vehiculos).
+ * El rol ve las cuentas de ese vehiculo: TOTAL y ADMINISTRATIVO todos
+ * (propios y terceros); MYC solo los de M&C y los marcados para todos.
  */
 export function veCuentasDe(rol: Rol, v: VisibilidadVehiculo | null | undefined): boolean {
-  if (rol === "TOTAL") return true;
   if (rol === "MYC") return !!v && (v.empresa === "MYC" || v.visibleTodos);
-  return false;
+  return true;
 }
 
 /**
@@ -88,6 +87,13 @@ export const EMPRESA_INICIAL: Record<EmpresaVehiculo, string[]> = {
   MYC: ["SKX202", "SZP339", "SZX826", "TEK298", "TLN860", "SOR429"],
 };
 export const VISIBLES_PARA_TODOS_INICIAL = ["XGJ197"];
+
+/**
+ * Cuentas que siempre tienen acceso total (se revisa al arrancar): la
+ * principal de la empresa, para que nunca quede el sistema sin quien
+ * administre los usuarios. Es el correo publico de la empresa.
+ */
+export const CORREOS_SIEMPRE_TOTAL = ["transporteslopezcsas@gmail.com"];
 
 /** Nombres de los usuarios que quedan con acceso total al crear los roles; los demas quedan administrativos. */
 export const NOMBRES_TOTAL_INICIAL = ["PRINCIPAL", "ADMIN"];
