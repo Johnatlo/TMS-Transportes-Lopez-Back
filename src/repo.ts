@@ -52,6 +52,10 @@ export interface Vehiculo {
   flota?: "LOPEZ" | "MYC" | "TERCERO";
   /** Socio dueno (MAURICIO, CELSO, MILLER o LUISA) para separar la cartera; null = tercero. */
   dueno?: string | null;
+  /** Empresa que liquida el vehiculo (LOPEZ o MYC; null = tercero). Ver src/roles.ts. */
+  empresa?: "LOPEZ" | "MYC" | null;
+  /** Lo ven todos los roles (como el Volvo XGJ-197). */
+  visibleTodos?: boolean;
   /** Link de la plataforma GPS de este vehiculo (si no, el de su empresa de monitoreo). */
   gpsUrl?: string | null;
   /** Usuario de la plataforma GPS. */
@@ -306,7 +310,7 @@ function mapTercero(row: Tercero): Tercero {
  */
 function mapVehiculo(row: Vehiculo): Vehiculo {
   const { gpsClaveCifrada, ...resto } = row as Vehiculo & { gpsClaveCifrada?: string | null };
-  return { ...resto, activo: !!row.activo, aplicaFopat: !!row.aplicaFopat, gpsTieneClave: !!gpsClaveCifrada };
+  return { ...resto, activo: !!row.activo, aplicaFopat: !!row.aplicaFopat, visibleTodos: !!row.visibleTodos, gpsTieneClave: !!gpsClaveCifrada };
 }
 
 /** Date -> "AAAA-MM-DD HH:MM:SS" en UTC, el formato que espera MySQL. null se conserva. */
@@ -604,6 +608,8 @@ export const vehiculos = {
       nitMonitoreoFlota: "texto",
       flota: "texto",
       dueno: "texto",
+      empresa: "texto",
+      visibleTodos: "booleano",
       gpsUrl: "texto",
       gpsUsuario: "texto",
       activo: "booleano",

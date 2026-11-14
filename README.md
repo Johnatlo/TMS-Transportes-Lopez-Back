@@ -523,7 +523,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/seguimiento/cartera/pago` | Pago de una factura ({ facturaNumero, empresa, fecha }). |
 | `GET` | `/api/usuarios` | Lista de usuarios del sistema. |
 | `POST` | `/api/usuarios` | Crea un usuario con una clave temporal. |
-| `PUT` | `/api/usuarios/:id` | Cambia nombre y/o estado activo. |
+| `PUT` | `/api/usuarios/:id` | Cambia nombre, estado activo y/o rol (TOTAL, ADMINISTRATIVO o MYC; siempre queda al menos uno total). |
 | `POST` | `/api/usuarios/:id/restablecer-clave` | Genera una clave temporal nueva y cierra las sesiones de ese usuario. |
 <!-- RUTAS:FIN -->
 
@@ -536,11 +536,12 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_780 funciones, componentes, métodos y rutas en 55 archivos._
+_793 funciones, componentes, métodos y rutas en 57 archivos._
 
+- [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (37)
-- [`src/auth.ts`](#srcauthts) (35)
+- [`src/auth.ts`](#srcauthts) (36)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
 - [`src/config.ts`](#srcconfigts) (3)
@@ -573,6 +574,7 @@ _780 funciones, componentes, métodos y rutas en 55 archivos._
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
+- [`src/roles.ts`](#srcrolests) (5)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
@@ -593,6 +595,37 @@ _780 funciones, componentes, métodos y rutas en 55 archivos._
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
 - [`src/vigencias.ts`](#srcvigenciasts) (3)
+
+### `src/accesos.ts`
+
+> Accesos por rol en la API (ver src/roles.ts): filtros de Express por area y
+> la visibilidad de cada vehiculo (empresa y visibleTodos) para filtrar las
+> cuentas y lo operativo de M&C.
+
+- **`rolDePeticion(req)`** · _función_
+  Rol del usuario de la peticion.
+
+- **`exigirArea(area)`** · _función_
+  Filtro de Express: deja pasar solo a los roles con esa area.
+
+- **`visibilidadVehiculos()`** · _función_
+  Empresa y visibilidad de cada vehiculo, por placa comparable.
+
+- **`filtroCuentas(rol)`** · _función_
+  Funcion que dice si el rol ve las cuentas de una placa (TOTAL: todas sin consultar la base).
+
+- **`filtroVehiculos(rol)`** · _función_
+  Funcion que dice si el rol ve un vehiculo en lo operativo filtrado (perfil, preoperacional).
+
+- **`accesoCuadro(req, res, next)`** · _función_
+  Cuadro pagos: los roles con OPERACION entran a todo. M&C solo puede editar
+  desde Rentabilidad los viajes de sus vehiculos (PUT /:id y POST /:id/revision).
+
+- **`accesoSeguimiento(req, res, next)`** · _función_
+  Seguimiento: Rentabilidad y la liquidacion a duenos son de CUENTAS (las
+  matrices solo las cambia el rol total); lo demas (cartera, terceros,
+  papeles, anticipos de empresas) es de OPERACION. Las alertas de la campana
+  a quien no tiene OPERACION le llegan vacias.
 
 ### `src/alertas.ts`
 
@@ -849,7 +882,8 @@ _780 funciones, componentes, métodos y rutas en 55 archivos._
 > - La sesion vence tras 12 horas sin actividad; cada peticion la renueva.
 > - Tras varios intentos fallidos se bloquea el login un rato (en memoria).
 >
-> Por ahora no hay roles: todo usuario activo puede todo.
+> Cada usuario tiene un rol (TOTAL, ADMINISTRATIVO o MYC; ver src/roles.ts)
+> que dice a que partes entra (ver src/accesos.ts).
 
 - **`scryptAsync(clave, sal, largo)`** · _función_
   Version con promesa de crypto.scrypt: deriva una llave de 'largo' bytes a
@@ -894,7 +928,7 @@ _780 funciones, componentes, métodos y rutas en 55 archivos._
   - **`usuarios.conClavePorEmail(email)`** · _método_
     Usuario con su hash de clave, para verificar el login. Solo lo usa la ruta de login.
 
-  - **`usuarios.crear(email, nombre, clave, debeCambiar)`** · _método_
+  - **`usuarios.crear(email, nombre, clave, debeCambiar, rol)`** · _método_
     Crea un usuario guardando el hash de la clave (nunca la clave).
     debeCambiar=true obliga a cambiarla al primer ingreso (clave temporal).
 
@@ -903,7 +937,10 @@ _780 funciones, componentes, métodos y rutas en 55 archivos._
     cambiarla en el proximo ingreso.
 
   - **`usuarios.actualizar(id, datos)`** · _método_
-    Cambia nombre y/o estado activo. Los campos ausentes no se tocan.
+    Cambia nombre, estado activo y/o rol. Los campos ausentes no se tocan.
+
+  - **`usuarios.contarTotales()`** · _método_
+    Cuantos usuarios activos con rol total hay (para no dejar el sistema sin quien administre).
 
   - **`usuarios.contarActivos()`** · _método_
     Cuantos usuarios activos hay (para no desactivar al ultimo).
@@ -3305,6 +3342,43 @@ _780 funciones, componentes, métodos y rutas en 55 archivos._
   luego cada MINUTOS_ENTRE_SINCRONIZACIONES. Los errores (por ejemplo, el RNDC
   caido) se registran y se reintenta en la siguiente vuelta.
 
+### `src/roles.ts`
+
+> Roles de los usuarios y lo que puede ver cada uno.
+>
+> - TOTAL: todo el aplicativo (hoy Principal y Admin).
+> - ADMINISTRATIVO: lo operativo del TMS (despacho, RNDC, Cuadro pagos,
+>   anticipos, cartera, pago a terceros...), sin las cuentas de los
+>   vehiculos (Rentabilidad, liquidacion a duenos, reparto de ganancias) ni
+>   la liquidacion de los empleados.
+> - MYC: Transportes M&C. Lo del RNDC (despachar, RNDC, plantillas, clientes,
+>   flota, conductores, preoperacional) y las cuentas solo de sus vehiculos
+>   (Rentabilidad, liquidacion y reparto de ganancias), sin los de Transportes
+>   Lopez ni los terceros.
+>
+> Que vehiculos ve cada rol lo dice vehiculos.empresa (LOPEZ o MYC) y
+> vehiculos.visibleTodos (los que ven todos, como el Volvo XGJ-197).
+> Sin dependencias de Express ni de la base: se prueba aparte (roles.test.ts).
+
+- **`rolDe(r)`** · _función_
+  Rol valido o el de menos permisos cuando no se reconoce.
+
+- **`puede(rol, area)`** · _función_
+  El rol tiene acceso a esa area.
+
+- **`veCuentasDe(rol, v)`** · _función_
+  El rol ve las cuentas de ese vehiculo: TOTAL todos (propios y terceros);
+  MYC solo los de M&C y los marcados para todos; ADMINISTRATIVO ninguno (no
+  ve cuentas de vehiculos).
+
+- **`veVehiculo(rol, v)`** · _función_
+  El rol ve ese vehiculo en lo operativo filtrado por empresa (perfil de
+  vehiculos, preoperacional): TOTAL y ADMINISTRATIVO todos; MYC los suyos y
+  los marcados para todos.
+
+- **`placaClave(p)`** · _función_
+  Placa comparable (sin guion ni espacios, en mayuscula).
+
 ### `src/routes/auth.ts`
 
 > Rutas de sesion (/api/auth): login con limite de intentos, logout,
@@ -4159,7 +4233,8 @@ _780 funciones, componentes, métodos y rutas en 55 archivos._
   respuesta si el correo no esta configurado (entregarClave).
 
 - **`PUT /:id`** · _ruta HTTP_
-  PUT /api/usuarios/:id: cambia nombre y/o estado activo.
+  PUT /api/usuarios/:id: cambia nombre, estado activo y/o rol (TOTAL,
+  ADMINISTRATIVO o MYC; siempre queda al menos uno total).
 
   No deja desactivar la propia cuenta ni al ultimo usuario activo. Al
   desactivar a alguien se cierran sus sesiones.

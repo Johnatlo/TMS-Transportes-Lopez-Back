@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { filtroCuentas, rolDePeticion } from "../accesos";
 import { ErrorCuadro } from "../cuadro";
 import { seguimiento } from "../seguimiento";
 import { responder } from "./cuadro";
@@ -86,8 +87,10 @@ seguimientoRouter.post("/terceros/nombres", async (req, res) => {
  * GET /api/seguimiento/rentabilidad: todos los viajes no anulados con su grupo
  * (TERCEROS, CELSO, MAURICIO...) y lo que deja cada uno (ver src/rentabilidad.ts).
  */
-seguimientoRouter.get("/rentabilidad", async (_req, res) => {
-  res.json(await rentabilidad.listar());
+seguimientoRouter.get("/rentabilidad", async (req, res) => {
+  // Cada rol ve las cuentas de sus vehiculos (M&C: los suyos y los que ven todos).
+  const ve = await filtroCuentas(rolDePeticion(req));
+  res.json((await rentabilidad.listar()).filter((f) => ve(f.placa)));
 });
 
 /** GET /api/seguimiento/rentabilidad/matrices?fecha=: comisiones y retenciones por cliente como rigen en esa fecha (hoy si no se da). */
@@ -105,8 +108,10 @@ seguimientoRouter.put("/rentabilidad/matrices", async (req, res) => {
 });
 
 /** GET /api/seguimiento/rentabilidad/liquidaciones: liquidaciones a los duenos ya registradas. */
-seguimientoRouter.get("/rentabilidad/liquidaciones", async (_req, res) => {
-  res.json(await liquidacionDuenos.listar());
+seguimientoRouter.get("/rentabilidad/liquidaciones", async (req, res) => {
+  // Solo las liquidaciones cuyos viajes son todos de vehiculos que el rol ve.
+  const ve = await filtroCuentas(rolDePeticion(req));
+  res.json((await liquidacionDuenos.listar()).filter((l) => l.filas.every((f) => ve(f.placa))));
 });
 
 /**
@@ -114,12 +119,22 @@ seguimientoRouter.get("/rentabilidad/liquidaciones", async (_req, res) => {
  * dueno y marca sus viajes como pagados ({ grupo, nombre?, fecha, ids, conceptos, pagado? }).
  */
 seguimientoRouter.post("/rentabilidad/liquidaciones", async (req, res) => {
-  await responder(res, () => liquidacionDuenos.registrar(req.body ?? {}));
+  await responder(res, async () => {
+    // El rol solo liquida viajes de los vehiculos cuyas cuentas ve.
+    const ve = await filtroCuentas(rolDePeticion(req));
+    const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number);
+    const ajenos = (await rentabilidad.listar()).filter((f) => ids.includes(f.id) && !ve(f.placa));
+    if (ajenos.length) throw new ErrorCuadro("Hay viajes de vehiculos que tu usuario no puede liquidar.");
+    return liquidacionDuenos.registrar(req.body ?? {});
+  });
 });
 
 /** DELETE /api/seguimiento/rentabilidad/liquidaciones/:id: anula la ultima liquidacion de un grupo. */
 seguimientoRouter.delete("/rentabilidad/liquidaciones/:id", async (req, res) => {
   await responder(res, async () => {
+    const ve = await filtroCuentas(rolDePeticion(req));
+    const liq = (await liquidacionDuenos.listar()).find((l) => l.id === Number(req.params.id));
+    if (liq && !liq.filas.every((f) => ve(f.placa))) throw new ErrorCuadro("Tu usuario no puede anular esta liquidacion.");
     await liquidacionDuenos.anular(Number(req.params.id));
     return { ok: true };
   });

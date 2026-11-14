@@ -10,13 +10,16 @@
  * - La sesion vence tras 12 horas sin actividad; cada peticion la renueva.
  * - Tras varios intentos fallidos se bloquea el login un rato (en memoria).
  *
- * Por ahora no hay roles: todo usuario activo puede todo.
+ * Cada usuario tiene un rol (TOTAL, ADMINISTRATIVO o MYC; ver src/roles.ts)
+ * que dice a que partes entra (ver src/accesos.ts).
  */
 
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import { pool } from "./db";
+import { rolDe } from "./roles";
+import type { Rol } from "./roles";
 
 export const COOKIE_SESION = "tms_sesion";
 const INACTIVIDAD_MS = 12 * 60 * 60 * 1000;
@@ -92,6 +95,8 @@ export interface Usuario {
   activo: boolean;
   /** true si entro con una clave temporal y debe cambiarla. */
   debeCambiarClave: boolean;
+  /** Rol: TOTAL, ADMINISTRATIVO o MYC. */
+  rol: Rol;
   ultimoAcceso: Date | null;
   creadoEn: Date;
 }
@@ -107,6 +112,7 @@ function mapUsuario(r: any): Usuario {
     nombre: r.nombre,
     activo: !!r.activo,
     debeCambiarClave: !!r.debeCambiarClave,
+    rol: rolDe(r.rol),
     ultimoAcceso: r.ultimoAcceso ?? null,
     creadoEn: r.creadoEn,
   };
@@ -138,10 +144,10 @@ export const usuarios = {
    * Crea un usuario guardando el hash de la clave (nunca la clave).
    * debeCambiar=true obliga a cambiarla al primer ingreso (clave temporal).
    */
-  async crear(email: string, nombre: string, clave: string, debeCambiar: boolean): Promise<Usuario> {
+  async crear(email: string, nombre: string, clave: string, debeCambiar: boolean, rol: Rol = "ADMINISTRATIVO"): Promise<Usuario> {
     const [res] = await pool.query<ResultSetHeader>(
-      "INSERT INTO usuarios (email, nombre, claveHash, debeCambiarClave) VALUES (?, ?, ?, ?)",
-      [email, nombre, await hashClave(clave), debeCambiar ? 1 : 0]
+      "INSERT INTO usuarios (email, nombre, claveHash, debeCambiarClave, rol) VALUES (?, ?, ?, ?, ?)",
+      [email, nombre, await hashClave(clave), debeCambiar ? 1 : 0, rol]
     );
     return (await this.porId(res.insertId))!;
   },
@@ -156,10 +162,16 @@ export const usuarios = {
       id,
     ]);
   },
-  /** Cambia nombre y/o estado activo. Los campos ausentes no se tocan. */
-  async actualizar(id: number, datos: { nombre?: string; activo?: boolean }): Promise<void> {
+  /** Cambia nombre, estado activo y/o rol. Los campos ausentes no se tocan. */
+  async actualizar(id: number, datos: { nombre?: string; activo?: boolean; rol?: Rol }): Promise<void> {
+    if (datos.rol !== undefined) await pool.query("UPDATE usuarios SET rol = ? WHERE id = ?", [datos.rol, id]);
     if (datos.nombre !== undefined) await pool.query("UPDATE usuarios SET nombre = ? WHERE id = ?", [datos.nombre, id]);
     if (datos.activo !== undefined) await pool.query("UPDATE usuarios SET activo = ? WHERE id = ?", [datos.activo ? 1 : 0, id]);
+  },
+  /** Cuantos usuarios activos con rol total hay (para no dejar el sistema sin quien administre). */
+  async contarTotales(): Promise<number> {
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) n FROM usuarios WHERE activo = 1 AND rol = 'TOTAL'");
+    return Number(rows[0].n);
   },
   /** Cuantos usuarios activos hay (para no desactivar al ultimo). */
   async contarActivos(): Promise<number> {

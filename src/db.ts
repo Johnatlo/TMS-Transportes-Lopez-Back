@@ -10,6 +10,7 @@ import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import "dotenv/config";
 import { PLACAS_POR_DUENO } from "./duenos";
+import { EMPRESA_INICIAL, NOMBRES_TOTAL_INICIAL, VISIBLES_PARA_TODOS_INICIAL } from "./roles";
 
 export const pool = mysql.createPool({
   host: process.env.DB_HOST ?? "localhost",
@@ -1102,6 +1103,11 @@ export async function initSchema(): Promise<void> {
     ["abonos_socio", "cruzadoFecha", "DATE"],
     // Tramo de anticipo marcado a mano como cruzado con la bomba (sin vale): fecha en que se marco.
     ["cuadro_anticipos", "cruzadoManual", "DATE"],
+    // Roles (ver src/roles.ts): TOTAL, ADMINISTRATIVO o MYC.
+    ["usuarios", "rol", "VARCHAR(20) NOT NULL DEFAULT 'ADMINISTRATIVO'"],
+    // Empresa que liquida el vehiculo (LOPEZ o MYC; NULL = tercero) y si lo ven todos los roles.
+    ["vehiculos", "empresa", "VARCHAR(10)"],
+    ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Fecha de vencimiento de la factura de la bomba: avisa cuando hay que pagarla.
     ["bomba_relaciones", "fechaVencimiento", "DATE"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
@@ -1159,6 +1165,17 @@ export async function initSchema(): Promise<void> {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'abonos_socio' AND COLUMN_NAME = 'cruzadoFecha'`
   );
   const cruceAbonoEsNuevo = (conCruceAbono as unknown[]).length === 0;
+  // Al crear los roles y la empresa de los vehiculos se llenan una sola vez (ver despues del ciclo).
+  const [conRol] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'rol'`
+  );
+  const rolEsNuevo = (conRol as unknown[]).length === 0;
+  const [conEmpresa] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'empresa'`
+  );
+  const empresaEsNuevo = (conEmpresa as unknown[]).length === 0;
 
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(
@@ -1169,6 +1186,18 @@ export async function initSchema(): Promise<void> {
     if ((filas as unknown[]).length === 0) {
       await pool.query(`ALTER TABLE \`${tabla}\` ADD COLUMN \`${columna}\` ${definicion}`);
     }
+  }
+
+  // Una sola vez: Principal y Admin con acceso total; los demas quedan administrativos (el valor por defecto).
+  if (rolEsNuevo) {
+    await pool.query("UPDATE usuarios SET rol = 'TOTAL' WHERE UPPER(TRIM(nombre)) IN (?)", [NOMBRES_TOTAL_INICIAL]);
+  }
+  // Una sola vez: la empresa de los vehiculos propios y el Volvo que ven todos.
+  if (empresaEsNuevo) {
+    for (const [empresa, placas] of Object.entries(EMPRESA_INICIAL)) {
+      await pool.query("UPDATE vehiculos SET empresa = ? WHERE REPLACE(UPPER(placa), '-', '') IN (?)", [empresa, placas]);
+    }
+    await pool.query("UPDATE vehiculos SET visibleTodos = 1 WHERE REPLACE(UPPER(placa), '-', '') IN (?)", [VISIBLES_PARA_TODOS_INICIAL]);
   }
 
   // Correccion unica: los viajes de los abonos que ya habia quedan con el

@@ -17,6 +17,7 @@ import { catalogoRouter } from "./routes/catalogo";
 import { despachoRouter } from "./routes/despacho";
 import { authRouter } from "./routes/auth";
 import { usuariosRouter } from "./routes/usuarios";
+import { accesoCuadro, accesoSeguimiento, exigirArea } from "./accesos";
 import { cuadroRouter } from "./routes/cuadro";
 import { seguimientoRouter } from "./routes/seguimiento";
 import { preoperacionalRouter } from "./routes/preoperacional";
@@ -68,9 +69,9 @@ async function main() {
   // Todo lo demas exige una sesion valida.
   app.use("/api/catalogo", exigirSesion, catalogoRouter);
   app.use("/api/despacho", exigirSesion, despachoRouter);
-  app.use("/api/usuarios", exigirSesion, usuariosRouter);
-  app.use("/api/cuadro", exigirSesion, cuadroRouter);
-  app.use("/api/seguimiento", exigirSesion, seguimientoRouter);
+  app.use("/api/usuarios", exigirSesion, exigirArea("USUARIOS"), usuariosRouter);
+  app.use("/api/cuadro", exigirSesion, accesoCuadro, cuadroRouter);
+  app.use("/api/seguimiento", exigirSesion, accesoSeguimiento, seguimientoRouter);
   app.use("/api/preoperacional", exigirSesion, preoperacionalRouter);
 
   /**

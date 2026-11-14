@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { ROLES } from "../roles";
+import type { Rol } from "../roles";
 import { claveTemporal, emailValido, normalizarEmail, sesiones, usuarios } from "../auth";
 import { correoClaveTemporal, correoConfigurado, enviarCorreo } from "../correo";
 
@@ -29,7 +31,7 @@ async function entregarClave(
 }
 
 /**
- * Administracion de usuarios. Por ahora sin roles: cualquier usuario activo
+ * Administracion de usuarios (solo el rol total, ver src/accesos.ts). Antes sin roles: cualquier usuario activo
  * puede crear, desactivar y restablecer cuentas.
  *
  * Las contrasenas temporales se generan aqui y se ENVIAN por correo al
@@ -60,12 +62,15 @@ usuariosRouter.post("/", async (req, res) => {
     return res.status(409).json({ error: "Ya existe un usuario con ese email." });
   }
   const temporal = claveTemporal();
-  const creado = await usuarios.crear(email, nombre, temporal, true);
+  const rol = req.body?.rol === undefined ? "ADMINISTRATIVO" : String(req.body.rol);
+  if (!ROLES.includes(rol as Rol)) return res.status(422).json({ error: "El rol debe ser TOTAL, ADMINISTRATIVO o MYC." });
+  const creado = await usuarios.crear(email, nombre, temporal, true, rol as Rol);
   res.status(201).json({ ...creado, ...(await entregarClave(nombre, email, temporal, "nueva")) });
 });
 
 /**
- * PUT /api/usuarios/:id: cambia nombre y/o estado activo.
+ * PUT /api/usuarios/:id: cambia nombre, estado activo y/o rol (TOTAL,
+ * ADMINISTRATIVO o MYC; siempre queda al menos uno total).
  *
  * No deja desactivar la propia cuenta ni al ultimo usuario activo. Al
  * desactivar a alguien se cierran sus sesiones.
@@ -75,7 +80,16 @@ usuariosRouter.put("/:id", async (req, res) => {
   const objetivo = await usuarios.porId(id);
   if (!objetivo) return res.status(404).json({ error: "Usuario no encontrado" });
 
-  const datos: { nombre?: string; activo?: boolean } = {};
+  const datos: { nombre?: string; activo?: boolean; rol?: Rol } = {};
+  if (req.body?.rol !== undefined) {
+    const rol = String(req.body.rol);
+    if (!ROLES.includes(rol as Rol)) return res.status(422).json({ error: "El rol debe ser TOTAL, ADMINISTRATIVO o MYC." });
+    // Siempre debe quedar alguien con acceso total.
+    if (objetivo.rol === "TOTAL" && rol !== "TOTAL" && (await usuarios.contarTotales()) <= 1) {
+      return res.status(422).json({ error: "Debe quedar al menos un usuario activo con acceso total." });
+    }
+    datos.rol = rol as Rol;
+  }
   if (req.body?.nombre !== undefined) {
     datos.nombre = String(req.body.nombre).trim();
     if (!datos.nombre) return res.status(422).json({ error: "El nombre no puede quedar vacio." });

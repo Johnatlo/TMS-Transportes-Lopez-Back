@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { responder } from "./cuadro";
 import { preoperacional } from "../preoperacional";
+import { filtroVehiculos, rolDePeticion } from "../accesos";
 
 /**
  * Inspeccion preoperacional de vehiculos (ver src/preoperacional.ts).
@@ -9,13 +10,15 @@ import { preoperacional } from "../preoperacional";
 export const preoperacionalRouter = Router();
 
 /** GET /api/preoperacional: todas las inspecciones (las mas recientes primero). */
-preoperacionalRouter.get("/", async (_req, res) => {
-  res.json(await preoperacional.listar());
+preoperacionalRouter.get("/", async (req, res) => {
+  const ve = await filtroVehiculos(rolDePeticion(req));
+  res.json((await preoperacional.listar()).filter((p) => ve(p.placa)));
 });
 
 /** GET /api/preoperacional/pendientes: viajes con manifiesto de los ultimos 30 dias sin inspeccion. */
-preoperacionalRouter.get("/pendientes", async (_req, res) => {
-  res.json(await preoperacional.pendientes());
+preoperacionalRouter.get("/pendientes", async (req, res) => {
+  const ve = await filtroVehiculos(rolDePeticion(req));
+  res.json((await preoperacional.pendientes()).filter((p) => ve(p.placa)));
 });
 
 /** GET /api/preoperacional/sugerido?viajeId= (o ?placa=&conductor=): respuestas sugeridas. */

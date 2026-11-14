@@ -5,6 +5,8 @@
  * Requieren sesion.
  */
 import { Router, type Response } from "express";
+import { exigirArea, filtroVehiculos, rolDePeticion } from "../accesos";
+import { puede } from "../roles";
 import { revisarCoordenadaSede, normalizarCodigoMercancia } from "../rndc/builders";
 import { config } from "../config";
 import { revisarVencimientos } from "../alertas";
@@ -198,6 +200,11 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
     await vehiculos.restaurar(previo.id);
     const datos = { ...b };
     delete datos.placa;
+    // La empresa solo la ponen los roles de administracion.
+    if (!puede(rolDePeticion(req), "ADMINISTRACION")) {
+      delete datos.empresa;
+      delete datos.visibleTodos;
+    }
     delete datos.gpsUrl;
     delete datos.gpsUsuario;
     delete datos.gpsClave;
@@ -227,6 +234,14 @@ catalogoRouter.post("/vehiculos", async (req, res) => {
     pesoVehiculoVacio: b.pesoVehiculoVacio ? Number(b.pesoVehiculoVacio) : null,
     nombreTenedor: b.nombreTenedor ?? null,
   });
+  // Empresa del vehiculo nuevo (LOPEZ o MYC): solo la marcan los roles de administracion.
+  if (puede(rolDePeticion(req), "ADMINISTRACION") && (b.empresa !== undefined || b.visibleTodos !== undefined)) {
+    const empresa = b.empresa ? String(b.empresa).toUpperCase() : null;
+    await vehiculos.update(creado.id, {
+      empresa: empresa === "LOPEZ" || empresa === "MYC" ? empresa : null,
+      visibleTodos: !!b.visibleTodos,
+    });
+  }
   if (!(await guardarGpsO422(res, creado.id, b))) return;
   res.status(201).json(await vehiculos.findById(creado.id));
 });
@@ -254,8 +269,18 @@ catalogoRouter.put("/vehiculos/:id", async (req, res) => {
     "placa", "placaRemolque", "marca", "configuracion", "capacidadKg", "pesoVehiculoVacio",
     "codTipoCarroceria", "propietarioNit", "codTipoIdTenedor", "numIdTenedor", "nombreTenedor",
     "fechaVencSoat", "fechaVencTecnomecanica", "aplicaFopat", "nitMonitoreoFlota", "activo",
-    "cedulaConductorHabitual", "flota", "dueno",
+    "cedulaConductorHabitual", "flota", "dueno", "empresa", "visibleTodos",
   ]);
+  // La empresa del vehiculo (y si lo ven todos) solo la cambian los roles de administracion.
+  if (("empresa" in datos || "visibleTodos" in datos) && !puede(rolDePeticion(req), "ADMINISTRACION")) {
+    return res.status(403).json({ error: "Solo administracion puede cambiar la empresa del vehiculo." });
+  }
+  if ("empresa" in datos) {
+    const empresa = datos.empresa ? String(datos.empresa).toUpperCase() : null;
+    if (empresa !== null && empresa !== "LOPEZ" && empresa !== "MYC") return res.status(422).json({ error: "La empresa es LOPEZ, MYC o ninguna." });
+    datos.empresa = empresa;
+  }
+  if ("visibleTodos" in datos) datos.visibleTodos = !!datos.visibleTodos;
   if ("flota" in datos && !["LOPEZ", "MYC", "TERCERO"].includes(String(datos.flota))) {
     return res.status(422).json({ error: "La flota es LOPEZ, MYC o TERCERO." });
   }
@@ -772,7 +797,7 @@ catalogoRouter.get("/parametros", async (_req, res) => {
  * PUT /api/catalogo/parametros: guarda los parametros de la empresa. Solo
  * cambian los campos que llegan: un guardado parcial no borra la poliza.
  */
-catalogoRouter.put("/parametros", async (req, res) => {
+catalogoRouter.put("/parametros", exigirArea("ADMINISTRACION"), async (req, res) => {
   const b = req.body;
   // Solo se tocan los campos que llegan: antes un campo ausente se guardaba
   // como null y un guardado parcial borraba la poliza.
@@ -947,14 +972,16 @@ catalogoRouter.put("/plantillas/:id", async (req, res) => {
 
 // ---------- PERFIL DE LOS VEHICULOS (socios y flota propia) ----------
 /** GET /api/catalogo/perfiles-vehiculos: perfil de los vehiculos que no son de terceros. */
-catalogoRouter.get("/perfiles-vehiculos", async (_req, res) => {
-  res.json(await perfilVehiculos.listar());
+catalogoRouter.get("/perfiles-vehiculos", async (req, res) => {
+  const ve = await filtroVehiculos(rolDePeticion(req));
+  res.json((await perfilVehiculos.listar()).filter((p) => ve(p.placa)));
 });
 
 /** GET /api/catalogo/perfiles-vehiculos/:placa: perfil de un vehiculo (404 si es de un tercero o no existe). */
 catalogoRouter.get("/perfiles-vehiculos/:placa", async (req, res) => {
   const [perfil] = await perfilVehiculos.listar(String(req.params.placa));
-  if (!perfil) {
+  const ve = await filtroVehiculos(rolDePeticion(req));
+  if (!perfil || !ve(perfil.placa)) {
     res.status(404).json({ error: "Ese vehiculo no existe o es de un tercero." });
     return;
   }
