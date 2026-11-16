@@ -19,7 +19,11 @@
  * participacion vigente al cierre del mes (100 % del dueno, o la sociedad).
  * Lo que va directo a un socio en el libro (sus gastos adicionales, su parte
  * fija de un credito) se le descuenta solo a el. Como referencia se muestra lo
- * que ya se le liquido al dueno por los viajes (saldo de los viajes).
+ * que ya se le liquido por los viajes (saldo de los viajes): se le cuenta
+ * completo a quien lo recibe, el dueno del vehiculo en Flota, aunque el carro
+ * sea una sociedad; asi el socio externo queda con su parte por cobrar y el
+ * dueno con lo que recibio de mas. Si el carro no tiene dueno, se reparte
+ * segun la participacion.
  *
  * Todo en pesos con dos decimales; las partes se reparten en centavos para que
  * sumen exacto (ver prorrateo.ts).
@@ -182,6 +186,8 @@ export function repartirUtilidades(
   participaciones: Participacion[],
   partidas: PartidaGasto[],
   fecha: string,
+  /** Vehiculo -> socio que recibe la liquidacion de sus viajes (el dueno en Flota). */
+  receptor: Map<number, number> = new Map(),
 ): { socios: RepartoSocio[]; sinParticipacion: number[] } {
   const socios = new Map<number, RepartoSocio>();
   const de = (socioId: number) => {
@@ -201,10 +207,15 @@ export function repartirUtilidades(
     }
     const pesos = ps.map((p) => p.porcentaje);
     const utilidades = repartir(aCentavos(c.utilidad), pesos);
-    const saldos = repartir(aCentavos(c.saldoViajes), pesos);
+    // Lo liquidado por los viajes: completo al dueno en Flota; si no hay, segun la participacion.
+    const dueno = receptor.get(c.vehiculoId);
+    const saldos = dueno ? ps.map((p) => (p.socioId === dueno ? aCentavos(c.saldoViajes) : 0)) : repartir(aCentavos(c.saldoViajes), pesos);
     ps.forEach((p, i) =>
       de(p.socioId).porVehiculo.push({ vehiculoId: c.vehiculoId, porcentaje: p.porcentaje, utilidad: aPesos(utilidades[i]), saldoViajes: aPesos(saldos[i]) }),
     );
+    // El dueno que recibio la liquidacion pero ya no tiene participacion en el carro.
+    if (dueno && !ps.some((p) => p.socioId === dueno) && c.saldoViajes !== 0)
+      de(dueno).porVehiculo.push({ vehiculoId: c.vehiculoId, porcentaje: 0, utilidad: 0, saldoViajes: c.saldoViajes });
   }
   for (const p of partidas.filter((x) => x.socioId !== null)) de(p.socioId!).gastosPropios.push(p);
   for (const s of socios.values()) {

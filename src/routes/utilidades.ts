@@ -45,12 +45,47 @@ utilidadesRouter.get("/socios", async (_req, res) => {
   res.json(await utilidades.socios());
 });
 
-/** POST /api/utilidades/socios: crea un socio ({ nombre }). */
+/** POST /api/utilidades/socios: crea un socio ({ nombre, externo, documento?, nota? }). */
 utilidadesRouter.post("/socios", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
-    await utilidades.crearSocio(req.body ?? {});
+    await utilidades.guardarSocio(req.body ?? {});
     return utilidades.socios();
+  });
+});
+
+/** PUT /api/utilidades/socios/:id/datos: cambia nombre, externo, documento y nota. */
+utilidadesRouter.put("/socios/:id/datos", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.guardarSocio(req.body ?? {}, Number(req.params.id));
+    return utilidades.socios();
+  });
+});
+
+/** GET /api/utilidades/cuentas: cuenta de cada socio (repartido en meses aprobados, pagos y saldo). Solo total. */
+utilidadesRouter.get("/cuentas", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    return utilidades.cuentas();
+  });
+});
+
+/** POST /api/utilidades/socios/:id/pagos: registra un pago al socio ({ fecha, monto, nota?, soporteUrl? }). */
+utilidadesRouter.post("/socios/:id/pagos", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.registrarPago(Number(req.params.id), req.body ?? {}, req.usuario?.id ?? null);
+    return utilidades.cuentas();
+  });
+});
+
+/** DELETE /api/utilidades/pagos/:id: borra un pago registrado por error. */
+utilidadesRouter.delete("/pagos/:id", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.borrarPago(Number(req.params.id));
+    return utilidades.cuentas();
   });
 });
 

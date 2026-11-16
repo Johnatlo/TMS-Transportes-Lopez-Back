@@ -1115,6 +1115,10 @@ export async function initSchema(): Promise<void> {
     ["nominas", "producidoHasta", "DATE"],
     ["nomina_lineas", "producidoManual", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["nomina_lineas", "detalleProducido", "TEXT"],
+    // Socios externos (solo estan en una sociedad, no en la empresa) y sus datos.
+    ["socios", "externo", "TINYINT(1) NOT NULL DEFAULT 0"],
+    ["socios", "documento", "VARCHAR(20)"],
+    ["socios", "nota", "VARCHAR(300)"],
     // Empresa que liquida el vehiculo (LOPEZ o MYC; NULL = tercero) y si lo ven todos los roles.
     ["vehiculos", "empresa", "VARCHAR(10)"],
     ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],
@@ -1277,6 +1281,20 @@ export async function initSchema(): Promise<void> {
         WHERE v.eliminado = 0 AND v.empresa IS NOT NULL`
     );
   }
+  // Pagos hechos a cada socio (o lo que el socio devolvio, en negativo): la cuenta del socio.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pagos_socios (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      socioId INT NOT NULL,
+      fecha DATE NOT NULL,
+      monto DECIMAL(15,2) NOT NULL,
+      nota VARCHAR(300),
+      soporteUrl VARCHAR(500),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_pago_socio (socioId, fecha)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Foto del reparto aprobado de cada mes.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS repartos_utilidades (

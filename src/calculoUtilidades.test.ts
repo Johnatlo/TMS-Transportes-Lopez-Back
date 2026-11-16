@@ -126,3 +126,30 @@ describe("paso de un gasto del libro", () => {
     expect([finDeMes("2026-10"), finDeMes("2026-02"), finDeMes("2028-02")]).toEqual(["2026-10-31", "2026-02-28", "2028-02-29"]);
   });
 });
+
+describe("lo ya liquidado por los viajes va al dueno en Flota", () => {
+  const EXTERNO = 40;
+  const participaciones: Participacion[] = [
+    { vehiculoId: XJB207, socioId: MAURICIO, porcentaje: 50, desde: "2000-01-01", hasta: null },
+    { vehiculoId: XJB207, socioId: EXTERNO, porcentaje: 50, desde: "2000-01-01", hasta: null },
+  ];
+  const lista = [{ ...cascadas([XJB207], [viaje(1, XJB207)], [])[0], utilidad: 2_000_000, saldoViajes: 2_437_163 }];
+
+  test("sociedad con un socio externo: el dueno recibio todo el saldo; el externo queda por cobrar su parte", () => {
+    const { socios } = repartirUtilidades(lista, participaciones, [], "2026-10-31", new Map([[XJB207, MAURICIO]]));
+    const de = (id: number) => socios.find((s) => s.socioId === id)!;
+    expect([de(MAURICIO).total, de(MAURICIO).saldoViajes, de(MAURICIO).diferencia]).toEqual([1_000_000, 2_437_163, -1_437_163]);
+    expect([de(EXTERNO).total, de(EXTERNO).saldoViajes, de(EXTERNO).diferencia]).toEqual([1_000_000, 0, 1_000_000]);
+  });
+
+  test("el dueno que ya no tiene participacion igual figura con lo que recibio", () => {
+    const solo = [{ vehiculoId: XJB207, socioId: EXTERNO, porcentaje: 100, desde: "2000-01-01", hasta: null }];
+    const { socios } = repartirUtilidades(lista, solo, [], "2026-10-31", new Map([[XJB207, MAURICIO]]));
+    expect(socios.find((s) => s.socioId === MAURICIO)).toMatchObject({ total: 0, saldoViajes: 2_437_163, diferencia: -2_437_163 });
+  });
+
+  test("sin dueno en Flota: el saldo se reparte segun la participacion", () => {
+    const { socios } = repartirUtilidades(lista, participaciones, [], "2026-10-31");
+    expect(socios.map((s) => s.saldoViajes).sort()).toEqual([1_218_581.5, 1_218_581.5]);
+  });
+});

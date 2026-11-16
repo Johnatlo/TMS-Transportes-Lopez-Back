@@ -536,7 +536,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_949 funciones, componentes, métodos y rutas en 66 archivos._
+_956 funciones, componentes, métodos y rutas en 66 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -589,7 +589,7 @@ _949 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
-- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (11)
+- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (15)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
 - [`src/scripts/crear-usuario.ts`](#srcscriptscrearusuariots) (1)
@@ -602,7 +602,7 @@ _949 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
-- [`src/utilidades.ts`](#srcutilidadests) (16)
+- [`src/utilidades.ts`](#srcutilidadests) (19)
 - [`src/vigencias.ts`](#srcvigenciasts) (3)
 
 ### `src/accesos.ts`
@@ -1089,7 +1089,11 @@ _949 funciones, componentes, métodos y rutas en 66 archivos._
 > participacion vigente al cierre del mes (100 % del dueno, o la sociedad).
 > Lo que va directo a un socio en el libro (sus gastos adicionales, su parte
 > fija de un credito) se le descuenta solo a el. Como referencia se muestra lo
-> que ya se le liquido al dueno por los viajes (saldo de los viajes).
+> que ya se le liquido por los viajes (saldo de los viajes): se le cuenta
+> completo a quien lo recibe, el dueno del vehiculo en Flota, aunque el carro
+> sea una sociedad; asi el socio externo queda con su parte por cobrar y el
+> dueno con lo que recibio de mas. Si el carro no tiene dueno, se reparte
+> segun la participacion.
 >
 > Todo en pesos con dos decimales; las partes se reparten en centavos para que
 > sumen exacto (ver prorrateo.ts).
@@ -1106,7 +1110,7 @@ _949 funciones, componentes, métodos y rutas en 66 archivos._
 - **`participacionesEn(todas, vehiculoId, fecha)`** · _función_
   Participaciones de un vehiculo vigentes en una fecha.
 
-- **`repartirUtilidades(lista, participaciones, partidas, fecha)`** · _función_
+- **`repartirUtilidades(lista, participaciones, partidas, fecha, receptor)`** · _función_
   El reparto del periodo por socio, y los vehiculos sin participacion (su utilidad no se reparte).
 
 - **`pasoDe(g)`** · _función_
@@ -4798,7 +4802,19 @@ _949 funciones, componentes, métodos y rutas en 66 archivos._
   GET /api/utilidades/socios: socios.
 
 - **`POST /socios`** · _ruta HTTP_
-  POST /api/utilidades/socios: crea un socio ({ nombre }).
+  POST /api/utilidades/socios: crea un socio ({ nombre, externo, documento?, nota? }).
+
+- **`PUT /socios/:id/datos`** · _ruta HTTP_
+  PUT /api/utilidades/socios/:id/datos: cambia nombre, externo, documento y nota.
+
+- **`GET /cuentas`** · _ruta HTTP_
+  GET /api/utilidades/cuentas: cuenta de cada socio (repartido en meses aprobados, pagos y saldo). Solo total.
+
+- **`POST /socios/:id/pagos`** · _ruta HTTP_
+  POST /api/utilidades/socios/:id/pagos: registra un pago al socio ({ fecha, monto, nota?, soporteUrl? }).
+
+- **`DELETE /pagos/:id`** · _ruta HTTP_
+  DELETE /api/utilidades/pagos/:id: borra un pago registrado por error.
 
 - **`PUT /socios/:id`** · _ruta HTTP_
   PUT /api/utilidades/socios/:id: activa o desactiva ({ activo }).
@@ -5418,6 +5434,9 @@ _949 funciones, componentes, métodos y rutas en 66 archivos._
 >   se registra con sus porcentajes desde una fecha (lo anterior no cambia).
 > - Aprobar el reparto de un mes guarda la foto (repartos_utilidades); el mes
 >   debe estar cerrado en Gastos. Mientras este aprobado, el mes no se abre.
+> - Socios: los de la empresa y los externos (solo estan en una sociedad).
+>   La cuenta de cada socio suma lo que se le repartio en los meses aprobados
+>   menos los pagos que se le han hecho (pagos_socios) = saldo por pagar.
 
 - **`placaClave(p)`** · _función_
   Normaliza una placa ("SZX-880" -> "SZX880").
@@ -5462,8 +5481,19 @@ _949 funciones, componentes, métodos y rutas en 66 archivos._
   - **`utilidades.socios()`** · _método_
     Socios (activos primero).
 
-  - **`utilidades.crearSocio(d)`** · _método_
-    Crea un socio (por ejemplo el socio de una sociedad).
+  - **`utilidades.guardarSocio(d, id)`** · _método_
+    Crea o cambia un socio ({ nombre, externo, documento?, nota? }). Externo = no hace parte de la empresa, solo de una sociedad.
+
+  - **`utilidades.cuentas()`** · _método_
+    Cuenta de cada socio: lo que se le repartio en cada mes aprobado (su
+    utilidad, despues de sus gastos propios), los pagos que se le han hecho y
+    el saldo (repartido - pagado). Un saldo negativo es lo que el socio debe.
+
+  - **`utilidades.registrarPago(socioId, d, usuarioId)`** · _método_
+    Registra un pago a un socio ({ fecha, monto, nota?, soporteUrl? }). Negativo = lo que el socio le devolvio a la empresa.
+
+  - **`utilidades.borrarPago(id)`** · _método_
+    Borra un pago a un socio (si se registro por error).
 
   - **`utilidades.activarSocio(id, activo)`** · _método_
     Activa o desactiva un socio (los inactivos no salen al registrar gastos).

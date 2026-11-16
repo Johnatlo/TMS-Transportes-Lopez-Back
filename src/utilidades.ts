@@ -12,6 +12,9 @@
  *   se registra con sus porcentajes desde una fecha (lo anterior no cambia).
  * - Aprobar el reparto de un mes guarda la foto (repartos_utilidades); el mes
  *   debe estar cerrado en Gastos. Mientras este aprobado, el mes no se abre.
+ * - Socios: los de la empresa y los externos (solo estan en una sociedad).
+ *   La cuenta de cada socio suma lo que se le repartio en los meses aprobados
+ *   menos los pagos que se le han hecho (pagos_socios) = saldo por pagar.
  */
 import type { RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
@@ -40,6 +43,26 @@ export interface UtilidadesMes {
   socios: Array<RepartoSocio & { nombre: string }>;
   /** Vehiculos con utilidad pero sin participacion que sume 100 %: su utilidad no se reparte. */
   sinParticipacion: string[];
+}
+
+/** Un socio: de la empresa o externo (solo esta en una sociedad). */
+export interface Socio {
+  id: number;
+  nombre: string;
+  activo: boolean;
+  externo: boolean;
+  documento: string | null;
+  nota: string | null;
+}
+
+/** La cuenta de un socio: lo repartido por mes, sus pagos y el saldo. */
+export interface CuentaSocio extends Socio {
+  meses: Array<{ mes: string; utilidadVehiculos: number; gastosPropios: number; total: number; vehiculos: number }>;
+  pagos: Array<{ id: number; fecha: string; monto: number; nota: string | null; soporteUrl: string | null; registradoPor: string | null }>;
+  repartido: number;
+  pagado: number;
+  /** repartido - pagado: lo que falta por pagarle (negativo = lo que debe). */
+  saldo: number;
 }
 
 /** Normaliza una placa ("SZX-880" -> "SZX880"). */
@@ -159,7 +182,14 @@ export const utilidades = {
     const participaciones = await this.participacionesTodas();
     const [socios] = await pool.query<RowDataPacket[]>("SELECT id, nombre FROM socios");
     const nombre = new Map(socios.map((s) => [s.id as number, s.nombre as string]));
-    const reparto = repartirUtilidades(lista, participaciones, partidas, hasta);
+    // Quien recibe la liquidacion de los viajes de cada carro: su dueno en Flota (si es un socio).
+    const idSocio = new Map(socios.map((s) => [String(s.nombre).toUpperCase(), s.id as number]));
+    const receptor = new Map<number, number>();
+    for (const v of flota) {
+      const id = v.dueno ? idSocio.get(String(v.dueno).trim().toUpperCase()) : undefined;
+      if (id) receptor.set(v.id, id);
+    }
+    const reparto = repartirUtilidades(lista, participaciones, partidas, hasta, receptor);
     return {
       mes,
       vehiculos: flota.map((v, i) => ({
@@ -250,21 +280,105 @@ export const utilidades = {
   },
 
   /** Socios (activos primero). */
-  async socios() {
-    const [filas] = await pool.query<RowDataPacket[]>("SELECT id, nombre, activo FROM socios ORDER BY activo DESC, nombre");
-    return filas.map((f) => ({ id: f.id as number, nombre: f.nombre as string, activo: !!f.activo }));
+  async socios(): Promise<Socio[]> {
+    const [filas] = await pool.query<RowDataPacket[]>("SELECT id, nombre, activo, externo, documento, nota FROM socios ORDER BY activo DESC, nombre");
+    return filas.map((f) => ({
+      id: f.id as number,
+      nombre: f.nombre as string,
+      activo: !!f.activo,
+      externo: !!f.externo,
+      documento: f.documento ?? null,
+      nota: f.nota ?? null,
+    }));
   },
 
-  /** Crea un socio (por ejemplo el socio de una sociedad). */
-  async crearSocio(d: Record<string, unknown>): Promise<void> {
+  /** Crea o cambia un socio ({ nombre, externo, documento?, nota? }). Externo = no hace parte de la empresa, solo de una sociedad. */
+  async guardarSocio(d: Record<string, unknown>, id?: number): Promise<void> {
     const nombre = String(d.nombre ?? "")
       .trim()
       .toUpperCase()
       .slice(0, 80);
     if (!nombre) throw new ErrorCuadro("Escribe el nombre del socio.");
-    const [[existe]] = await pool.query<RowDataPacket[]>("SELECT id FROM socios WHERE nombre = ?", [nombre]);
+    const [[existe]] = await pool.query<RowDataPacket[]>("SELECT id FROM socios WHERE nombre = ? AND id <> ?", [nombre, id ?? 0]);
     if (existe) throw new ErrorCuadro("Ya hay un socio con ese nombre.");
-    await pool.query("INSERT INTO socios (nombre) VALUES (?)", [nombre]);
+    const texto = (v: unknown, max: number) =>
+      String(v ?? "")
+        .trim()
+        .slice(0, max) || null;
+    const valores = [nombre, d.externo ? 1 : 0, texto(d.documento, 20), texto(d.nota, 300)];
+    if (id) await pool.query("UPDATE socios SET nombre = ?, externo = ?, documento = ?, nota = ? WHERE id = ?", [...valores, id]);
+    else await pool.query("INSERT INTO socios (nombre, externo, documento, nota) VALUES (?, ?, ?, ?)", valores);
+  },
+
+  /**
+   * Cuenta de cada socio: lo que se le repartio en cada mes aprobado (su
+   * utilidad, despues de sus gastos propios), los pagos que se le han hecho y
+   * el saldo (repartido - pagado). Un saldo negativo es lo que el socio debe.
+   */
+  async cuentas(): Promise<CuentaSocio[]> {
+    const socios = await this.socios();
+    const [repartos] = await pool.query<RowDataPacket[]>("SELECT mes, datos FROM repartos_utilidades ORDER BY mes");
+    const [pagos] = await pool.query<RowDataPacket[]>(
+      "SELECT p.id, p.socioId, p.fecha, p.monto, p.nota, p.soporteUrl, u.nombre AS registradoPor FROM pagos_socios p LEFT JOIN usuarios u ON u.id = p.creadoPorId ORDER BY p.fecha, p.id",
+    );
+    const c2 = (v: number) => Math.round(v * 100) / 100;
+    return socios.map((s) => {
+      const meses = repartos.flatMap((r) => {
+        const datos = json<{ socios: RepartoSocio[] } | null>(r.datos, null);
+        const suyo = datos?.socios.find((x) => x.socioId === s.id);
+        return suyo
+          ? [
+              {
+                mes: String(r.mes),
+                utilidadVehiculos: suyo.utilidadVehiculos,
+                gastosPropios: suyo.totalGastosPropios,
+                total: suyo.total,
+                vehiculos: suyo.porVehiculo.length,
+              },
+            ]
+          : [];
+      });
+      const suyos = pagos
+        .filter((p) => p.socioId === s.id)
+        .map((p) => ({
+          id: p.id as number,
+          fecha: dia(p.fecha)!,
+          monto: Number(p.monto),
+          nota: p.nota ?? null,
+          soporteUrl: p.soporteUrl ?? null,
+          registradoPor: p.registradoPor ?? null,
+        }));
+      const repartido = c2(meses.reduce((t, m) => t + m.total, 0));
+      const pagado = c2(suyos.reduce((t, p) => t + p.monto, 0));
+      return { ...s, meses, pagos: suyos, repartido, pagado, saldo: c2(repartido - pagado) };
+    });
+  },
+
+  /** Registra un pago a un socio ({ fecha, monto, nota?, soporteUrl? }). Negativo = lo que el socio le devolvio a la empresa. */
+  async registrarPago(socioId: number, d: Record<string, unknown>, usuarioId: number | null): Promise<void> {
+    const fecha = String(d.fecha ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha del pago.");
+    const monto = Number(d.monto);
+    if (!Number.isFinite(monto) || monto === 0) throw new ErrorCuadro("Escribe el valor del pago.");
+    const soporte = String(d.soporteUrl ?? "").trim() || null;
+    if (soporte && !/^https?:\/\/\S+$/i.test(soporte)) throw new ErrorCuadro("El soporte debe ser un link (https://...).");
+    const [[s]] = await pool.query<RowDataPacket[]>("SELECT id FROM socios WHERE id = ?", [socioId]);
+    if (!s) throw new ErrorCuadro("Ese socio no existe.");
+    await pool.query("INSERT INTO pagos_socios (socioId, fecha, monto, nota, soporteUrl, creadoPorId) VALUES (?, ?, ?, ?, ?, ?)", [
+      socioId,
+      fecha,
+      monto.toFixed(2),
+      String(d.nota ?? "")
+        .trim()
+        .slice(0, 300) || null,
+      soporte?.slice(0, 500) ?? null,
+      usuarioId,
+    ]);
+  },
+
+  /** Borra un pago a un socio (si se registro por error). */
+  async borrarPago(id: number): Promise<void> {
+    await pool.query("DELETE FROM pagos_socios WHERE id = ?", [id]);
   },
 
   /** Activa o desactiva un socio (los inactivos no salen al registrar gastos). */
@@ -272,4 +386,3 @@ export const utilidades = {
     await pool.query("UPDATE socios SET activo = ? WHERE id = ?", [activo ? 1 : 0, id]);
   },
 };
-
