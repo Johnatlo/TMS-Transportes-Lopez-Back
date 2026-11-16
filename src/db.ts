@@ -1110,6 +1110,11 @@ export async function initSchema(): Promise<void> {
     // Gastos de la nomina: causados por dias hasta causaHasta, y de que nomina salen.
     ["gastos", "causaHasta", "DATE"],
     ["gastos", "nominaId", "INT"],
+    // Producido de la nomina desde los viajes del sistema (o escrito a mano).
+    ["nominas", "producidoDesde", "DATE"],
+    ["nominas", "producidoHasta", "DATE"],
+    ["nomina_lineas", "producidoManual", "TINYINT(1) NOT NULL DEFAULT 0"],
+    ["nomina_lineas", "detalleProducido", "TEXT"],
     // Empresa que liquida el vehiculo (LOPEZ o MYC; NULL = tercero) y si lo ven todos los roles.
     ["vehiculos", "empresa", "VARCHAR(10)"],
     ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],
@@ -1249,6 +1254,39 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // ---------- Participaciones y reparto de utilidades (ver src/utilidades.ts) ----------
+  const [habiaParticipaciones] = await pool.query(
+    "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'participaciones'"
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS participaciones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      vehiculoId INT NOT NULL,
+      socioId INT NOT NULL,
+      porcentaje DECIMAL(7,4) NOT NULL,
+      desde DATE NOT NULL,
+      hasta DATE,
+      INDEX idx_participacion_vehiculo (vehiculoId, desde)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Una sola vez: cada vehiculo propio al 100 % de su dueno (si el dueno es un socio). Las sociedades se registran en la pantalla.
+  if ((habiaParticipaciones as unknown[]).length === 0) {
+    await pool.query(
+      `INSERT INTO participaciones (vehiculoId, socioId, porcentaje, desde)
+       SELECT v.id, s.id, 100, '2000-01-01' FROM vehiculos v JOIN socios s ON s.nombre = UPPER(TRIM(v.dueno))
+        WHERE v.eliminado = 0 AND v.empresa IS NOT NULL`
+    );
+  }
+  // Foto del reparto aprobado de cada mes.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS repartos_utilidades (
+      mes CHAR(7) PRIMARY KEY,
+      datos LONGTEXT NOT NULL,
+      aprobadoPorId INT,
+      aprobadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // ---------- Empleados y nomina (ver src/nomina.ts) ----------
   await pool.query(`
     CREATE TABLE IF NOT EXISTS empleados (
@@ -1385,6 +1423,12 @@ export async function initSchema(): Promise<void> {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'empresa'`
   );
   const empresaEsNuevo = (conEmpresa as unknown[]).length === 0;
+  // ¿Ya existia el producido a mano de la nomina? Si no, los producidos ya escritos quedan como manuales (abajo).
+  const [conProducidoManual] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'nomina_lineas' AND COLUMN_NAME = 'producidoManual'`
+  );
+  const producidoManualEsNuevo = (conProducidoManual as unknown[]).length === 0;
 
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(
@@ -1397,6 +1441,10 @@ export async function initSchema(): Promise<void> {
     }
   }
 
+  // Una sola vez: lo que ya se habia escrito como producido en la nomina se respeta (queda como manual).
+  if (producidoManualEsNuevo) {
+    await pool.query("UPDATE nomina_lineas SET producidoManual = 1 WHERE producido > 0");
+  }
   // La cuenta principal de la empresa siempre con acceso total (nunca queda el sistema sin quien administre).
   await pool.query("UPDATE usuarios SET rol = 'TOTAL' WHERE LOWER(email) IN (?) AND rol <> 'TOTAL'", [CORREOS_SIEMPRE_TOTAL]);
   // Una sola vez: Principal y Admin con acceso total; los demas quedan administrativos (el valor por defecto).

@@ -181,3 +181,22 @@ nominaRouter.delete("/:id(\\d+)/lineas/:linea", async (req, res) => {
     return (await nomina.nominas({ id, empresa: empresaDe(req) }))[0];
   });
 });
+
+/** PUT /api/nomina/:id/producido: de donde sale el producido ({ producidoDesde, producidoHasta }). */
+nominaRouter.put("/:id(\\d+)/producido", async (req, res) => {
+  await responder(res, async () => {
+    exigirAdministra(req);
+    const id = Number(req.params.id);
+    await nomina.periodoProducido(id, req.body ?? {});
+    return (await nomina.nominas({ id, empresa: empresaDe(req) }))[0];
+  });
+});
+
+/** GET /api/nomina/:id/lineas/:linea/viajes: los viajes del sistema que suman el producido de la linea. */
+nominaRouter.get("/:id(\\d+)/lineas/:linea/viajes", async (req, res) => {
+  await responder(res, async () => {
+    const linea = Number(req.params.linea);
+    await exigirLinea(req, linea);
+    return nomina.viajesDeLinea(Number(req.params.id), linea);
+  });
+});

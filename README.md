@@ -536,13 +536,14 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_906 funciones, componentes, métodos y rutas en 63 archivos._
+_949 funciones, componentes, métodos y rutas en 66 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (37)
 - [`src/auth.ts`](#srcauthts) (36)
-- [`src/calculoNomina.ts`](#srccalculonominats) (5)
+- [`src/calculoNomina.ts`](#srccalculonominats) (7)
+- [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (7)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
 - [`src/config.ts`](#srcconfigts) (3)
@@ -559,7 +560,7 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
-- [`src/nomina.ts`](#srcnominats) (29)
+- [`src/nomina.ts`](#srcnominats) (34)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
 - [`src/prorrateo.ts`](#srcprorrateots) (9)
@@ -584,10 +585,11 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (19)
-- [`src/routes/nomina.ts`](#srcroutesnominats) (20)
+- [`src/routes/nomina.ts`](#srcroutesnominats) (22)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
+- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (11)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
 - [`src/scripts/crear-usuario.ts`](#srcscriptscrearusuariots) (1)
@@ -600,6 +602,7 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
+- [`src/utilidades.ts`](#srcutilidadests) (16)
 - [`src/vigencias.ts`](#srcvigenciasts) (3)
 
 ### `src/accesos.ts`
@@ -1052,6 +1055,67 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 
 - **`diasPeriodo(desde, hasta)`** · _función_
   Dias de nomina de un periodo (mes comercial de 30 dias): del 21/10 al 20/11 son 30.
+
+- **`producidoPorConductor(viajes, asignaciones)`** · _función_
+  Producido de cada conductor (como el Excel): la suma del flete de los
+  viajes de los vehiculos que manejaba, segun la fecha del viaje y su
+  asignacion de vehiculo. Si un conductor cambio de carro en el mes, suma los
+  dos (Ferney en octubre: SZX-880 y SOR-429). Si dos asignaciones cubren la
+  misma fecha, gana la que empezo despues. Los viajes sin tarifa no suman y
+  se cuentan aparte.
+
+- **`mesDe(fecha)`** · _función_
+  Mes calendario de una fecha: el producido de la nomina del 21/10 al 20/11 es el de octubre.
+
+### `src/calculoUtilidades.ts`
+
+> Cascada de rentabilidad por vehiculo y reparto de utilidades por socio
+> (fase 3 del modulo de gastos), sin base de datos: se prueba en
+> calculoUtilidades.test.ts.
+>
+> Cascada de un vehiculo en un mes:
+>   1. Ingresos por fletes (lo que paga el cliente, de Rentabilidad).
+>   2. - Descuentos del viaje (retencion, ReteICA, anticipo de renta, 4x1000,
+>        Supertransporte, comision, T. Lopez, descargue, poliza, otros).
+>   3. - Costos directos: anticipos del viaje (combustible, efectivo,
+>        transferencia) y los gastos del libro que van completos a ese carro.
+>   4. - Costo total de la nomina del conductor (salario + carga del empleador).
+>   5. - Gastos generales prorrateados (lo que le toco de los gastos repartidos
+>        entre varios carros: oficina, creditos, nomina de oficina...).
+>   6. = Utilidad neta del vehiculo.
+> Los viajes van por su fecha; los gastos, por su fecha de causacion.
+>
+> Reparto: la utilidad de cada vehiculo se reparte entre sus socios segun la
+> participacion vigente al cierre del mes (100 % del dueno, o la sociedad).
+> Lo que va directo a un socio en el libro (sus gastos adicionales, su parte
+> fija de un credito) se le descuenta solo a el. Como referencia se muestra lo
+> que ya se le liquido al dueno por los viajes (saldo de los viajes).
+>
+> Todo en pesos con dos decimales; las partes se reparten en centavos para que
+> sumen exacto (ver prorrateo.ts).
+
+- **`c2(v)`** · _función_
+  Redondea a centavos.
+
+- **`sumar(xs)`** · _función_
+  Suma a centavos.
+
+- **`cascadas(vehiculos, viajes, partidas)`** · _función_
+  Cascada de cada vehiculo con los viajes y las partidas del libro del periodo.
+
+- **`participacionesEn(todas, vehiculoId, fecha)`** · _función_
+  Participaciones de un vehiculo vigentes en una fecha.
+
+- **`repartirUtilidades(lista, participaciones, partidas, fecha)`** · _función_
+  El reparto del periodo por socio, y los vehiculos sin participacion (su utilidad no se reparte).
+
+- **`pasoDe(g)`** · _función_
+  Paso de la cascada de un gasto del libro: la nomina de un conductor va al
+  paso 4; un gasto que va completo a un solo vehiculo (sin socios) es costo
+  directo (paso 3); lo repartido entre varios es gasto general (paso 5).
+
+- **`finDeMes(mes)`** · _función_
+  Ultimo dia de un mes "AAAA-MM".
 
 ### `src/cifrado.ts`
 
@@ -1913,7 +1977,12 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 > - Parametros por ano (parametros_nomina): minimo, auxilio y porcentajes.
 >   La nomina usa los del ano en que termina.
 > - Nomina: un periodo (desde/hasta, variable) con una linea por empleado
->   (dias, producido, vehiculo, ajuste con nota). Mientras es borrador se
+>   (dias, producido, vehiculo, ajuste con nota). El producido de cada
+>   conductor sale de los viajes del cuadro (flete de los vehiculos que
+>   manejaba en el mes del producido, por defecto el mes calendario en que
+>   empieza la nomina); se puede escribir a mano y volver al del sistema.
+>   Si manejo varios carros, su costo se reparte entre ellos segun lo que
+>   produjo en cada uno. Mientras es borrador se
 >   calcula con los datos actuales; al aprobarla el calculo queda guardado y
 >   se crea un gasto por empleado (categoria NOMINA) por su costo total,
 >   causado por dias entre los meses del periodo: el del conductor a su
@@ -1991,6 +2060,12 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
   - **`nomina.actualizarLinea(nominaId, lineaId, d)`** · _método_
     Cambia dias, producido, vehiculo o ajuste de una linea.
 
+  - **`nomina.periodoProducido(nominaId, d)`** · _método_
+    Cambia de donde sale el producido de la nomina ({ producidoDesde, producidoHasta }).
+
+  - **`nomina.viajesDeLinea(nominaId, lineaId)`** · _método_
+    Los viajes que suman el producido del sistema de una linea.
+
   - **`nomina.agregarLinea(nominaId, empleadoId)`** · _método_
     Agrega a la nomina un empleado que no esta.
 
@@ -2006,6 +2081,15 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 
   - **`nomina.reabrir(nominaId)`** · _método_
     Reabre una nomina aprobada: borra sus gastos (sus meses deben estar abiertos).
+
+- **`periodoProducido(n)`** · _función_
+  Periodo del producido de una nomina (fila de la base); si no tiene, el mes en que empieza.
+
+- **`viajesDelCuadro(desde, hasta)`** · _función_
+  Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su flete (null = sin tarifa).
+
+- **`destinosConductor(l)`** · _función_
+  A quien va el costo de un conductor: sus vehiculos segun lo que produjo en cada uno; si no produjo, el vehiculo de la linea.
 
 ### `src/perfilVehiculos.ts`
 
@@ -4550,6 +4634,12 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 - **`DELETE /:id(\d+)/lineas/:linea`** · _ruta HTTP_
   DELETE /api/nomina/:id/lineas/:linea: quita a un empleado de la nomina.
 
+- **`PUT /:id(\d+)/producido`** · _ruta HTTP_
+  PUT /api/nomina/:id/producido: de donde sale el producido ({ producidoDesde, producidoHasta }).
+
+- **`GET /:id(\d+)/lineas/:linea/viajes`** · _ruta HTTP_
+  GET /api/nomina/:id/lineas/:linea/viajes: los viajes del sistema que suman el producido de la linea.
+
 ### `src/routes/preoperacional.ts`
 
 - **`GET /`** · _ruta HTTP_
@@ -4686,6 +4776,41 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
 
 - **`POST /:id/restablecer-clave`** · _ruta HTTP_
   Genera una clave temporal nueva y cierra las sesiones de ese usuario.
+
+### `src/routes/utilidades.ts`
+
+- **`empresaDe(req)`** · _función_
+  Empresa a la que esta limitado el usuario (M&C), o null si ve las dos.
+
+- **`exigirTotal(req)`** · _función_
+  Solo el rol total.
+
+- **`GET /aprobados`** · _ruta HTTP_
+  GET /api/utilidades/aprobados: meses con reparto aprobado.
+
+- **`GET /participaciones`** · _ruta HTTP_
+  GET /api/utilidades/participaciones: vehiculos con su participacion vigente e historial.
+
+- **`PUT /participaciones/:vehiculoId`** · _ruta HTTP_
+  PUT /api/utilidades/participaciones/:vehiculoId: nueva participacion desde una fecha ({ desde, partes }).
+
+- **`GET /socios`** · _ruta HTTP_
+  GET /api/utilidades/socios: socios.
+
+- **`POST /socios`** · _ruta HTTP_
+  POST /api/utilidades/socios: crea un socio ({ nombre }).
+
+- **`PUT /socios/:id`** · _ruta HTTP_
+  PUT /api/utilidades/socios/:id: activa o desactiva ({ activo }).
+
+- **`GET /:mes`** · _ruta HTTP_
+  GET /api/utilidades/:mes: cascada por vehiculo y reparto por socio del mes ("AAAA-MM").
+
+- **`POST /:mes/aprobar`** · _ruta HTTP_
+  POST /api/utilidades/:mes/aprobar: guarda la foto del reparto (el mes debe estar cerrado).
+
+- **`DELETE /:mes/aprobar`** · _ruta HTTP_
+  DELETE /api/utilidades/:mes/aprobar: anula la aprobacion.
 
 ### `src/scripts/borrar-viaje.ts`
 
@@ -5277,6 +5402,71 @@ _906 funciones, componentes, métodos y rutas en 63 archivos._
     Registra el pago al tercero de varios viajes ({ ids, fecha, cuentaCobro? }):
     pone la fecha de pago (y el numero de la cuenta de cobro, si se escribe y
     el viaje no lo tiene) en los que aun no estaban pagados.
+
+### `src/utilidades.ts`
+
+> Utilidades (fase 3 del modulo de gastos): cascada de rentabilidad por
+> vehiculo y reparto entre socios de un mes, participaciones (quien es dueno
+> de que vehiculo y en que porcentaje, con vigencia) y aprobacion del reparto.
+> Los calculos estan en calculoUtilidades.ts.
+>
+> - Viajes: los de Rentabilidad (flete, descuentos, anticipos y saldo del
+>   dueno, ya calculados) de los vehiculos de la flota propia, por su fecha.
+> - Libro de gastos: lo que le toco a cada vehiculo o socio (gastos_reparto)
+>   en el mes, por fecha de causacion; los ingresos restan.
+> - Participaciones: por defecto 100 % del dueno del vehiculo; una sociedad
+>   se registra con sus porcentajes desde una fecha (lo anterior no cambia).
+> - Aprobar el reparto de un mes guarda la foto (repartos_utilidades); el mes
+>   debe estar cerrado en Gastos. Mientras este aprobado, el mes no se abre.
+
+- **`placaClave(p)`** · _función_
+  Normaliza una placa ("SZX-880" -> "SZX880").
+
+- **`diaAntes(f)`** · _función_
+  El dia anterior a una fecha.
+
+- **`json(v, defecto)`** · _función_
+  JSON guardado a objeto.
+
+- **`mesDe(v)`** · _función_
+  Mes "AAAA-MM" valido.
+
+- **`utilidades`** · _módulo_
+  Utilidades, participaciones y socios.
+
+  - **`utilidades.mes(mesTexto, filtro)`** · _método_
+    Cascada por vehiculo y reparto por socio del mes (M&C: solo sus vehiculos).
+
+  - **`utilidades.calcular(mes)`** · _método_
+    Calcula la cascada y el reparto del mes con los datos actuales.
+
+  - **`utilidades.aprobar(mesTexto, usuarioId)`** · _método_
+    Aprueba el reparto del mes: guarda la foto. El mes debe estar cerrado en Gastos.
+
+  - **`utilidades.anular(mesTexto)`** · _método_
+    Anula la aprobacion del reparto (vuelve a calcularse con los datos actuales).
+
+  - **`utilidades.aprobados()`** · _método_
+    Meses con reparto aprobado.
+
+  - **`utilidades.participacionesTodas()`** · _método_
+    Todas las participaciones (para el calculo).
+
+  - **`utilidades.participaciones(filtro)`** · _método_
+    Vehiculos de la flota propia con su participacion vigente y su historial.
+
+  - **`utilidades.guardarParticipacion(vehiculoId, d)`** · _método_
+    Registra la participacion de un vehiculo desde una fecha ({ desde, partes: [{ socioId, porcentaje }] }),
+    que debe sumar 100 %. La anterior se cierra el dia antes; lo que empezaba desde esa fecha se reemplaza.
+
+  - **`utilidades.socios()`** · _método_
+    Socios (activos primero).
+
+  - **`utilidades.crearSocio(d)`** · _método_
+    Crea un socio (por ejemplo el socio de una sociedad).
+
+  - **`utilidades.activarSocio(id, activo)`** · _método_
+    Activa o desactiva un socio (los inactivos no salen al registrar gastos).
 
 ### `src/vigencias.ts`
 

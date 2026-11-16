@@ -154,3 +154,68 @@ export function diasPeriodo(desde: string, hasta: string): number {
   const dias = (a2 - a1) * 360 + (m2 - m1) * 30 + (dia(d2) - dia(d1)) + 1;
   return Math.max(0, Math.min(30, dias));
 }
+
+/** Un viaje del cuadro para el producido: su vehiculo, fecha y flete (null = sin tarifa). */
+export interface ViajeProducido {
+  id: number;
+  fecha: string;
+  vehiculoId: number;
+  flete: number | null;
+}
+
+/** Vehiculo de un conductor con fechas (empleados_vehiculos). */
+export interface AsignacionVehiculo {
+  empleadoId: number;
+  vehiculoId: number;
+  desde: string;
+  hasta: string | null;
+}
+
+/** Producido de un conductor: el total y cuanto en cada vehiculo. */
+export interface ProducidoConductor {
+  total: number;
+  porVehiculo: Array<{ vehiculoId: number; producido: number; viajes: number; sinTarifa: number }>;
+  /** Viajes que le tocaron (ids), para ver el detalle. */
+  viajes: number[];
+}
+
+/**
+ * Producido de cada conductor (como el Excel): la suma del flete de los
+ * viajes de los vehiculos que manejaba, segun la fecha del viaje y su
+ * asignacion de vehiculo. Si un conductor cambio de carro en el mes, suma los
+ * dos (Ferney en octubre: SZX-880 y SOR-429). Si dos asignaciones cubren la
+ * misma fecha, gana la que empezo despues. Los viajes sin tarifa no suman y
+ * se cuentan aparte.
+ */
+export function producidoPorConductor(viajes: ViajeProducido[], asignaciones: AsignacionVehiculo[]): Map<number, ProducidoConductor> {
+  const resultado = new Map<number, ProducidoConductor>();
+  for (const v of viajes) {
+    const a = asignaciones
+      .filter((x) => x.vehiculoId === v.vehiculoId && x.desde <= v.fecha && (!x.hasta || x.hasta >= v.fecha))
+      .sort((x, y) => y.desde.localeCompare(x.desde))[0];
+    if (!a) continue;
+    const p = resultado.get(a.empleadoId) ?? { total: 0, porVehiculo: [], viajes: [] };
+    let pv = p.porVehiculo.find((x) => x.vehiculoId === v.vehiculoId);
+    if (!pv) {
+      pv = { vehiculoId: v.vehiculoId, producido: 0, viajes: 0, sinTarifa: 0 };
+      p.porVehiculo.push(pv);
+    }
+    pv.viajes += 1;
+    if (v.flete === null) pv.sinTarifa += 1;
+    else {
+      pv.producido = c2(pv.producido + v.flete);
+      p.total = c2(p.total + v.flete);
+    }
+    p.viajes.push(v.id);
+    resultado.set(a.empleadoId, p);
+  }
+  return resultado;
+}
+
+/** Mes calendario de una fecha: el producido de la nomina del 21/10 al 20/11 es el de octubre. */
+export function mesDe(fecha: string): { desde: string; hasta: string } {
+  const [a, m] = fecha.split("-").map(Number);
+  const ultimo = new Date(Date.UTC(a, m, 0)).getUTCDate();
+  const mm = String(m).padStart(2, "0");
+  return { desde: `${a}-${mm}-01`, hasta: `${a}-${mm}-${ultimo}` };
+}

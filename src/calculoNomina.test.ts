@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { calcularLinea, diasPeriodo, pila } from "./calculoNomina";
-import type { EntradaLinea, ParametrosNomina } from "./calculoNomina";
+import { calcularLinea, diasPeriodo, mesDe, pila, producidoPorConductor } from "./calculoNomina";
+import type { AsignacionVehiculo, EntradaLinea, ParametrosNomina, ViajeProducido } from "./calculoNomina";
 
 /** Parametros 2026 del Excel. */
 const P2026: ParametrosNomina = {
@@ -104,5 +104,49 @@ describe("reglas", () => {
       diasPeriodo("2026-02-01", "2026-02-28"),
       diasPeriodo("2026-11-10", "2026-11-20"),
     ]).toEqual([30, 30, 28, 11]);
+  });
+});
+
+describe("producido desde los viajes del sistema", () => {
+  const SZX880 = 1;
+  const SOR429 = 2;
+  const SPI982 = 3;
+  // Ferney manejo la SZX-880 hasta el 15/10 y desde el 16/10 la SOR-429; Julian la SPI-982 todo el mes.
+  const asignaciones: AsignacionVehiculo[] = [
+    { empleadoId: 10, vehiculoId: SZX880, desde: "2026-01-01", hasta: "2026-10-15" },
+    { empleadoId: 10, vehiculoId: SOR429, desde: "2026-10-16", hasta: null },
+    { empleadoId: 20, vehiculoId: SZX880, desde: "2026-10-16", hasta: null },
+    { empleadoId: 30, vehiculoId: SPI982, desde: "2026-01-01", hasta: null },
+  ];
+  const viajes: ViajeProducido[] = [
+    { id: 1, fecha: "2026-10-03", vehiculoId: SZX880, flete: 15_553_900 },
+    { id: 2, fecha: "2026-10-12", vehiculoId: SZX880, flete: 15_553_900 },
+    { id: 3, fecha: "2026-10-20", vehiculoId: SOR429, flete: 8_281_664 },
+    { id: 4, fecha: "2026-10-22", vehiculoId: SZX880, flete: 4_000_000 },
+    { id: 5, fecha: "2026-10-05", vehiculoId: SPI982, flete: 4_178_600 },
+    { id: 6, fecha: "2026-10-09", vehiculoId: SPI982, flete: null },
+    { id: 7, fecha: "2026-10-09", vehiculoId: 99, flete: 1_000_000 },
+  ];
+  const p = producidoPorConductor(viajes, asignaciones);
+
+  test("Ferney octubre: 31.107.800 de la SZX-880 + 8.281.664 de la SOR-429 = 39.389.464 (hoja FERNEY OCTUBRE)", () => {
+    const f = p.get(10)!;
+    expect(f.total).toBe(39_389_464);
+    expect(f.porVehiculo.map((x) => [x.vehiculoId, x.producido])).toEqual([
+      [SZX880, 31_107_800],
+      [SOR429, 8_281_664],
+    ]);
+  });
+  test("el viaje de la SZX-880 despues del cambio es del conductor nuevo", () => {
+    expect(p.get(20)!.total).toBe(4_000_000);
+  });
+  test("viaje sin tarifa no suma pero se cuenta; vehiculo sin conductor no es de nadie", () => {
+    expect(p.get(30)!.total).toBe(4_178_600);
+    expect(p.get(30)!.porVehiculo[0]).toMatchObject({ viajes: 2, sinTarifa: 1 });
+    expect([...p.values()].some((x) => x.viajes.includes(7))).toBe(false);
+  });
+  test("mes calendario del inicio de la nomina", () => {
+    expect(mesDe("2026-10-21")).toEqual({ desde: "2026-10-01", hasta: "2026-10-31" });
+    expect(mesDe("2026-02-21")).toEqual({ desde: "2026-02-01", hasta: "2026-02-28" });
   });
 });

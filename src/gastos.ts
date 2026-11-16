@@ -467,7 +467,11 @@ export const gastos = {
   async cerrarMes(d: Record<string, unknown>, usuarioId: number | null): Promise<string[]> {
     const m = String(d.mes ?? "");
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) throw new ErrorCuadro("Elige el mes.");
-    if (d.cerrado === false) await pool.query("DELETE FROM periodos_cierre WHERE mes = ?", [m]);
+    if (d.cerrado === false) {
+      const [[aprobado]] = await pool.query<RowDataPacket[]>("SELECT 1 AS si FROM repartos_utilidades WHERE mes = ?", [m]);
+      if (aprobado) throw new ErrorCuadro(`El reparto de utilidades de ${m} esta aprobado: anula la aprobacion en Utilidades para abrir el mes.`);
+      await pool.query("DELETE FROM periodos_cierre WHERE mes = ?", [m]);
+    }
     else await pool.query("INSERT IGNORE INTO periodos_cierre (mes, cerradoPorId) VALUES (?, ?)", [m, usuarioId]);
     return [...(await limites()).cerrados].sort();
   },

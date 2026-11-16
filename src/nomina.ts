@@ -10,7 +10,12 @@
  * - Parametros por ano (parametros_nomina): minimo, auxilio y porcentajes.
  *   La nomina usa los del ano en que termina.
  * - Nomina: un periodo (desde/hasta, variable) con una linea por empleado
- *   (dias, producido, vehiculo, ajuste con nota). Mientras es borrador se
+ *   (dias, producido, vehiculo, ajuste con nota). El producido de cada
+ *   conductor sale de los viajes del cuadro (flete de los vehiculos que
+ *   manejaba en el mes del producido, por defecto el mes calendario en que
+ *   empieza la nomina); se puede escribir a mano y volver al del sistema.
+ *   Si manejo varios carros, su costo se reparte entre ellos segun lo que
+ *   produjo en cada uno. Mientras es borrador se
  *   calcula con los datos actuales; al aprobarla el calculo queda guardado y
  *   se crea un gasto por empleado (categoria NOMINA) por su costo total,
  *   causado por dias entre los meses del periodo: el del conductor a su
@@ -19,8 +24,8 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
-import { calcularLinea, diasPeriodo } from "./calculoNomina";
-import type { CalculoLinea, EntradaLinea, ParametrosNomina } from "./calculoNomina";
+import { calcularLinea, diasPeriodo, mesDe, producidoPorConductor } from "./calculoNomina";
+import type { CalculoLinea, EntradaLinea, ParametrosNomina, ProducidoConductor, ViajeProducido } from "./calculoNomina";
 import { gastos, EMPRESAS } from "./gastos";
 import type { Destino } from "./prorrateo";
 import type { EmpresaVehiculo } from "./roles";
@@ -64,7 +69,13 @@ export interface LineaNomina {
   vehiculoId: number | null;
   placa: string | null;
   dias: number;
+  /** El producido que entra al calculo: el del sistema o el escrito a mano. */
   producido: number;
+  /** true = se escribio a mano. */
+  producidoManual: boolean;
+  /** El que sale de los viajes del sistema y cuanto en cada vehiculo. */
+  producidoSistema: number;
+  porVehiculo: Array<{ vehiculoId: number; placa: string; producido: number; viajes: number; sinTarifa: number }>;
   ajuste: number;
   notaAjuste: string | null;
   /** Lo que entro al calculo (salario, porcentajes, riesgo...). */
@@ -82,6 +93,9 @@ export interface Nomina {
   hasta: string;
   estado: "BORRADOR" | "APROBADA";
   nota: string | null;
+  /** De donde sale el producido (por defecto el mes calendario en que empieza la nomina). */
+  producidoDesde: string;
+  producidoHasta: string;
   anioParametros: number;
   creadoPor: string | null;
   aprobadaPor: string | null;
@@ -370,6 +384,16 @@ export const nomina = {
     );
     const empleados = new Map((await this.empleados()).map((e) => [e.id, e]));
     const parametros = new Map((await this.parametros()).map((p) => [p.anio, p]));
+    const placas = new Map((await pool.query<RowDataPacket[]>("SELECT id, placa FROM vehiculos"))[0].map((v) => [v.id as number, v.placa as string]));
+    // Producido del sistema de cada nomina en borrador (las aprobadas lo tienen guardado).
+    const producidos = new Map<number, Map<number, ProducidoConductor>>();
+    const asignaciones = [...empleados.values()].flatMap((e) =>
+      e.vehiculos.map((v) => ({ empleadoId: e.id, vehiculoId: v.vehiculoId, desde: v.desde, hasta: v.hasta })),
+    );
+    for (const n of filas.filter((x) => x.estado === "BORRADOR")) {
+      const { desde, hasta } = periodoProducido(n);
+      producidos.set(n.id, producidoPorConductor(await viajesDelCuadro(desde, hasta), asignaciones));
+    }
     return filas.map((n) => {
       const hasta = dia(n.hasta)!;
       const anio = Number(hasta.slice(0, 4));
@@ -379,12 +403,20 @@ export const nomina = {
       for (const l of lineas.filter((x) => x.nominaId === n.id)) {
         const e = empleados.get(l.empleadoId);
         if (!e || (filtro.empresa && e.empresa !== filtro.empresa)) continue;
-        const valores = { dias: Number(l.dias), producido: Number(l.producido), ajuste: Number(l.ajuste) };
+        // Producido: el guardado al aprobar, o el del sistema (si no se escribio a mano).
+        const sistema: ProducidoConductor =
+          e.tipo !== "CONDUCTOR"
+            ? { total: 0, porVehiculo: [], viajes: [] }
+            : aprobada
+              ? json<ProducidoConductor>(l.detalleProducido, { total: 0, porVehiculo: [], viajes: [] })
+              : (producidos.get(n.id)?.get(e.id) ?? { total: 0, porVehiculo: [], viajes: [] });
+        const manual = !!l.producidoManual;
+        const valores = { dias: Number(l.dias), producido: manual || e.tipo !== "CONDUCTOR" ? Number(l.producido) : sistema.total, ajuste: Number(l.ajuste) };
         const entrada = aprobada ? json<EntradaLinea>(l.entrada, entradaDe(e, valores)) : entradaDe(e, valores);
         const calculo = aprobada ? json<CalculoLinea | null>(l.calculo, null) : p ? calcularLinea(entrada, p) : null;
         let problema: string | null = null;
         if (!p) problema = `Faltan los parametros de ${anio}.`;
-        else if (e.tipo === "CONDUCTOR" && !l.vehiculoId) problema = "Elige el vehiculo.";
+        else if (e.tipo === "CONDUCTOR" && !l.vehiculoId && !sistema.porVehiculo.some((v) => v.producido > 0)) problema = "Elige el vehiculo.";
         else if (e.tipo === "OFICINA" && !e.destinos.length) problema = "El empleado no tiene a quien se reparte su costo.";
         else if (valores.ajuste !== 0 && !l.notaAjuste) problema = "El ajuste necesita una nota.";
         propias.push({
@@ -397,6 +429,9 @@ export const nomina = {
           vehiculoId: l.vehiculoId ?? null,
           placa: l.placa ?? null,
           ...valores,
+          producidoManual: manual,
+          producidoSistema: sistema.total,
+          porVehiculo: sistema.porVehiculo.map((v) => ({ ...v, placa: placas.get(v.vehiculoId) ?? "?" })),
           notaAjuste: l.notaAjuste ?? null,
           entrada,
           calculo: calculo ?? calcularLinea(entrada, { ...VACIOS, anio }),
@@ -411,6 +446,8 @@ export const nomina = {
         hasta,
         estado: n.estado,
         nota: n.nota ?? null,
+        producidoDesde: periodoProducido(n).desde,
+        producidoHasta: periodoProducido(n).hasta,
         anioParametros: anio,
         creadoPor: n.creadoPor ?? null,
         aprobadaPor: n.aprobadaPor ?? null,
@@ -428,12 +465,11 @@ export const nomina = {
     if (hasta < desde) throw new ErrorCuadro("El periodo termina antes de empezar.");
     const [[cruce]] = await pool.query<RowDataPacket[]>("SELECT id FROM nominas WHERE desde <= ? AND hasta >= ? LIMIT 1", [hasta, desde]);
     if (cruce) throw new ErrorCuadro("Ya hay una nomina que cubre parte de ese periodo.");
-    const [res] = await pool.query<ResultSetHeader>("INSERT INTO nominas (desde, hasta, nota, creadoPorId) VALUES (?, ?, ?, ?)", [
-      desde,
-      hasta,
-      texto(d.nota, 300),
-      usuarioId,
-    ]);
+    const mes = mesDe(desde);
+    const [res] = await pool.query<ResultSetHeader>(
+      "INSERT INTO nominas (desde, hasta, producidoDesde, producidoHasta, nota, creadoPorId) VALUES (?, ?, ?, ?, ?, ?)",
+      [desde, hasta, mes.desde, mes.hasta, texto(d.nota, 300), usuarioId],
+    );
     const activos = (await this.empleados()).filter((e) => e.fechaIngreso <= hasta && (!e.fechaRetiro || e.fechaRetiro >= desde));
     if (activos.length)
       await pool.query("INSERT INTO nomina_lineas (nominaId, empleadoId, vehiculoId, dias) VALUES ?", [
@@ -472,9 +508,10 @@ export const nomina = {
       valores.push(dias);
     }
     if ("producido" in d) {
-      sets.push("producido = ?");
+      sets.push("producido = ?", "producidoManual = 1");
       valores.push(numero(d.producido, "el producido"));
     }
+    if (d.producidoManual === false) sets.push("producidoManual = 0");
     if ("vehiculoId" in d) {
       sets.push("vehiculoId = ?");
       valores.push(d.vehiculoId ? Number(d.vehiculoId) : null);
@@ -490,6 +527,49 @@ export const nomina = {
       valores.push(texto(d.notaAjuste, 300));
     }
     if (sets.length) await pool.query(`UPDATE nomina_lineas SET ${sets.join(", ")} WHERE id = ? AND nominaId = ?`, [...valores, lineaId, nominaId]);
+  },
+
+  /** Cambia de donde sale el producido de la nomina ({ producidoDesde, producidoHasta }). */
+  async periodoProducido(nominaId: number, d: Record<string, unknown>): Promise<void> {
+    await this.exigirBorrador(nominaId);
+    const desde = fechaDe(d.producidoDesde, "desde cuando se suma el producido");
+    const hasta = fechaDe(d.producidoHasta, "hasta cuando se suma el producido");
+    if (hasta < desde) throw new ErrorCuadro("El periodo del producido termina antes de empezar.");
+    await pool.query("UPDATE nominas SET producidoDesde = ?, producidoHasta = ? WHERE id = ?", [desde, hasta, nominaId]);
+  },
+
+  /** Los viajes que suman el producido del sistema de una linea. */
+  async viajesDeLinea(nominaId: number, lineaId: number) {
+    const [n] = await this.nominas({ id: nominaId });
+    const l = n?.lineas.find((x) => x.id === lineaId);
+    if (!n || !l) throw new ErrorCuadro("Esa linea no existe.");
+    const [[fila]] = await pool.query<RowDataPacket[]>("SELECT detalleProducido FROM nomina_lineas WHERE id = ?", [lineaId]);
+    let ids: number[];
+    if (n.estado === "APROBADA") ids = json<ProducidoConductor>(fila?.detalleProducido, { total: 0, porVehiculo: [], viajes: [] }).viajes;
+    else {
+      const empleados = await this.empleados();
+      const asignaciones = empleados.flatMap((e) => e.vehiculos.map((v) => ({ empleadoId: e.id, vehiculoId: v.vehiculoId, desde: v.desde, hasta: v.hasta })));
+      ids = producidoPorConductor(await viajesDelCuadro(n.producidoDesde, n.producidoHasta), asignaciones).get(l.empleadoId)?.viajes ?? [];
+    }
+    if (!ids.length) return [];
+    const [viajes] = await pool.query<RowDataPacket[]>(
+      `SELECT c.id, c.fecha, c.placa, c.manifiesto, c.empresa AS cliente, c.concepto, c.pesoKg, c.tipoFlete, c.tarifaKilo, c.valorFijo,
+              IF(c.tipoFlete = 'FIJO', c.valorFijo, c.pesoKg * c.tarifaKilo) AS flete
+         FROM cuadro_viajes c WHERE c.id IN (?) ORDER BY c.fecha, c.id`,
+      [ids],
+    );
+    return viajes.map((v) => ({
+      id: v.id,
+      fecha: dia(v.fecha)!,
+      placa: v.placa,
+      manifiesto: v.manifiesto ?? null,
+      cliente: v.cliente,
+      concepto: v.concepto ?? null,
+      pesoKg: v.pesoKg === null ? null : Number(v.pesoKg),
+      tipoFlete: v.tipoFlete,
+      tarifaKilo: v.tarifaKilo === null ? null : Number(v.tarifaKilo),
+      flete: v.flete === null ? null : Math.round(Number(v.flete) * 100) / 100,
+    }));
   },
 
   /** Agrega a la nomina un empleado que no esta. */
@@ -532,6 +612,15 @@ export const nomina = {
     const p = await parametrosDelAnio(n.anioParametros);
     const empleados = new Map((await this.empleados()).map((e) => [e.id, e]));
     const conCosto = n.lineas.filter((l) => l.calculo.costoTotal > 0);
+    // Los viajes de cada conductor (para guardar el detalle del producido), calculados una vez.
+    const asignaciones = [...empleados.values()].flatMap((e) =>
+      e.vehiculos.map((v) => ({ empleadoId: e.id, vehiculoId: v.vehiculoId, desde: v.desde, hasta: v.hasta })),
+    );
+    const viajesPor = producidoPorConductor(await viajesDelCuadro(n.producidoDesde, n.producidoHasta), asignaciones);
+    const detalleDe = (l: LineaNomina): ProducidoConductor =>
+      l.tipo !== "CONDUCTOR"
+        ? { total: 0, porVehiculo: [], viajes: [] }
+        : { total: l.producido, porVehiculo: l.porVehiculo.map(({ placa: _placa, ...v }) => v), viajes: viajesPor.get(l.empleadoId)?.viajes ?? [] };
     for (const l of conCosto) await gastos.revisarCausaciones({ monto: l.calculo.costoTotal, causaDesde: n.desde, causaHasta: n.hasta });
     try {
       for (const l of conCosto) {
@@ -545,24 +634,30 @@ export const nomina = {
             monto: l.calculo.costoTotal,
             causaDesde: n.desde,
             causaHasta: n.hasta,
-            destinos: e.tipo === "CONDUCTOR" ? [{ tipo: "VEHICULO", id: l.vehiculoId, modo: "PARTE", valor: 1 }] : e.destinos,
+            destinos: e.tipo === "CONDUCTOR" ? destinosConductor(l) : e.destinos,
           },
           usuarioId,
           { origen: "NOMINA", creditoId: null, nominaId },
         );
-        await pool.query("UPDATE nomina_lineas SET entrada = ?, calculo = ?, gastoId = ? WHERE id = ?", [
+        await pool.query("UPDATE nomina_lineas SET entrada = ?, calculo = ?, gastoId = ?, detalleProducido = ? WHERE id = ?", [
           JSON.stringify(l.entrada),
           JSON.stringify(l.calculo),
           gastoId,
+          JSON.stringify(detalleDe(l)),
           l.id,
         ]);
       }
       for (const l of n.lineas.filter((x) => x.calculo.costoTotal <= 0))
-        await pool.query("UPDATE nomina_lineas SET entrada = ?, calculo = ? WHERE id = ?", [JSON.stringify(l.entrada), JSON.stringify(l.calculo), l.id]);
+        await pool.query("UPDATE nomina_lineas SET entrada = ?, calculo = ?, detalleProducido = ? WHERE id = ?", [
+          JSON.stringify(l.entrada),
+          JSON.stringify(l.calculo),
+          JSON.stringify(detalleDe(l)),
+          l.id,
+        ]);
     } catch (exc) {
       // Si algo falla a mitad de camino, se deshace lo creado.
       await pool.query("DELETE FROM gastos WHERE nominaId = ?", [nominaId]);
-      await pool.query("UPDATE nomina_lineas SET entrada = NULL, calculo = NULL, gastoId = NULL WHERE nominaId = ?", [nominaId]);
+      await pool.query("UPDATE nomina_lineas SET entrada = NULL, calculo = NULL, gastoId = NULL, detalleProducido = NULL WHERE nominaId = ?", [nominaId]);
       throw exc;
     }
     await pool.query("UPDATE nominas SET estado = 'APROBADA', parametros = ?, aprobadaPorId = ?, aprobadaEn = NOW() WHERE id = ?", [
@@ -577,12 +672,37 @@ export const nomina = {
     const [[n]] = await pool.query<RowDataPacket[]>("SELECT estado FROM nominas WHERE id = ?", [nominaId]);
     if (!n || n.estado !== "APROBADA") return;
     await gastos.borrarDeNomina(nominaId);
-    await pool.query("UPDATE nomina_lineas SET entrada = NULL, calculo = NULL, gastoId = NULL WHERE nominaId = ?", [nominaId]);
+    await pool.query("UPDATE nomina_lineas SET entrada = NULL, calculo = NULL, gastoId = NULL, detalleProducido = NULL WHERE nominaId = ?", [nominaId]);
     await pool.query("UPDATE nominas SET estado = 'BORRADOR', parametros = NULL, aprobadaPorId = NULL, aprobadaEn = NULL WHERE id = ?", [nominaId]);
   },
 };
 
-/** Parametros en cero: solo para mostrar una linea cuando faltan los del ano. */
+/** Periodo del producido de una nomina (fila de la base); si no tiene, el mes en que empieza. */
+function periodoProducido(n: RowDataPacket): { desde: string; hasta: string } {
+  const mes = mesDe(dia(n.desde)!);
+  return { desde: dia(n.producidoDesde) ?? mes.desde, hasta: dia(n.producidoHasta) ?? mes.hasta };
+}
+
+/** Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su flete (null = sin tarifa). */
+async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProducido[]> {
+  const [filas] = await pool.query<RowDataPacket[]>(
+    `SELECT c.id, c.fecha, COALESCE(c.vehiculoId, v.id) AS vehiculoId, IF(c.tipoFlete = 'FIJO', c.valorFijo, c.pesoKg * c.tarifaKilo) AS flete
+       FROM cuadro_viajes c LEFT JOIN vehiculos v ON v.placa = c.placa AND v.eliminado = 0
+      WHERE c.anulado = 0 AND c.fecha BETWEEN ? AND ?`,
+    [desde, hasta],
+  );
+  return filas
+    .filter((f) => f.vehiculoId)
+    .map((f) => ({ id: f.id, fecha: dia(f.fecha)!, vehiculoId: f.vehiculoId, flete: f.flete === null ? null : Number(f.flete) }));
+}
+
+/** A quien va el costo de un conductor: sus vehiculos segun lo que produjo en cada uno; si no produjo, el vehiculo de la linea. */
+function destinosConductor(l: LineaNomina): Destino[] {
+  const con = l.porVehiculo.filter((v) => v.producido > 0);
+  if (con.length) return con.map((v) => ({ tipo: "VEHICULO", id: v.vehiculoId, modo: "PARTE", valor: v.producido }));
+  return [{ tipo: "VEHICULO", id: l.vehiculoId!, modo: "PARTE", valor: 1 }];
+}
+
 const VACIOS: Omit<ParametrosNomina, "anio"> = {
   smmlv: 0,
   auxilioTransporte: 0,

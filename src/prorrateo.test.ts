@@ -139,3 +139,15 @@ describe("causaciones por dias (nomina)", () => {
     expect(() => causacionesPorDias(100, "2026-11-20", "2026-10-21")).toThrow();
   });
 });
+
+describe("costo de un conductor entre sus vehiculos segun su producido", () => {
+  test("Ferney octubre: 726.158 de prestaciones entre SZX-880 (31.107.800) y SOR-429 (8.281.664), como la hoja FERNEY", () => {
+    const partes = repartirGasto(aCentavos(726_158), [
+      { tipo: "VEHICULO", id: 1, modo: "PARTE", valor: 31_107_800 },
+      { tipo: "VEHICULO", id: 2, modo: "PARTE", valor: 8_281_664 },
+    ]);
+    // Proporcional al producido (78,97 % y 21,03 %). El Excel da 577.400 y 148.758 porque reparte cada concepto con otra proporcion.
+    expect(partes.map((x) => Math.round(aPesos(x.monto)))).toEqual([573_483, 152_675]);
+    expect(partes.reduce((s, x) => s + x.monto, 0)).toBe(aCentavos(726_158));
+  });
+});
