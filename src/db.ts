@@ -9,7 +9,7 @@
 import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import "dotenv/config";
-import { PLACAS_POR_DUENO } from "./duenos";
+import { DUENOS, PLACAS_POR_DUENO } from "./duenos";
 import { CORREOS_SIEMPRE_TOTAL, EMPRESA_INICIAL, NOMBRES_TOTAL_INICIAL, VISIBLES_PARA_TODOS_INICIAL } from "./roles";
 
 export const pool = mysql.createPool({
@@ -1105,6 +1105,8 @@ export async function initSchema(): Promise<void> {
     ["cuadro_anticipos", "cruzadoManual", "DATE"],
     // Roles (ver src/roles.ts): TOTAL, ADMINISTRATIVO o MYC.
     ["usuarios", "rol", "VARCHAR(20) NOT NULL DEFAULT 'ADMINISTRATIVO'"],
+    // Fecha desde la que se registran gastos (los de antes se cargaran despues).
+    ["parametros_empresa", "gastosDesde", "DATE NOT NULL DEFAULT '2026-10-01'"],
     // Empresa que liquida el vehiculo (LOPEZ o MYC; NULL = tercero) y si lo ven todos los roles.
     ["vehiculos", "empresa", "VARCHAR(10)"],
     ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],
@@ -1138,6 +1140,109 @@ export async function initSchema(): Promise<void> {
       ultimoBarridoCompleto DATETIME,
       resumen TEXT,
       error TEXT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ---------- Gastos, prorrateo y creditos (ver src/gastos.ts) ----------
+  // Socios: a quien va una parte directa de un gasto (y, despues, el reparto de utilidades).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS socios (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nombre VARCHAR(80) NOT NULL UNIQUE,
+      activo TINYINT(1) NOT NULL DEFAULT 1
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query("INSERT IGNORE INTO socios (nombre) VALUES ?", [DUENOS.map((d) => [d])]);
+  // Libro de gastos: el movimiento (flujo de caja por fechaPago). Montos en DECIMAL.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gastos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empresa VARCHAR(10) NOT NULL,
+      tipo VARCHAR(10) NOT NULL DEFAULT 'GASTO',
+      categoria VARCHAR(20) NOT NULL,
+      descripcion VARCHAR(300) NOT NULL,
+      monto DECIMAL(15,2) NOT NULL,
+      fechaPago DATE,
+      soporteUrl VARCHAR(500),
+      causaDesde DATE NOT NULL,
+      causaCuotas INT NOT NULL DEFAULT 1,
+      destinos TEXT NOT NULL,
+      origen VARCHAR(12) NOT NULL DEFAULT 'MANUAL',
+      creditoId INT,
+      anulado TINYINT(1) NOT NULL DEFAULT 0,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_gasto_empresa (empresa, causaDesde)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Causaciones: a que mes corresponde cada parte del gasto (rentabilidad por fecha de causacion).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gastos_causaciones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      gastoId INT NOT NULL,
+      fecha DATE NOT NULL,
+      monto DECIMAL(15,2) NOT NULL,
+      INDEX idx_causacion_fecha (fecha),
+      CONSTRAINT fk_causacion_gasto FOREIGN KEY (gastoId) REFERENCES gastos(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Reparto ya calculado: cuanto le toco a cada vehiculo o socio en cada causacion. No se recalcula solo.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gastos_reparto (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      gastoId INT NOT NULL,
+      causacionId INT NOT NULL,
+      fecha DATE NOT NULL,
+      vehiculoId INT,
+      socioId INT,
+      monto DECIMAL(15,2) NOT NULL,
+      INDEX idx_reparto_vehiculo (vehiculoId, fecha),
+      INDEX idx_reparto_socio (socioId, fecha),
+      CONSTRAINT fk_reparto_gasto FOREIGN KEY (gastoId) REFERENCES gastos(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Meses cerrados ("AAAA-MM"): sus gastos no se cambian.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS periodos_cierre (
+      mes CHAR(7) PRIMARY KEY,
+      cerradoPorId INT,
+      cerradoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Creditos y su tabla de amortizacion (capital, interes y saldo por cuota).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS creditos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empresa VARCHAR(10) NOT NULL,
+      nombre VARCHAR(150) NOT NULL,
+      entidad VARCHAR(100),
+      obligacion VARCHAR(60),
+      monto DECIMAL(15,2) NOT NULL,
+      tasaMensual DECIMAL(9,6) NOT NULL,
+      plazo INT NOT NULL,
+      primeraCuota DATE NOT NULL,
+      cuotaFija DECIMAL(15,2),
+      prorratea VARCHAR(20) NOT NULL DEFAULT 'CAPITAL_E_INTERES',
+      destinos TEXT NOT NULL,
+      nota VARCHAR(300),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS creditos_cuotas (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      creditoId INT NOT NULL,
+      numero INT NOT NULL,
+      fecha DATE NOT NULL,
+      cuota DECIMAL(15,2) NOT NULL,
+      capital DECIMAL(15,2) NOT NULL,
+      interes DECIMAL(15,2) NOT NULL,
+      saldo DECIMAL(15,2) NOT NULL,
+      fechaPago DATE,
+      gastoId INT,
+      UNIQUE KEY uq_credito_cuota (creditoId, numero),
+      CONSTRAINT fk_cuota_credito FOREIGN KEY (creditoId) REFERENCES creditos(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 

@@ -536,7 +536,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_793 funciones, componentes, métodos y rutas en 57 archivos._
+_847 funciones, componentes, métodos y rutas en 60 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -554,11 +554,13 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
 - [`src/facturacion.ts`](#srcfacturacionts) (11)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/flota.ts`](#srcflotats) (1)
+- [`src/gastos.ts`](#srcgastosts) (27)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
+- [`src/prorrateo.ts`](#srcprorrateots) (8)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
 - [`src/repo.ts`](#srcrepots) (94)
@@ -579,6 +581,7 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
+- [`src/routes/gastos.ts`](#srcroutesgastosts) (19)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -1592,6 +1595,112 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
   nadie marco como propio no aparece en Pago a terceros. Los NIT se comparan
   con sus primeros 9 digitos (sin el digito de verificacion).
 
+### `src/gastos.ts`
+
+> Libro de gastos de las dos empresas (Transportes Lopez y Transportes M&C),
+> creditos y cierre de meses. Fase 1 del modulo de gastos, prorrateo y reparto
+> de utilidades.
+>
+> - Un gasto (o ingreso) tiene empresa, categoria, monto, fecha de pago (flujo
+>   de caja) y una o varias causaciones mensuales (rentabilidad): un seguro
+>   anual se paga una vez y se causa en 12 meses.
+> - Destinos: los vehiculos que se marquen (una parte por carro) y/o partes
+>   directas a socios (valor fijo, porcentaje o partes).
+> - El reparto se calcula al guardar y queda escrito (gastos_reparto): no
+>   cambia solo. Editar el gasto lo recalcula, y solo se puede en meses
+>   abiertos (periodos_cierre).
+> - Lo que una empresa le debe a la otra no es una cuenta entre empresas: es
+>   un gasto en una y un ingreso en la otra, cada uno con su reparto.
+> - Montos en DECIMAL; las cuentas se hacen en centavos (ver prorrateo.ts).
+> - Creditos: tabla de amortizacion (capital, interes, saldo); al registrar
+>   el pago de una cuota se crea su gasto con el reparto del credito.
+
+- **`mes(fecha)`** · _función_
+  Mes de una fecha ("AAAA-MM").
+
+- **`texto(v, max)`** · _función_
+  Texto recortado y sin espacios de sobra, o null si queda vacio.
+
+- **`decimal(centavos)`** · _función_
+  Centavos como DECIMAL para la base ("1234.50").
+
+- **`fechaDe(v, campo)`** · _función_
+  Fecha "AAAA-MM-DD" valida o error con el nombre del campo.
+
+- **`linkDe(v)`** · _función_
+  Link del soporte: vacio o una direccion http(s).
+
+- **`leerDestinos(x)`** · _función_
+  Destinos que llegan del navegador, validados contra los vehiculos propios y los socios.
+
+- **`conErrores(fn)`** · _función_
+  Convierte los errores de reparto en errores de validacion (422).
+
+- **`validarGasto(d)`** · _función_
+  Valida lo que llega del formulario del gasto.
+
+- **`limites()`** · _función_
+  Fecha desde la que se registran gastos y meses cerrados.
+
+- **`exigirAbierto(fechas)`** · _función_
+  Las causaciones deben ser desde la fecha de corte y en meses abiertos.
+
+- **`escribirReparto(con, gastoId, g)`** · _función_
+  Escribe las causaciones y el reparto de un gasto (borra los que tuviera).
+
+- **`enTransaccion(fn)`** · _función_
+  Ejecuta en una transaccion.
+
+- **`destinosDe(v)`** · _función_
+  Destinos guardados (JSON) a la lista.
+
+- **`gastos`** · _módulo_
+  Libro de gastos, cierres de mes y creditos.
+
+  - **`gastos.opciones()`** · _método_
+    Lo que necesita el formulario: vehiculos propios, socios, categorias, fecha de corte y meses cerrados.
+
+  - **`gastos.listar(filtro)`** · _método_
+    Gastos (no anulados salvo que se pidan) de una empresa o de las dos, los mas recientes primero.
+
+  - **`gastos.crear(d, usuarioId, origen)`** · _método_
+    Registra un gasto con sus causaciones y su reparto. Devuelve el id.
+
+  - **`gastos.actualizar(id, d)`** · _método_
+    Cambia un gasto y recalcula su reparto (solo si sus meses, los de antes y los nuevos, estan abiertos).
+
+  - **`gastos.pago(id, d)`** · _método_
+    Solo la fecha de pago y el link del soporte (no tocan el reparto, asi que se pueden cambiar con el mes cerrado).
+
+  - **`gastos.anular(id)`** · _método_
+    Anula un gasto: deja de contar (se borra su reparto) pero queda en el libro.
+
+  - **`gastos.cerrarMes(d, usuarioId)`** · _método_
+    Cierra o abre un mes ("AAAA-MM"): con el mes cerrado sus gastos no cambian.
+
+  - **`gastos.fijarCorte(d)`** · _método_
+    Cambia la fecha desde la que se registran gastos.
+
+  - **`gastos.creditos(filtro)`** · _método_
+    Creditos de una empresa o de las dos, con su tabla y su saldo.
+
+  - **`gastos.guardarCredito(d, usuarioId, id)`** · _método_
+    Crea un credito o lo cambia y arma su tabla de amortizacion. Con cuotas
+    ya pagadas solo se cambian el nombre, la entidad, la nota, el reparto y
+    que se prorratea (la tabla no se rehace).
+
+  - **`gastos.borrarCredito(id)`** · _método_
+    Borra un credito sin cuotas pagadas.
+
+  - **`gastos.pagarCuota(creditoId, numero, d, usuarioId)`** · _método_
+    Registra el pago de una cuota ({ fechaPago, soporteUrl? }). Si la cuota es
+    de la fecha de corte en adelante crea su gasto (capital e interes, o solo
+    interes, segun el credito) con el reparto del credito; las anteriores solo
+    quedan pagadas, para que el saldo cuadre.
+
+  - **`gastos.quitarPagoCuota(creditoId, numero)`** · _método_
+    Quita el pago de una cuota y borra su gasto (si el mes esta abierto).
+
 ### `src/importaciones.ts`
 
 > Carga inicial desde los Excel de la empresa (una sola vez, con revision):
@@ -1815,6 +1924,53 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
     Reemplaza la base de respuestas importada de la Matriz Control Integral
     ({ vehiculos: [{ placa, conductor, respuestas }], conductores: [{ cedula,
     nombre, eps, arl, pension }] }). En una transaccion.
+
+### `src/prorrateo.ts`
+
+> Calculos del libro de gastos, sin base de datos (se prueban en
+> prorrateo.test.ts). Todo en CENTAVOS enteros: asi las sumas dan exactas y
+> no hay errores de punto flotante.
+>
+> - repartir: divide un monto por pesos y reparte los centavos sobrantes.
+> - repartirGasto: aplica los destinos de un gasto: primero las partes fijas
+>   y los porcentajes (a un socio o a una placa) y lo que queda entre los que
+>   van "por partes" (los vehiculos marcados, una parte por carro).
+> - causaciones: reparte un gasto en cuotas mensuales (un seguro anual en 12).
+> - amortizar: tabla de un credito de cuota fija (capital, interes y saldo).
+
+- **`aCentavos(v)`** · _función_
+  Pesos (numero o texto "1234.50") a centavos enteros.
+
+- **`aPesos(centavos)`** · _función_
+  Centavos a pesos con dos decimales (para guardar en DECIMAL y mostrar).
+
+- **`repartir(total, pesos)`** · _función_
+  Reparte `total` (centavos) en proporcion a `pesos`. Lo que no da exacto se
+  reparte de a un centavo a los de mayor residuo (y, si empatan, a los
+  primeros), para que la suma sea siempre el total.
+
+- **`ErrorReparto`** · _clase_
+  Error de datos del gasto (se muestra al usuario).
+
+- **`repartirGasto(total, destinos)`** · _función_
+  Reparte un gasto (centavos) entre sus destinos: primero lo fijo y los
+  porcentajes, y el resto por partes. Debe quedar repartido todo: si sobra y
+  no hay destinos por partes, o lo fijo pasa del total, es un error. Un mismo
+  destino puede aparecer dos veces (Celso: su parte fija y su carro): se suma.
+
+- **`sumarMeses(fecha, meses)`** · _función_
+  Suma `meses` a una fecha "AAAA-MM-DD"; si el dia no existe en ese mes (31 en febrero), el ultimo del mes.
+
+- **`causaciones(total, desde, cuotas)`** · _función_
+  Causaciones de un gasto: `cuotas` meses seguidos desde `desde`, en partes
+  iguales (los centavos sobrantes van a las primeras). Una cuota = el gasto
+  completo en esa fecha.
+
+- **`amortizar(monto, tasaMensual, plazo, primeraCuota, cuotaFija)`** · _función_
+  Tabla de amortizacion de un credito de cuota fija (sistema frances).
+  `tasaMensual` en fraccion (0.016725 = 1,6725 %). Si se da `cuotaFija` (la
+  que cobra el banco) se usa esa; si no, se calcula. La ultima cuota se
+  ajusta para que el saldo quede en cero.
 
 ### `src/relacionesBomba.ts`
 
@@ -4102,6 +4258,65 @@ _793 funciones, componentes, métodos y rutas en 57 archivos._
 
 - **`GET /:id`** · _ruta HTTP_
   Detalle de un viaje con sus remesas.
+
+### `src/routes/gastos.ts`
+
+- **`empresaDe(req)`** · _función_
+  Empresa a la que esta limitado el usuario (M&C), o null si ve las dos.
+
+- **`exigirEmpresa(req, empresa)`** · _función_
+  M&C solo puede registrar en su empresa.
+
+- **`exigirGasto(req, id)`** · _función_
+  El gasto o credito existe y es de una empresa que el usuario ve.
+
+- **`exigirCredito(req, id)`** · _función_
+  El credito existe y es de una empresa que el usuario ve.
+
+- **`exigirTotal(req)`** · _función_
+  Solo el rol total.
+
+- **`GET /opciones`** · _ruta HTTP_
+  GET /api/gastos/opciones: vehiculos propios, socios, categorias, fecha de corte y meses cerrados.
+
+- **`GET /`** · _ruta HTTP_
+  GET /api/gastos: el libro de gastos (M&C: solo los de su empresa).
+
+- **`POST /`** · _ruta HTTP_
+  POST /api/gastos: registra un gasto ({ empresa, tipo, categoria, descripcion, monto, fechaPago?, soporteUrl?, causaDesde, causaCuotas?, destinos }).
+
+- **`PUT /:id(\d+)`** · _ruta HTTP_
+  PUT /api/gastos/:id: cambia el gasto y recalcula su reparto (meses abiertos).
+
+- **`PUT /:id(\d+)/pago`** · _ruta HTTP_
+  PUT /api/gastos/:id/pago: fecha de pago y link del soporte ({ fechaPago?, soporteUrl? }).
+
+- **`DELETE /:id(\d+)`** · _ruta HTTP_
+  DELETE /api/gastos/:id: anula el gasto (queda en el libro, deja de contar).
+
+- **`POST /cierres`** · _ruta HTTP_
+  POST /api/gastos/cierres: cierra o abre un mes ({ mes: "AAAA-MM", cerrado }). Solo total. Devuelve los meses cerrados.
+
+- **`PUT /corte`** · _ruta HTTP_
+  PUT /api/gastos/corte: cambia la fecha desde la que se registran gastos ({ corte }). Solo total.
+
+- **`GET /creditos`** · _ruta HTTP_
+  GET /api/gastos/creditos: creditos con su tabla de amortizacion y saldo.
+
+- **`POST /creditos`** · _ruta HTTP_
+  POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, tasaMensual, plazo, primeraCuota, cuotaFija?, prorratea, destinos, nota? }).
+
+- **`PUT /creditos/:id`** · _ruta HTTP_
+  PUT /api/gastos/creditos/:id: cambia el credito (rehace la tabla si aun no tiene cuotas pagadas).
+
+- **`DELETE /creditos/:id`** · _ruta HTTP_
+  DELETE /api/gastos/creditos/:id: borra un credito sin cuotas pagadas.
+
+- **`POST /creditos/:id/cuotas/:numero/pago`** · _ruta HTTP_
+  POST /api/gastos/creditos/:id/cuotas/:numero/pago: registra el pago de la cuota y crea su gasto ({ fechaPago, soporteUrl? }).
+
+- **`DELETE /creditos/:id/cuotas/:numero/pago`** · _ruta HTTP_
+  DELETE /api/gastos/creditos/:id/cuotas/:numero/pago: quita el pago de la cuota y borra su gasto.
 
 ### `src/routes/preoperacional.ts`
 

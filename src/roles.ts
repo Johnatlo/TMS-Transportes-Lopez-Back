@@ -35,15 +35,17 @@ export type Area =
   | "CUENTAS"
   /** Liquidacion a duenos, reparto de ganancias y (despues) liquidacion de empleados. */
   | "LIQUIDACION"
+  /** Libro de gastos y creditos (M&C: solo los de su empresa). */
+  | "GASTOS"
   /** Configuracion de la empresa y la empresa de cada vehiculo. */
   | "ADMINISTRACION"
   /** Usuarios y sus roles. */
   | "USUARIOS";
 
 const AREAS: Record<Rol, Area[]> = {
-  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "ADMINISTRACION", "USUARIOS"],
-  ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "ADMINISTRACION"],
-  MYC: ["RNDC", "CUENTAS", "LIQUIDACION"],
+  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "ADMINISTRACION", "USUARIOS"],
+  ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "GASTOS", "ADMINISTRACION"],
+  MYC: ["RNDC", "CUENTAS", "LIQUIDACION", "GASTOS"],
 };
 
 /** El rol tiene acceso a esa area. */

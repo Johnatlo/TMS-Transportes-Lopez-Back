@@ -3,7 +3,9 @@ import { placaClave, puede, rolDe, veCuentasDe, veVehiculo } from "./roles";
 
 describe("roles", () => {
   test("cada rol entra a sus areas", () => {
-    expect(["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "ADMINISTRACION", "USUARIOS"].every((a) => puede("TOTAL", a as never))).toBe(true);
+    expect(["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "ADMINISTRACION", "USUARIOS"].every((a) => puede("TOTAL", a as never))).toBe(true);
+    // Los tres roles registran gastos (M&C solo los de su empresa: lo filtra la ruta).
+    expect([puede("ADMINISTRATIVO", "GASTOS"), puede("MYC", "GASTOS")]).toEqual([true, true]);
     // Administrativo ve Rentabilidad pero no liquida duenos ni reparte ganancias.
     expect(["OPERACION", "CUENTAS", "LIQUIDACION", "USUARIOS"].map((a) => puede("ADMINISTRATIVO", a as never))).toEqual([true, true, false, false]);
     expect(["RNDC", "CUENTAS", "LIQUIDACION", "OPERACION", "ADMINISTRACION"].map((a) => puede("MYC", a as never))).toEqual([true, true, true, false, false]);
