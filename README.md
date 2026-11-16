@@ -536,12 +536,13 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_847 funciones, componentes, métodos y rutas en 60 archivos._
+_906 funciones, componentes, métodos y rutas en 63 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (37)
 - [`src/auth.ts`](#srcauthts) (36)
+- [`src/calculoNomina.ts`](#srccalculonominats) (5)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
 - [`src/config.ts`](#srcconfigts) (3)
@@ -554,13 +555,14 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 - [`src/facturacion.ts`](#srcfacturacionts) (11)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/flota.ts`](#srcflotats) (1)
-- [`src/gastos.ts`](#srcgastosts) (27)
+- [`src/gastos.ts`](#srcgastosts) (31)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
+- [`src/nomina.ts`](#srcnominats) (29)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
-- [`src/prorrateo.ts`](#srcprorrateots) (8)
+- [`src/prorrateo.ts`](#srcprorrateots) (9)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
 - [`src/repo.ts`](#srcrepots) (94)
@@ -582,6 +584,7 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (19)
+- [`src/routes/nomina.ts`](#srcroutesnominats) (20)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -1011,6 +1014,44 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 
   - **`recuperaciones.borrarDe(usuarioId)`** · _método_
     Anula los codigos pendientes de un usuario (tras usarlos).
+
+### `src/calculoNomina.ts`
+
+> Calculo de una linea de nomina (empleado y empleador), sin base de datos
+> (se prueba en calculoNomina.test.ts con los casos del Excel "Modelo Nomina
+> Transportes M&C & Transportes Lopez C 2026").
+>
+> - Basico: el salario del mes (minimo del ano, o el que tenga el empleado,
+>   mas su adicional) por los dias trabajados / 30.
+> - Conductor: + % salarial del producido (4 %) y % de viaticos (5 %), que no
+>   es salario: no paga aportes ni genera prestaciones (salvo lo que pase del
+>   limite no salarial de la Ley 1393, 40 % del total, que entra al IBC).
+> - Auxilio de transporte: si el empleado lo tiene y gana hasta 2 minimos.
+> - Aportes (salud y pension del empleado; pension, salud, ARL y caja del
+>   empleador) se redondean hacia arriba a la centena, como la PILA.
+> - Prima y cesantias sobre salarial + auxilio; intereses = 12 % de las
+>   cesantias; vacaciones sobre el salarial. Se provisionan (no se redondean).
+> - Ajuste: una diferencia manual con nota (lo que en el Excel eran los
+>   "-15200" sueltos). Suma al costo del empleador.
+> - Costo total = lo que se le paga al empleado (devengado) + costo del
+>   empleador. Eso es lo que va a la rentabilidad.
+>
+> Todo en pesos con dos decimales. Los porcentajes vienen en % (12 = 12 %).
+
+- **`c2(v)`** · _función_
+  Redondea a centavos.
+
+- **`pila(v)`** · _función_
+  Hacia arriba a la centena (PILA); tolera el ruido de punto flotante.
+
+- **`pct(v, p)`** · _función_
+  Un porcentaje (en %) de un valor, a centavos.
+
+- **`calcularLinea(e, p)`** · _función_
+  Calcula una linea de nomina.
+
+- **`diasPeriodo(desde, hasta)`** · _función_
+  Dias de nomina de un periodo (mes comercial de 30 dias): del 21/10 al 20/11 son 30.
 
 ### `src/cifrado.ts`
 
@@ -1614,6 +1655,9 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 > - Montos en DECIMAL; las cuentas se hacen en centavos (ver prorrateo.ts).
 > - Creditos: tabla de amortizacion (capital, interes, saldo); al registrar
 >   el pago de una cuota se crea su gasto con el reparto del credito.
+> - Nomina (fase 2): al aprobarla se crea un gasto por empleado, causado por
+>   dias entre los meses que cubre (causaHasta). Esos gastos se cambian
+>   desde la nomina, no desde el libro.
 
 - **`mes(fecha)`** · _función_
   Mes de una fecha ("AAAA-MM").
@@ -1639,6 +1683,9 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 - **`validarGasto(d)`** · _función_
   Valida lo que llega del formulario del gasto.
 
+- **`causacionesDe(g)`** · _función_
+  Causaciones de un gasto: por dias si tiene causaHasta (nomina); si no, en cuotas mensuales.
+
 - **`limites()`** · _función_
   Fecha desde la que se registran gastos y meses cerrados.
 
@@ -1647,6 +1694,9 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 
 - **`escribirReparto(con, gastoId, g)`** · _función_
   Escribe las causaciones y el reparto de un gasto (borra los que tuviera).
+
+- **`exigirManual(g)`** · _función_
+  Los gastos de un credito o de la nomina se cambian desde alla.
 
 - **`enTransaccion(fn)`** · _función_
   Ejecuta en una transaccion.
@@ -1674,6 +1724,12 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 
   - **`gastos.anular(id)`** · _método_
     Anula un gasto: deja de contar (se borra su reparto) pero queda en el libro.
+
+  - **`gastos.revisarCausaciones(g)`** · _método_
+    Revisa que se puedan crear gastos con estas causaciones (desde la fecha de inicio y en meses abiertos).
+
+  - **`gastos.borrarDeNomina(nominaId)`** · _método_
+    Borra los gastos que genero una nomina (al reabrirla). Sus meses deben estar abiertos.
 
   - **`gastos.cerrarMes(d, usuarioId)`** · _método_
     Cierra o abre un mes ("AAAA-MM"): con el mes cerrado sus gastos no cambian.
@@ -1844,6 +1900,113 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
     (solo los que siguen con esa fecha). Las anteriores no: de ellas sale el
     saldo pendiente que arrastra la siguiente.
 
+### `src/nomina.ts`
+
+> Empleados, parametros anuales y nomina con costo del empleador (fase 2 del
+> modulo de gastos). El calculo de cada linea esta en calculoNomina.ts.
+>
+> - Empleado: empresa, conductor u oficina, riesgo ARL, salario (el minimo
+>   del ano o uno fijo, mas un adicional), % salarial y % de viaticos del
+>   producido, auxilio de transporte, ingreso y retiro. El conductor tiene su
+>   vehiculo con fechas (empleados_vehiculos); el de oficina, a quien se
+>   reparte su costo (vehiculos y/o socios, como un gasto).
+> - Parametros por ano (parametros_nomina): minimo, auxilio y porcentajes.
+>   La nomina usa los del ano en que termina.
+> - Nomina: un periodo (desde/hasta, variable) con una linea por empleado
+>   (dias, producido, vehiculo, ajuste con nota). Mientras es borrador se
+>   calcula con los datos actuales; al aprobarla el calculo queda guardado y
+>   se crea un gasto por empleado (categoria NOMINA) por su costo total,
+>   causado por dias entre los meses del periodo: el del conductor a su
+>   vehiculo, el de oficina a sus destinos. Reabrirla borra esos gastos.
+
+- **`fechaDe(v, campo)`** · _función_
+  Fecha "AAAA-MM-DD" valida.
+
+- **`texto(v, max)`** · _función_
+  Texto recortado, o null si queda vacio.
+
+- **`numero(v, campo, defecto)`** · _función_
+  Numero (>= 0) o el valor por defecto si viene vacio.
+
+- **`json(v, defecto)`** · _función_
+  JSON guardado a objeto (o el valor por defecto).
+
+- **`fechaTexto(f)`** · _función_
+  "2026-10-21" -> "21/10/2026".
+
+- **`diaAntes(f)`** · _función_
+  El dia anterior a una fecha.
+
+- **`parametrosDe(f)`** · _función_
+  Parametros de un ano desde la fila de la base.
+
+- **`parametrosDelAnio(anio)`** · _función_
+  Parametros del ano, o error si no estan.
+
+- **`entradaDe(e, l)`** · _función_
+  Lo que entra al calculo de una linea a partir del empleado.
+
+- **`vehiculoEn(e, fecha)`** · _función_
+  Vehiculo del empleado vigente en una fecha (o el ultimo que tuvo antes).
+
+- **`destinosValidos(x)`** · _función_
+  Destinos validados de un empleado de oficina (los mismos que un gasto).
+
+- **`nomina`** · _módulo_
+  Empleados, parametros y nominas.
+
+  - **`nomina.parametros()`** · _método_
+    Parametros de todos los anos (el mas reciente primero).
+
+  - **`nomina.guardarParametros(d)`** · _método_
+    Crea o cambia los parametros de un ano.
+
+  - **`nomina.empleados(filtro)`** · _método_
+    Empleados (de una empresa o de las dos), activos primero.
+
+  - **`nomina.guardarEmpleado(d, id)`** · _método_
+    Crea o cambia un empleado. Devuelve el id.
+
+  - **`nomina.asignarVehiculo(empleadoId, d)`** · _método_
+    El conductor pasa a otro vehiculo desde una fecha (cierra el anterior el dia antes).
+
+  - **`nomina.quitarAsignacion(empleadoId, asignacionId)`** · _método_
+    Quita una asignacion de vehiculo (si fue un error).
+
+  - **`nomina.borrarEmpleado(id)`** · _método_
+    Borra un empleado que no esta en ninguna nomina.
+
+  - **`nomina.nominas(filtro)`** · _método_
+    Nominas (las mas recientes primero). M&C solo ve las lineas de sus empleados.
+
+  - **`nomina.crearNomina(d, usuarioId)`** · _método_
+    Crea una nomina con una linea por cada empleado activo en el periodo. Devuelve el id.
+
+  - **`nomina.exigirBorrador(nominaId)`** · _método_
+    La nomina existe y es borrador.
+
+  - **`nomina.empresaDeLinea(lineaId)`** · _método_
+    Empresa del empleado de una linea (para el filtro de M&C).
+
+  - **`nomina.actualizarLinea(nominaId, lineaId, d)`** · _método_
+    Cambia dias, producido, vehiculo o ajuste de una linea.
+
+  - **`nomina.agregarLinea(nominaId, empleadoId)`** · _método_
+    Agrega a la nomina un empleado que no esta.
+
+  - **`nomina.quitarLinea(nominaId, lineaId)`** · _método_
+    Quita una linea de la nomina.
+
+  - **`nomina.borrarNomina(nominaId)`** · _método_
+    Borra una nomina en borrador.
+
+  - **`nomina.aprobar(nominaId, usuarioId)`** · _método_
+    Aprueba la nomina: guarda el calculo de cada linea y crea un gasto por
+    empleado (su costo total) causado por dias en los meses del periodo.
+
+  - **`nomina.reabrir(nominaId)`** · _método_
+    Reabre una nomina aprobada: borra sus gastos (sus meses deben estar abiertos).
+
 ### `src/perfilVehiculos.ts`
 
 > Perfil de los vehiculos de los socios y la flota propia (no los terceros):
@@ -1965,6 +2128,13 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
   Causaciones de un gasto: `cuotas` meses seguidos desde `desde`, en partes
   iguales (los centavos sobrantes van a las primeras). Una cuota = el gasto
   completo en esa fecha.
+
+- **`causacionesPorDias(total, desde, hasta)`** · _función_
+  Causaciones por dias: reparte `total` entre los meses calendario que cubre
+  el periodo `desde`..`hasta` (los dos incluidos), en proporcion a los dias
+  de cada mes. Es como se lleva una nomina del 21/10 al 20/11 a la
+  rentabilidad: 11 dias a octubre y 20 a noviembre. Cada causacion lleva la
+  fecha en que empieza su tramo.
 
 - **`amortizar(monto, tasaMensual, plazo, primeraCuota, cuotaFija)`** · _función_
   Tabla de amortizacion de un credito de cuota fija (sistema frances).
@@ -4317,6 +4487,68 @@ _847 funciones, componentes, métodos y rutas en 60 archivos._
 
 - **`DELETE /creditos/:id/cuotas/:numero/pago`** · _ruta HTTP_
   DELETE /api/gastos/creditos/:id/cuotas/:numero/pago: quita el pago de la cuota y borra su gasto.
+
+### `src/routes/nomina.ts`
+
+- **`empresaDe(req)`** · _función_
+  Empresa a la que esta limitado el usuario (M&C), o null si ve las dos.
+
+- **`exigirEmpleado(req, empresaNueva, id)`** · _función_
+  M&C solo crea o cambia empleados de su empresa.
+
+- **`exigirLinea(req, lineaId)`** · _función_
+  M&C solo cambia las lineas de sus empleados.
+
+- **`exigirAdministra(req)`** · _función_
+  Crear, aprobar, reabrir y borrar nominas: rol total o administrativo.
+
+- **`GET /parametros`** · _ruta HTTP_
+  GET /api/nomina/parametros: parametros por ano.
+
+- **`PUT /parametros`** · _ruta HTTP_
+  PUT /api/nomina/parametros: crea o cambia los de un ano. Solo total.
+
+- **`GET /empleados`** · _ruta HTTP_
+  GET /api/nomina/empleados: empleados (M&C: los suyos).
+
+- **`POST /empleados`** · _ruta HTTP_
+  POST /api/nomina/empleados: crea un empleado.
+
+- **`PUT /empleados/:id`** · _ruta HTTP_
+  PUT /api/nomina/empleados/:id: cambia un empleado.
+
+- **`DELETE /empleados/:id`** · _ruta HTTP_
+  DELETE /api/nomina/empleados/:id: borra un empleado que no esta en nominas.
+
+- **`POST /empleados/:id/vehiculos`** · _ruta HTTP_
+  POST /api/nomina/empleados/:id/vehiculos: el conductor pasa a otro vehiculo ({ vehiculoId, desde }).
+
+- **`DELETE /empleados/:id/vehiculos/:asignacion`** · _ruta HTTP_
+  DELETE /api/nomina/empleados/:id/vehiculos/:asignacion: quita una asignacion.
+
+- **`GET /`** · _ruta HTTP_
+  GET /api/nomina: nominas con sus lineas (M&C: solo las de sus empleados).
+
+- **`POST /`** · _ruta HTTP_
+  POST /api/nomina: crea una nomina ({ desde, hasta, nota? }) con los empleados activos.
+
+- **`DELETE /:id(\d+)`** · _ruta HTTP_
+  DELETE /api/nomina/:id: borra una nomina en borrador.
+
+- **`POST /:id(\d+)/aprobar`** · _ruta HTTP_
+  POST /api/nomina/:id/aprobar: guarda el calculo y crea los gastos.
+
+- **`POST /:id(\d+)/reabrir`** · _ruta HTTP_
+  POST /api/nomina/:id/reabrir: borra sus gastos y la vuelve borrador.
+
+- **`POST /:id(\d+)/lineas`** · _ruta HTTP_
+  POST /api/nomina/:id/lineas: agrega un empleado ({ empleadoId }).
+
+- **`PUT /:id(\d+)/lineas/:linea`** · _ruta HTTP_
+  PUT /api/nomina/:id/lineas/:linea: dias, producido, vehiculo, ajuste y nota.
+
+- **`DELETE /:id(\d+)/lineas/:linea`** · _ruta HTTP_
+  DELETE /api/nomina/:id/lineas/:linea: quita a un empleado de la nomina.
 
 ### `src/routes/preoperacional.ts`
 

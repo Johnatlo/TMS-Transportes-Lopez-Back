@@ -19,6 +19,7 @@ import { authRouter } from "./routes/auth";
 import { usuariosRouter } from "./routes/usuarios";
 import { accesoCuadro, accesoSeguimiento, exigirArea } from "./accesos";
 import { gastosRouter } from "./routes/gastos";
+import { nominaRouter } from "./routes/nomina";
 import { cuadroRouter } from "./routes/cuadro";
 import { seguimientoRouter } from "./routes/seguimiento";
 import { preoperacionalRouter } from "./routes/preoperacional";
@@ -75,6 +76,7 @@ async function main() {
   app.use("/api/seguimiento", exigirSesion, accesoSeguimiento, seguimientoRouter);
   app.use("/api/preoperacional", exigirSesion, preoperacionalRouter);
   app.use("/api/gastos", exigirSesion, exigirArea("GASTOS"), gastosRouter);
+  app.use("/api/nomina", exigirSesion, exigirArea("GASTOS"), nominaRouter);
 
   /**
    * Frontend compilado (despliegue).

@@ -16,11 +16,14 @@
  * - Montos en DECIMAL; las cuentas se hacen en centavos (ver prorrateo.ts).
  * - Creditos: tabla de amortizacion (capital, interes, saldo); al registrar
  *   el pago de una cuota se crea su gasto con el reparto del credito.
+ * - Nomina (fase 2): al aprobarla se crea un gasto por empleado, causado por
+ *   dias entre los meses que cubre (causaHasta). Esos gastos se cambian
+ *   desde la nomina, no desde el libro.
  */
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
-import { aCentavos, amortizar, aPesos, causaciones, ErrorReparto, repartirGasto } from "./prorrateo";
+import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, ErrorReparto, repartirGasto } from "./prorrateo";
 import type { Destino } from "./prorrateo";
 import type { EmpresaVehiculo } from "./roles";
 
@@ -53,10 +56,13 @@ export interface Gasto {
   /** Primera causacion y en cuantas cuotas mensuales se causa. */
   causaDesde: string;
   causaCuotas: number;
+  /** Si tiene, se causa por dias entre causaDesde y causaHasta (nomina). */
+  causaHasta: string | null;
   destinos: Destino[];
-  /** MANUAL o CREDITO (la cuota de un credito). */
+  /** MANUAL, CREDITO (la cuota de un credito) o NOMINA (un empleado en una nomina aprobada). */
   origen: string;
   creditoId: number | null;
+  nominaId: number | null;
   anulado: boolean;
   creadoPor: string | null;
   creadoEn: string;
@@ -160,6 +166,7 @@ interface DatosGasto {
   soporteUrl: string | null;
   causaDesde: string;
   causaCuotas: number;
+  causaHasta: string | null;
   destinos: Destino[];
 }
 
@@ -185,9 +192,14 @@ async function validarGasto(d: Record<string, unknown>): Promise<DatosGasto> {
     soporteUrl: linkDe(d.soporteUrl),
     causaDesde,
     causaCuotas,
+    causaHasta: d.causaHasta ? fechaDe(d.causaHasta, "el fin del periodo") : null,
     destinos: await leerDestinos(d.destinos),
   };
 }
+
+/** Causaciones de un gasto: por dias si tiene causaHasta (nomina); si no, en cuotas mensuales. */
+const causacionesDe = (g: Pick<DatosGasto, "monto" | "causaDesde" | "causaCuotas" | "causaHasta">) =>
+  conErrores(() => (g.causaHasta ? causacionesPorDias(g.monto, g.causaDesde, g.causaHasta) : causaciones(g.monto, g.causaDesde, g.causaCuotas)));
 
 /** Fecha desde la que se registran gastos y meses cerrados. */
 async function limites(): Promise<{ corte: string; cerrados: Set<string> }> {
@@ -209,8 +221,12 @@ async function exigirAbierto(fechas: string[]): Promise<void> {
 }
 
 /** Escribe las causaciones y el reparto de un gasto (borra los que tuviera). */
-async function escribirReparto(con: PoolConnection, gastoId: number, g: Pick<DatosGasto, "monto" | "causaDesde" | "causaCuotas" | "destinos">): Promise<void> {
-  const cuotas = conErrores(() => causaciones(g.monto, g.causaDesde, g.causaCuotas));
+async function escribirReparto(
+  con: PoolConnection,
+  gastoId: number,
+  g: Pick<DatosGasto, "monto" | "causaDesde" | "causaCuotas" | "causaHasta" | "destinos">,
+): Promise<void> {
+  const cuotas = causacionesDe(g);
   await con.query("DELETE FROM gastos_reparto WHERE gastoId = ?", [gastoId]);
   await con.query("DELETE FROM gastos_causaciones WHERE gastoId = ?", [gastoId]);
   for (const c of cuotas) {
@@ -226,6 +242,12 @@ async function escribirReparto(con: PoolConnection, gastoId: number, g: Pick<Dat
       partes.map((p) => [gastoId, res.insertId, c.fecha, p.tipo === "VEHICULO" ? p.id : null, p.tipo === "SOCIO" ? p.id : null, decimal(p.monto)]),
     ]);
   }
+}
+
+/** Los gastos de un credito o de la nomina se cambian desde alla. */
+function exigirManual(g: Gasto): void {
+  if (g.origen === "CREDITO") throw new ErrorCuadro("Este gasto sale de un credito: se cambia desde el credito (pago de la cuota).");
+  if (g.origen === "NOMINA") throw new ErrorCuadro("Este gasto sale de la nomina: reabre la nomina para cambiarlo.");
 }
 
 /** Ejecuta en una transaccion. */
@@ -308,8 +330,10 @@ export const gastos = {
       soporteUrl: f.soporteUrl ?? null,
       causaDesde: dia(f.causaDesde)!,
       causaCuotas: f.causaCuotas,
+      causaHasta: dia(f.causaHasta),
       destinos: destinosDe(f.destinos),
       origen: f.origen,
+      nominaId: f.nominaId ?? null,
       creditoId: f.creditoId ?? null,
       anulado: !!f.anulado,
       creadoPor: f.creadoPor ?? null,
@@ -332,14 +356,15 @@ export const gastos = {
   async crear(
     d: Record<string, unknown>,
     usuarioId: number | null,
-    origen: { origen: string; creditoId: number | null } = { origen: "MANUAL", creditoId: null },
+    origen: { origen: string; creditoId: number | null; nominaId?: number | null } = { origen: "MANUAL", creditoId: null },
   ): Promise<number> {
     const g = await validarGasto(d);
-    await exigirAbierto(conErrores(() => causaciones(g.monto, g.causaDesde, g.causaCuotas)).map((c) => c.fecha));
+    await exigirAbierto(causacionesDe(g).map((c) => c.fecha));
     return enTransaccion(async (con) => {
       const [res] = await con.query<ResultSetHeader>(
-        `INSERT INTO gastos (empresa, tipo, categoria, descripcion, monto, fechaPago, soporteUrl, causaDesde, causaCuotas, destinos, origen, creditoId, creadoPorId)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO gastos (empresa, tipo, categoria, descripcion, monto, fechaPago, soporteUrl, causaDesde, causaCuotas, causaHasta, destinos, origen,
+                             creditoId, nominaId, creadoPorId)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           g.empresa,
           g.tipo,
@@ -349,10 +374,12 @@ export const gastos = {
           g.fechaPago,
           g.soporteUrl,
           g.causaDesde,
-          g.causaCuotas,
+          g.causaHasta ? causacionesDe(g).length : g.causaCuotas,
+          g.causaHasta,
           JSON.stringify(g.destinos),
           origen.origen,
           origen.creditoId,
+          origen.nominaId ?? null,
           usuarioId,
         ],
       );
@@ -366,11 +393,11 @@ export const gastos = {
     const [actual] = await this.listar({ id });
     if (!actual) throw new ErrorCuadro("Ese gasto no existe.");
     if (actual.anulado) throw new ErrorCuadro("Ese gasto esta anulado.");
-    if (actual.origen !== "MANUAL") throw new ErrorCuadro("Este gasto sale de un credito: se cambia desde el credito.");
+    exigirManual(actual);
     const g = await validarGasto(d);
     await exigirAbierto([
       ...actual.causaciones.map((c) => c.fecha),
-      ...conErrores(() => causaciones(g.monto, g.causaDesde, g.causaCuotas)).map((c) => c.fecha),
+      ...causacionesDe(g).map((c) => c.fecha),
     ]);
     await enTransaccion(async (con) => {
       await con.query(
@@ -413,12 +440,27 @@ export const gastos = {
   async anular(id: number): Promise<void> {
     const [actual] = await this.listar({ id });
     if (!actual || actual.anulado) return;
-    if (actual.origen !== "MANUAL") throw new ErrorCuadro("Este gasto sale de un credito: quita el pago de la cuota en el credito.");
+    exigirManual(actual);
     await exigirAbierto(actual.causaciones.map((c) => c.fecha));
     await enTransaccion(async (con) => {
       await con.query("DELETE FROM gastos_reparto WHERE gastoId = ?", [id]);
       await con.query("UPDATE gastos SET anulado = 1 WHERE id = ?", [id]);
     });
+  },
+
+  /** Revisa que se puedan crear gastos con estas causaciones (desde la fecha de inicio y en meses abiertos). */
+  async revisarCausaciones(g: { monto: number; causaDesde: string; causaHasta: string }): Promise<void> {
+    await exigirAbierto(causacionesDe({ monto: aCentavos(g.monto), causaDesde: g.causaDesde, causaCuotas: 1, causaHasta: g.causaHasta }).map((c) => c.fecha));
+  },
+
+  /** Borra los gastos que genero una nomina (al reabrirla). Sus meses deben estar abiertos. */
+  async borrarDeNomina(nominaId: number): Promise<void> {
+    const [caus] = await pool.query<RowDataPacket[]>(
+      "SELECT c.fecha FROM gastos_causaciones c JOIN gastos g ON g.id = c.gastoId WHERE g.nominaId = ?",
+      [nominaId],
+    );
+    await exigirAbierto(caus.map((c) => dia(c.fecha)!));
+    await pool.query("DELETE FROM gastos WHERE nominaId = ?", [nominaId]);
   },
 
   /** Cierra o abre un mes ("AAAA-MM"): con el mes cerrado sus gastos no cambian. */

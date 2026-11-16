@@ -115,6 +115,29 @@ export function causaciones(total: number, desde: string, cuotas: number): Array
   return repartir(total, Array(cuotas).fill(1)).map((monto, i) => ({ fecha: sumarMeses(desde, i), monto }));
 }
 
+/**
+ * Causaciones por dias: reparte `total` entre los meses calendario que cubre
+ * el periodo `desde`..`hasta` (los dos incluidos), en proporcion a los dias
+ * de cada mes. Es como se lleva una nomina del 21/10 al 20/11 a la
+ * rentabilidad: 11 dias a octubre y 20 a noviembre. Cada causacion lleva la
+ * fecha en que empieza su tramo.
+ */
+export function causacionesPorDias(total: number, desde: string, hasta: string): Array<{ fecha: string; monto: number }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta) || hasta < desde) throw new ErrorReparto("El periodo no es valido.");
+  const tramos: Array<{ fecha: string; dias: number }> = [];
+  const ms = (f: string) => Date.UTC(Number(f.slice(0, 4)), Number(f.slice(5, 7)) - 1, Number(f.slice(8, 10)));
+  let inicio = desde;
+  while (inicio <= hasta) {
+    const [a, m] = inicio.split("-").map(Number);
+    const finMes = new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
+    const fin = finMes < hasta ? finMes : hasta;
+    tramos.push({ fecha: inicio, dias: Math.round((ms(fin) - ms(inicio)) / 86_400_000) + 1 });
+    inicio = new Date(ms(fin) + 86_400_000).toISOString().slice(0, 10);
+  }
+  if (tramos.length > 120) throw new ErrorReparto("El periodo es demasiado largo.");
+  return repartir(total, tramos.map((t) => t.dias)).map((monto, i) => ({ fecha: tramos[i].fecha, monto }));
+}
+
 /** Una cuota de la tabla de amortizacion (centavos). */
 export interface CuotaCredito {
   numero: number;

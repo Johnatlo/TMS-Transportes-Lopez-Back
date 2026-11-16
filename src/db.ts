@@ -1107,6 +1107,9 @@ export async function initSchema(): Promise<void> {
     ["usuarios", "rol", "VARCHAR(20) NOT NULL DEFAULT 'ADMINISTRATIVO'"],
     // Fecha desde la que se registran gastos (los de antes se cargaran despues).
     ["parametros_empresa", "gastosDesde", "DATE NOT NULL DEFAULT '2026-10-01'"],
+    // Gastos de la nomina: causados por dias hasta causaHasta, y de que nomina salen.
+    ["gastos", "causaHasta", "DATE"],
+    ["gastos", "nominaId", "INT"],
     // Empresa que liquida el vehiculo (LOPEZ o MYC; NULL = tercero) y si lo ven todos los roles.
     ["vehiculos", "empresa", "VARCHAR(10)"],
     ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],
@@ -1243,6 +1246,107 @@ export async function initSchema(): Promise<void> {
       gastoId INT,
       UNIQUE KEY uq_credito_cuota (creditoId, numero),
       CONSTRAINT fk_cuota_credito FOREIGN KEY (creditoId) REFERENCES creditos(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ---------- Empleados y nomina (ver src/nomina.ts) ----------
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS empleados (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empresa VARCHAR(10) NOT NULL,
+      tipo VARCHAR(10) NOT NULL DEFAULT 'CONDUCTOR',
+      nombre VARCHAR(150) NOT NULL,
+      cedula VARCHAR(20),
+      cargo VARCHAR(80),
+      conductorId INT,
+      riesgoArl TINYINT NOT NULL DEFAULT 4,
+      salarioBase DECIMAL(15,2),
+      salarioAdicional DECIMAL(15,2) NOT NULL DEFAULT 0,
+      pctSalarial DECIMAL(7,3) NOT NULL DEFAULT 0,
+      pctViaticos DECIMAL(7,3) NOT NULL DEFAULT 0,
+      auxilio TINYINT(1) NOT NULL DEFAULT 0,
+      destinos TEXT,
+      fechaIngreso DATE NOT NULL,
+      fechaRetiro DATE,
+      nota VARCHAR(300),
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Vehiculo de cada conductor con fechas (un conductor puede cambiar de carro).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS empleados_vehiculos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empleadoId INT NOT NULL,
+      vehiculoId INT NOT NULL,
+      desde DATE NOT NULL,
+      hasta DATE,
+      CONSTRAINT fk_asignacion_empleado FOREIGN KEY (empleadoId) REFERENCES empleados(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Parametros de nomina por ano (porcentajes en %).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS parametros_nomina (
+      anio INT PRIMARY KEY,
+      smmlv DECIMAL(15,2) NOT NULL,
+      auxilioTransporte DECIMAL(15,2) NOT NULL,
+      pensionEmpleador DECIMAL(7,3) NOT NULL,
+      saludEmpleador DECIMAL(7,3) NOT NULL,
+      arl1 DECIMAL(7,3) NOT NULL,
+      arl2 DECIMAL(7,3) NOT NULL,
+      arl3 DECIMAL(7,3) NOT NULL,
+      arl4 DECIMAL(7,3) NOT NULL,
+      arl5 DECIMAL(7,3) NOT NULL,
+      caja DECIMAL(7,3) NOT NULL,
+      prima DECIMAL(7,3) NOT NULL,
+      cesantias DECIMAL(7,3) NOT NULL,
+      interesesCesantias DECIMAL(7,3) NOT NULL,
+      vacaciones DECIMAL(7,3) NOT NULL,
+      saludEmpleado DECIMAL(7,3) NOT NULL,
+      pensionEmpleado DECIMAL(7,3) NOT NULL,
+      limiteNoSalarial DECIMAL(7,3) NOT NULL DEFAULT 40
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // 2025 y 2026 (del Excel de nomina); se cambian en la pantalla. INSERT IGNORE: no pisa lo que se edite.
+  await pool.query(
+    `INSERT IGNORE INTO parametros_nomina (anio, smmlv, auxilioTransporte, pensionEmpleador, saludEmpleador, arl1, arl2, arl3, arl4, arl5,
+       caja, prima, cesantias, interesesCesantias, vacaciones, saludEmpleado, pensionEmpleado, limiteNoSalarial) VALUES ?`,
+    [
+      [
+        [2025, 1423500, 200000, 12, 0, 0.522, 1.044, 2.436, 4.35, 6.96, 4, 8.33, 8.33, 12, 4.17, 4, 4, 40],
+        [2026, 1750905, 249095, 12, 0, 0.522, 1.044, 2.436, 4.35, 6.96, 4, 8.33, 8.33, 12, 4.17, 4, 4, 40],
+      ],
+    ],
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nominas (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      desde DATE NOT NULL,
+      hasta DATE NOT NULL,
+      estado VARCHAR(10) NOT NULL DEFAULT 'BORRADOR',
+      nota VARCHAR(300),
+      parametros TEXT,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      aprobadaPorId INT,
+      aprobadaEn DATETIME
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Una linea por empleado; al aprobar se guarda lo que entro al calculo y el resultado.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nomina_lineas (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nominaId INT NOT NULL,
+      empleadoId INT NOT NULL,
+      vehiculoId INT,
+      dias DECIMAL(5,2) NOT NULL DEFAULT 30,
+      producido DECIMAL(15,2) NOT NULL DEFAULT 0,
+      ajuste DECIMAL(15,2) NOT NULL DEFAULT 0,
+      notaAjuste VARCHAR(300),
+      entrada TEXT,
+      calculo TEXT,
+      gastoId INT,
+      UNIQUE KEY uq_nomina_empleado (nominaId, empleadoId),
+      CONSTRAINT fk_linea_nomina FOREIGN KEY (nominaId) REFERENCES nominas(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 

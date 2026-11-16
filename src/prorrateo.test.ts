@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { aCentavos, amortizar, aPesos, causaciones, ErrorReparto, repartir, repartirGasto, sumarMeses } from "./prorrateo";
+import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, ErrorReparto, repartir, repartirGasto, sumarMeses } from "./prorrateo";
 import type { Destino } from "./prorrateo";
 
 /** N vehiculos marcados (una parte cada uno), con ids desde `desde`. */
@@ -118,5 +118,24 @@ describe("amortizar", () => {
   test("tasa cero: solo capital", () => {
     const t = amortizar(aCentavos(1_200_000), 0, 12, "2026-10-01");
     expect(t.every((c) => c.interes === 0 && aPesos(c.capital) === 100_000)).toBe(true);
+  });
+});
+
+describe("causaciones por dias (nomina)", () => {
+  test("nomina del 21/10 al 20/11: 11 dias a octubre y 20 a noviembre", () => {
+    const c = causacionesPorDias(aCentavos(3_100_000), "2026-10-21", "2026-11-20");
+    expect(c.map((x) => [x.fecha, aPesos(x.monto)])).toEqual([
+      ["2026-10-21", 1_100_000],
+      ["2026-11-01", 2_000_000],
+    ]);
+  });
+  test("un mes completo queda en una sola causacion; tres meses suman exacto", () => {
+    expect(causacionesPorDias(100_00, "2026-11-01", "2026-11-30")).toEqual([{ fecha: "2026-11-01", monto: 100_00 }]);
+    const c = causacionesPorDias(1_000_001, "2026-12-15", "2027-02-10");
+    expect(c.map((x) => x.fecha)).toEqual(["2026-12-15", "2027-01-01", "2027-02-01"]);
+    expect(c.reduce((s, x) => s + x.monto, 0)).toBe(1_000_001);
+  });
+  test("periodo al reves: error", () => {
+    expect(() => causacionesPorDias(100, "2026-11-20", "2026-10-21")).toThrow();
   });
 });
