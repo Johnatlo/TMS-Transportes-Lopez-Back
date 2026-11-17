@@ -2,23 +2,32 @@ import { Router, type Request } from "express";
 import { responder } from "./cuadro";
 import { ErrorCuadro } from "../cuadro";
 import { utilidades } from "../utilidades";
+import type { VistaUtilidades } from "../utilidades";
 import { rolDePeticion } from "../accesos";
-import type { EmpresaVehiculo } from "../roles";
+import { puede, veRentabilidadTerceros } from "../roles";
 
 /**
- * Cascada de rentabilidad por vehiculo, reparto de utilidades y
- * participaciones (ver src/utilidades.ts). Montado en /api/utilidades con
- * sesion y el area LIQUIDACION (rol total y M&C; M&C solo ve sus vehiculos).
- * Aprobar el reparto, cambiar participaciones y crear socios: rol total.
+ * Cascada de rentabilidad por vehiculo, fondos, reparto de los socios,
+ * participaciones y socios (ver src/utilidades.ts). Montado en
+ * /api/utilidades con sesion y el area LIQUIDACION (los tres roles).
+ * - El reparto de los socios (fondos, reparto, cuentas) es del area REPARTO:
+ *   las administrativas no lo ven.
+ * - La rentabilidad de los terceros no la ve M&C.
+ * - Aprobar el reparto y cambiar fondos, participaciones y socios: rol total.
  */
 export const utilidadesRouter = Router();
 
-/** Empresa a la que esta limitado el usuario (M&C), o null si ve las dos. */
-const empresaDe = (req: Request): EmpresaVehiculo | null => (rolDePeticion(req) === "MYC" ? "MYC" : null);
+/** Lo que ve el rol de la peticion. */
+const vistaDe = (req: Request): VistaUtilidades => ({ reparto: puede(rolDePeticion(req), "REPARTO"), terceros: veRentabilidadTerceros(rolDePeticion(req)) });
 
 /** Solo el rol total. */
 function exigirTotal(req: Request): void {
   if (rolDePeticion(req) !== "TOTAL") throw new ErrorCuadro("Solo el rol de acceso total puede hacer esto.");
+}
+
+/** Solo quien ve el reparto de los socios. */
+function exigirReparto(req: Request): void {
+  if (!puede(rolDePeticion(req), "REPARTO")) throw new ErrorCuadro("Tu usuario no ve el reparto de los socios.");
 }
 
 /** GET /api/utilidades/aprobados: meses con reparto aprobado. */
@@ -27,11 +36,11 @@ utilidadesRouter.get("/aprobados", async (_req, res) => {
 });
 
 /** GET /api/utilidades/participaciones: vehiculos con su participacion vigente e historial. */
-utilidadesRouter.get("/participaciones", async (req, res) => {
-  res.json(await utilidades.participaciones({ empresa: empresaDe(req) }));
+utilidadesRouter.get("/participaciones", async (_req, res) => {
+  res.json(await utilidades.participaciones());
 });
 
-/** PUT /api/utilidades/participaciones/:vehiculoId: nueva participacion desde una fecha ({ desde, partes }). */
+/** PUT /api/utilidades/participaciones/:vehiculoId: nueva participacion desde una fecha ({ desde, partes }). Solo total. */
 utilidadesRouter.put("/participaciones/:vehiculoId", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
@@ -40,12 +49,38 @@ utilidadesRouter.put("/participaciones/:vehiculoId", async (req, res) => {
   });
 });
 
+/** GET /api/utilidades/fondos: base y saldo inicial del fondo de cada vehiculo. */
+utilidadesRouter.get("/fondos", async (req, res) => {
+  await responder(res, async () => {
+    exigirReparto(req);
+    return utilidades.fondos();
+  });
+});
+
+/** PUT /api/utilidades/fondos/:vehiculoId: cambia la base y el saldo inicial ({ base, saldoInicial, nota? }). Solo total. */
+utilidadesRouter.put("/fondos/:vehiculoId", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.guardarFondo(Number(req.params.vehiculoId), req.body ?? {});
+    return utilidades.fondos();
+  });
+});
+
+/** PUT /api/utilidades/gmf: cambia el 4 x 1000 que se descuenta al repartir ({ gmfPorMil }). Solo total. */
+utilidadesRouter.put("/gmf", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.guardarGmf(req.body ?? {});
+    return { ok: true };
+  });
+});
+
 /** GET /api/utilidades/socios: socios. */
 utilidadesRouter.get("/socios", async (_req, res) => {
   res.json(await utilidades.socios());
 });
 
-/** POST /api/utilidades/socios: crea un socio ({ nombre, externo, documento?, nota? }). */
+/** POST /api/utilidades/socios: crea un socio ({ nombre, externo, documento?, nota?, saldoInicial? }). Solo total. */
 utilidadesRouter.post("/socios", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
@@ -54,7 +89,7 @@ utilidadesRouter.post("/socios", async (req, res) => {
   });
 });
 
-/** PUT /api/utilidades/socios/:id/datos: cambia nombre, externo, documento y nota. */
+/** PUT /api/utilidades/socios/:id/datos: cambia los datos de un socio. Solo total. */
 utilidadesRouter.put("/socios/:id/datos", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
@@ -63,33 +98,7 @@ utilidadesRouter.put("/socios/:id/datos", async (req, res) => {
   });
 });
 
-/** GET /api/utilidades/cuentas: cuenta de cada socio (repartido en meses aprobados, pagos y saldo). Solo total. */
-utilidadesRouter.get("/cuentas", async (req, res) => {
-  await responder(res, async () => {
-    exigirTotal(req);
-    return utilidades.cuentas();
-  });
-});
-
-/** POST /api/utilidades/socios/:id/pagos: registra un pago al socio ({ fecha, monto, nota?, soporteUrl? }). */
-utilidadesRouter.post("/socios/:id/pagos", async (req, res) => {
-  await responder(res, async () => {
-    exigirTotal(req);
-    await utilidades.registrarPago(Number(req.params.id), req.body ?? {}, req.usuario?.id ?? null);
-    return utilidades.cuentas();
-  });
-});
-
-/** DELETE /api/utilidades/pagos/:id: borra un pago registrado por error. */
-utilidadesRouter.delete("/pagos/:id", async (req, res) => {
-  await responder(res, async () => {
-    exigirTotal(req);
-    await utilidades.borrarPago(Number(req.params.id));
-    return utilidades.cuentas();
-  });
-});
-
-/** PUT /api/utilidades/socios/:id: activa o desactiva ({ activo }). */
+/** PUT /api/utilidades/socios/:id: activa o desactiva ({ activo }). Solo total. */
 utilidadesRouter.put("/socios/:id", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
@@ -98,25 +107,59 @@ utilidadesRouter.put("/socios/:id", async (req, res) => {
   });
 });
 
-/** GET /api/utilidades/:mes: cascada por vehiculo y reparto por socio del mes ("AAAA-MM"). */
-utilidadesRouter.get("/:mes", async (req, res) => {
-  await responder(res, () => utilidades.mes(req.params.mes, { empresa: empresaDe(req) }));
-});
-
-/** POST /api/utilidades/:mes/aprobar: guarda la foto del reparto (el mes debe estar cerrado). */
-utilidadesRouter.post("/:mes/aprobar", async (req, res) => {
+/** GET /api/utilidades/cuentas: cuenta de cada socio mes a mes. */
+utilidadesRouter.get("/cuentas", async (req, res) => {
   await responder(res, async () => {
-    exigirTotal(req);
-    await utilidades.aprobar(req.params.mes, req.usuario?.id ?? null);
-    return utilidades.mes(req.params.mes);
+    exigirReparto(req);
+    return utilidades.cuentas();
   });
 });
 
-/** DELETE /api/utilidades/:mes/aprobar: anula la aprobacion. */
+/** POST /api/utilidades/socios/:id/pagos: registra un pago al socio ({ fecha, monto, nota?, soporteUrl? }). Solo total. */
+utilidadesRouter.post("/socios/:id/pagos", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.registrarPago(Number(req.params.id), req.body ?? {}, req.usuario?.id ?? null);
+    return utilidades.cuentas();
+  });
+});
+
+/** DELETE /api/utilidades/pagos/:id: borra un pago registrado por error. Solo total. */
+utilidadesRouter.delete("/pagos/:id", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.borrarPago(Number(req.params.id));
+    return utilidades.cuentas();
+  });
+});
+
+/** GET /api/utilidades/:mes: cascada, fondos y reparto del mes ("AAAA-MM"), segun lo que ve el rol. */
+utilidadesRouter.get("/:mes", async (req, res) => {
+  await responder(res, () => utilidades.mes(req.params.mes, vistaDe(req)));
+});
+
+/** POST /api/utilidades/:mes/simular: el mes con lo que se reparte de cada vehiculo ({ repartimos: { vehiculoId: monto } }). */
+utilidadesRouter.post("/:mes/simular", async (req, res) => {
+  await responder(res, async () => {
+    exigirReparto(req);
+    return utilidades.mes(req.params.mes, vistaDe(req), req.body?.repartimos ?? {});
+  });
+});
+
+/** POST /api/utilidades/:mes/aprobar: guarda la foto con lo que se reparte ({ repartimos }). Solo total. */
+utilidadesRouter.post("/:mes/aprobar", async (req, res) => {
+  await responder(res, async () => {
+    exigirTotal(req);
+    await utilidades.aprobar(req.params.mes, req.body?.repartimos ?? {}, req.usuario?.id ?? null);
+    return utilidades.mes(req.params.mes, vistaDe(req));
+  });
+});
+
+/** DELETE /api/utilidades/:mes/aprobar: anula la aprobacion (solo el ultimo mes aprobado). Solo total. */
 utilidadesRouter.delete("/:mes/aprobar", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
     await utilidades.anular(req.params.mes);
-    return utilidades.mes(req.params.mes);
+    return utilidades.mes(req.params.mes, vistaDe(req));
   });
 });

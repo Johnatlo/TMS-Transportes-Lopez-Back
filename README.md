@@ -536,14 +536,14 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_956 funciones, componentes, métodos y rutas en 66 archivos._
+_976 funciones, componentes, métodos y rutas en 66 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (37)
 - [`src/auth.ts`](#srcauthts) (36)
-- [`src/calculoNomina.ts`](#srccalculonominats) (7)
-- [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (7)
+- [`src/calculoNomina.ts`](#srccalculonominats) (9)
+- [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (9)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
 - [`src/config.ts`](#srcconfigts) (3)
@@ -579,7 +579,7 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
-- [`src/roles.ts`](#srcrolests) (5)
+- [`src/roles.ts`](#srcrolests) (7)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
@@ -589,7 +589,7 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
-- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (15)
+- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (20)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
 - [`src/scripts/crear-usuario.ts`](#srcscriptscrearusuariots) (1)
@@ -602,7 +602,7 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
-- [`src/utilidades.ts`](#srcutilidadests) (19)
+- [`src/utilidades.ts`](#srcutilidadests) (28)
 - [`src/vigencias.ts`](#srcvigenciasts) (3)
 
 ### `src/accesos.ts`
@@ -1067,6 +1067,16 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 - **`mesDe(fecha)`** · _función_
   Mes calendario de una fecha: el producido de la nomina del 21/10 al 20/11 es el de octubre.
 
+- **`pesosConductor(c, producidoPor, diasPor)`** · _función_
+  Pesos para repartir el costo de un conductor entre los vehiculos que
+  manejo en el periodo: la parte que sale del producido (variable y viaticos)
+  segun lo que produjo en cada carro, y el resto (basico, auxilio y su carga)
+  segun los dias que manejo cada uno. Si no produjo nada, todo por dias; si no
+  hay dias, todo por producido. Los pesos suman 1.
+
+- **`diasPorVehiculo(asignaciones, desde, hasta)`** · _función_
+  Dias que el conductor tuvo cada vehiculo dentro del periodo (por su asignacion con fechas).
+
 ### `src/calculoUtilidades.ts`
 
 > Cascada de rentabilidad por vehiculo y reparto de utilidades por socio
@@ -1085,15 +1095,27 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 >   6. = Utilidad neta del vehiculo.
 > Los viajes van por su fecha; los gastos, por su fecha de causacion.
 >
-> Reparto: la utilidad de cada vehiculo se reparte entre sus socios segun la
-> participacion vigente al cierre del mes (100 % del dueno, o la sociedad).
-> Lo que va directo a un socio en el libro (sus gastos adicionales, su parte
-> fija de un credito) se le descuenta solo a el. Como referencia se muestra lo
-> que ya se le liquido por los viajes (saldo de los viajes): se le cuenta
-> completo a quien lo recibe, el dueno del vehiculo en Flota, aunque el carro
-> sea una sociedad; asi el socio externo queda con su parte por cobrar y el
-> dueno con lo que recibio de mas. Si el carro no tiene dueno, se reparte
-> segun la participacion.
+> Fondo de cada vehiculo (como la hoja de la SWK-973): la utilidad no se
+> reparte toda. Cada mes:
+>   saldo anterior + utilidad - liquidado al dueno por los viajes = antes de repartir
+>   disponible = antes de repartir - base (lo que se deja por si el carro se
+>   accidenta o necesita un arreglo mayor; por defecto 10.000.000)
+>   "Repartimos" = lo que se decide repartir (se sugiere el disponible)
+>   saldo final = antes de repartir - repartimos (pasa al mes siguiente; puede
+>   quedar negativo despues de un arreglo grande y se recupera con los meses).
+>
+> Reparto por socio: lo repartido y lo liquidado de cada vehiculo se dividen
+> segun la participacion, ponderada por los dias del mes (si cambia a mitad de
+> mes, cada socio pesa por los dias que la tuvo). A cada socio:
+>   + su parte de lo repartido - el 4 x 1000 de esa parte (lo que cuesta transferirla)
+>   + su parte de lo liquidado por los viajes - la liquidacion que el recibio
+>     (el dueno del vehiculo en Flota; asi en una sociedad el que recibio la
+>     plata de los viajes le queda debiendo al otro socio)
+>   - sus gastos propios del libro
+>   = neto del mes (si es negativo, lo debe; se acumula para el mes siguiente).
+>
+> Gastos de la empresa: los que van a la empresa (no a un carro ni a un
+> socio) bajan la rentabilidad de la empresa, que no se reparte.
 >
 > Todo en pesos con dos decimales; las partes se reparten en centavos para que
 > sumen exacto (ver prorrateo.ts).
@@ -1110,12 +1132,26 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 - **`participacionesEn(todas, vehiculoId, fecha)`** · _función_
   Participaciones de un vehiculo vigentes en una fecha.
 
-- **`repartirUtilidades(lista, participaciones, partidas, fecha, receptor)`** · _función_
-  El reparto del periodo por socio, y los vehiculos sin participacion (su utilidad no se reparte).
+- **`participacionPonderada(todas, vehiculoId, desde, hasta)`** · _función_
+  Participacion de cada socio en un vehiculo en un periodo, ponderada por los
+  dias: si del 1 al 15 era 100 % de A y desde el 16 50/50 con B, A pesa
+  (15 x 100 + 16 x 50) / 31. Si hay dias sin participacion, la suma queda por
+  debajo de 100 %.
+
+- **`repartoMes(e)`** · _función_
+  El fondo de cada vehiculo y el reparto por socio del mes. `repartimos`
+  trae lo que se decidio repartir de cada vehiculo; si falta uno, se usa el
+  sugerido. Los vehiculos que reparten o liquidan algo sin participacion que
+  sume 100 % quedan en `sinParticipacion`.
+
+- **`cuentaSocio(saldoInicial, netos, pagos)`** · _función_
+  La cuenta de un socio mes a mes: arranca en su saldo inicial, suma el neto
+  de cada reparto aprobado y resta los pagos. Un saldo negativo (no le
+  alcanzo para sus gastos) se arrastra al mes siguiente.
 
 - **`pasoDe(g)`** · _función_
-  Paso de la cascada de un gasto del libro: la nomina de un conductor va al
-  paso 4; un gasto que va completo a un solo vehiculo (sin socios) es costo
+  Paso de la cascada de una partida del libro: la parte que va a la empresa
+  es de la empresa; la nomina de un conductor va al paso 4; un gasto que va completo a un solo vehiculo (sin socios) es costo
   directo (paso 3); lo repartido entre varios es gasto general (paso 5).
 
 - **`finDeMes(mes)`** · _función_
@@ -1713,8 +1749,9 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 > - Un gasto (o ingreso) tiene empresa, categoria, monto, fecha de pago (flujo
 >   de caja) y una o varias causaciones mensuales (rentabilidad): un seguro
 >   anual se paga una vez y se causa en 12 meses.
-> - Destinos: los vehiculos que se marquen (una parte por carro) y/o partes
->   directas a socios (valor fijo, porcentaje o partes).
+> - Destinos: los vehiculos que se marquen (una parte por carro), partes
+>   directas a socios (valor fijo, porcentaje o partes) y/o la empresa (lo
+>   que no se le carga a ningun carro: baja la rentabilidad de la empresa).
 > - El reparto se calcula al guardar y queda escrito (gastos_reparto): no
 >   cambia solo. Editar el gasto lo recalcula, y solo se puede en meses
 >   abiertos (periodos_cierre).
@@ -1985,8 +2022,9 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 >   conductor sale de los viajes del cuadro (flete de los vehiculos que
 >   manejaba en el mes del producido, por defecto el mes calendario en que
 >   empieza la nomina); se puede escribir a mano y volver al del sistema.
->   Si manejo varios carros, su costo se reparte entre ellos segun lo que
->   produjo en cada uno. Mientras es borrador se
+>   Si manejo varios carros, su costo se reparte entre ellos: lo que sale del
+>   producido segun lo que produjo en cada uno y el resto por los dias que
+>   tuvo cada uno. Mientras es borrador se
 >   calcula con los datos actuales; al aprobarla el calculo queda guardado y
 >   se crea un gasto por empleado (categoria NOMINA) por su costo total,
 >   causado por dias entre los meses del periodo: el del conductor a su
@@ -2092,8 +2130,11 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 - **`viajesDelCuadro(desde, hasta)`** · _función_
   Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su flete (null = sin tarifa).
 
-- **`destinosConductor(l)`** · _función_
-  A quien va el costo de un conductor: sus vehiculos segun lo que produjo en cada uno; si no produjo, el vehiculo de la linea.
+- **`destinosConductor(l, e, desde, hasta)`** · _función_
+  A quien va el costo de un conductor: si manejo varios carros en el periodo,
+  la parte del producido segun lo que produjo en cada uno y el resto segun
+  los dias que tuvo cada uno (ver pesosConductor); si no hay datos, el
+  vehiculo de la linea.
 
 ### `src/perfilVehiculos.ts`
 
@@ -2331,13 +2372,17 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 >   bajan el saldo del tercero pero no son ganancia de la empresa;
 >   menos el anticipo de renta 3,5 % = ganancia. La comision de la matriz
 >   (como en los demas carros) se le descuenta a la empresa, no al tercero.
-> - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
+> - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD -los de dos o
+>   mas socios en Participaciones, ademas de XJB-207 y SPI-982-, JTY-221,
 >   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
 >   el anticipo = lo que se le paga al dueno. La comision y T. Lopez son
 >   gastos del dueno: estos carros no le dejan rentabilidad a la empresa.
 
-- **`grupoDe(placa, flota, dueno)`** · _función_
-  Grupo de un viaje: por la placa; si no, los terceros, el socio dueno o PROPIOS.
+- **`grupoDe(placa, flota, dueno, esSociedad)`** · _función_
+  Grupo de un viaje: los carros con hoja propia (JTY-221, SWK-973, XGJ-197);
+  si el carro tiene dos o mas socios en Utilidades > Participaciones en la
+  fecha del viaje, SOCIEDAD; si no, por la placa, los terceros, el socio
+  dueno o PROPIOS.
 
 - **`normalizar(s)`** · _función_
   Texto sin tildes ni signos, en mayuscula, para comparar nombres de clientes.
@@ -3760,14 +3805,13 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 
 > Roles de los usuarios y lo que puede ver cada uno.
 >
-> - TOTAL: todo el aplicativo (hoy Principal y Admin).
-> - ADMINISTRATIVO: lo operativo del TMS (despacho, RNDC, Cuadro pagos,
->   anticipos, cartera, pago a terceros...) y Rentabilidad, sin liquidar a
->   los duenos, repartir ganancias ni liquidar a los empleados.
-> - MYC: Transportes M&C. Lo del RNDC (despachar, RNDC, plantillas, clientes,
->   flota, conductores, preoperacional) y las cuentas solo de sus vehiculos
->   (Rentabilidad, liquidacion y reparto de ganancias), sin los de Transportes
->   Lopez ni los terceros.
+> - TOTAL: todo el aplicativo (hoy Principal y Admin), incluido aprobar el
+>   reparto y cambiar participaciones, socios y fondos.
+> - ADMINISTRATIVO: ve y edita todo menos el reparto de los socios (fondos,
+>   reparto y cuentas de socios) y el cambio de roles (17/11/2026).
+> - MYC: Transportes M&C. Ve todo (tambien todos los gastos) menos la
+>   rentabilidad de los terceros y el cambio de roles (17/11/2026). Registra
+>   y cambia los gastos y empleados de su empresa.
 >
 > Que vehiculos ve cada rol lo dice vehiculos.empresa (LOPEZ o MYC) y
 > vehiculos.visibleTodos (los que ven todos, como el Volvo XGJ-197).
@@ -3780,16 +3824,24 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
   El rol tiene acceso a esa area.
 
 - **`veCuentasDe(rol, v)`** · _función_
-  El rol ve las cuentas de ese vehiculo: TOTAL y ADMINISTRATIVO todos
-  (propios y terceros); MYC solo los de M&C y los marcados para todos.
+  El rol ve las cuentas (rentabilidad) de ese vehiculo: TOTAL y
+  ADMINISTRATIVO todos; MYC los de la flota propia (Lopez y M&C) y los
+  marcados para todos, no los de terceros.
+
+- **`veRentabilidadTerceros(rol)`** · _función_
+  El rol ve la rentabilidad de los viajes de terceros (M&C no).
 
 - **`veVehiculo(rol, v)`** · _función_
-  El rol ve ese vehiculo en lo operativo filtrado por empresa (perfil de
-  vehiculos, preoperacional): TOTAL y ADMINISTRATIVO todos; MYC los suyos y
-  los marcados para todos.
+  El rol ve ese vehiculo en lo operativo (perfil de vehiculos,
+  preoperacional). Desde el 17/11/2026 todos los roles ven todos.
 
 - **`placaClave(p)`** · _función_
   Placa comparable (sin guion ni espacios, en mayuscula).
+
+- **`correosSiempreTotal()`** · _función_
+  Las cuentas con acceso total siempre: la principal y las que se pongan en
+  TMS_CORREOS_TOTAL (separadas por comas) en el .env del servidor. Los
+  correos personales van ahi y no en el codigo.
 
 ### `src/routes/auth.ts`
 
@@ -4783,11 +4835,14 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 
 ### `src/routes/utilidades.ts`
 
-- **`empresaDe(req)`** · _función_
-  Empresa a la que esta limitado el usuario (M&C), o null si ve las dos.
+- **`vistaDe(req)`** · _función_
+  Lo que ve el rol de la peticion.
 
 - **`exigirTotal(req)`** · _función_
   Solo el rol total.
+
+- **`exigirReparto(req)`** · _función_
+  Solo quien ve el reparto de los socios.
 
 - **`GET /aprobados`** · _ruta HTTP_
   GET /api/utilidades/aprobados: meses con reparto aprobado.
@@ -4796,37 +4851,49 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
   GET /api/utilidades/participaciones: vehiculos con su participacion vigente e historial.
 
 - **`PUT /participaciones/:vehiculoId`** · _ruta HTTP_
-  PUT /api/utilidades/participaciones/:vehiculoId: nueva participacion desde una fecha ({ desde, partes }).
+  PUT /api/utilidades/participaciones/:vehiculoId: nueva participacion desde una fecha ({ desde, partes }). Solo total.
+
+- **`GET /fondos`** · _ruta HTTP_
+  GET /api/utilidades/fondos: base y saldo inicial del fondo de cada vehiculo.
+
+- **`PUT /fondos/:vehiculoId`** · _ruta HTTP_
+  PUT /api/utilidades/fondos/:vehiculoId: cambia la base y el saldo inicial ({ base, saldoInicial, nota? }). Solo total.
+
+- **`PUT /gmf`** · _ruta HTTP_
+  PUT /api/utilidades/gmf: cambia el 4 x 1000 que se descuenta al repartir ({ gmfPorMil }). Solo total.
 
 - **`GET /socios`** · _ruta HTTP_
   GET /api/utilidades/socios: socios.
 
 - **`POST /socios`** · _ruta HTTP_
-  POST /api/utilidades/socios: crea un socio ({ nombre, externo, documento?, nota? }).
+  POST /api/utilidades/socios: crea un socio ({ nombre, externo, documento?, nota?, saldoInicial? }). Solo total.
 
 - **`PUT /socios/:id/datos`** · _ruta HTTP_
-  PUT /api/utilidades/socios/:id/datos: cambia nombre, externo, documento y nota.
-
-- **`GET /cuentas`** · _ruta HTTP_
-  GET /api/utilidades/cuentas: cuenta de cada socio (repartido en meses aprobados, pagos y saldo). Solo total.
-
-- **`POST /socios/:id/pagos`** · _ruta HTTP_
-  POST /api/utilidades/socios/:id/pagos: registra un pago al socio ({ fecha, monto, nota?, soporteUrl? }).
-
-- **`DELETE /pagos/:id`** · _ruta HTTP_
-  DELETE /api/utilidades/pagos/:id: borra un pago registrado por error.
+  PUT /api/utilidades/socios/:id/datos: cambia los datos de un socio. Solo total.
 
 - **`PUT /socios/:id`** · _ruta HTTP_
-  PUT /api/utilidades/socios/:id: activa o desactiva ({ activo }).
+  PUT /api/utilidades/socios/:id: activa o desactiva ({ activo }). Solo total.
+
+- **`GET /cuentas`** · _ruta HTTP_
+  GET /api/utilidades/cuentas: cuenta de cada socio mes a mes.
+
+- **`POST /socios/:id/pagos`** · _ruta HTTP_
+  POST /api/utilidades/socios/:id/pagos: registra un pago al socio ({ fecha, monto, nota?, soporteUrl? }). Solo total.
+
+- **`DELETE /pagos/:id`** · _ruta HTTP_
+  DELETE /api/utilidades/pagos/:id: borra un pago registrado por error. Solo total.
 
 - **`GET /:mes`** · _ruta HTTP_
-  GET /api/utilidades/:mes: cascada por vehiculo y reparto por socio del mes ("AAAA-MM").
+  GET /api/utilidades/:mes: cascada, fondos y reparto del mes ("AAAA-MM"), segun lo que ve el rol.
+
+- **`POST /:mes/simular`** · _ruta HTTP_
+  POST /api/utilidades/:mes/simular: el mes con lo que se reparte de cada vehiculo ({ repartimos: { vehiculoId: monto } }).
 
 - **`POST /:mes/aprobar`** · _ruta HTTP_
-  POST /api/utilidades/:mes/aprobar: guarda la foto del reparto (el mes debe estar cerrado).
+  POST /api/utilidades/:mes/aprobar: guarda la foto con lo que se reparte ({ repartimos }). Solo total.
 
 - **`DELETE /:mes/aprobar`** · _ruta HTTP_
-  DELETE /api/utilidades/:mes/aprobar: anula la aprobacion.
+  DELETE /api/utilidades/:mes/aprobar: anula la aprobacion (solo el ultimo mes aprobado). Solo total.
 
 ### `src/scripts/borrar-viaje.ts`
 
@@ -5421,22 +5488,29 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 
 ### `src/utilidades.ts`
 
-> Utilidades (fase 3 del modulo de gastos): cascada de rentabilidad por
-> vehiculo y reparto entre socios de un mes, participaciones (quien es dueno
-> de que vehiculo y en que porcentaje, con vigencia) y aprobacion del reparto.
-> Los calculos estan en calculoUtilidades.ts.
+> Utilidades (fases 3 y 4 del modulo de gastos): cascada de rentabilidad por
+> vehiculo, fondo de cada vehiculo y reparto entre socios mes a mes,
+> participaciones (quien es dueno de que vehiculo y en que porcentaje, con
+> vigencia), rentabilidad de la empresa y la cuenta de cada socio. Los
+> calculos estan en calculoUtilidades.ts.
 >
 > - Viajes: los de Rentabilidad (flete, descuentos, anticipos y saldo del
 >   dueno, ya calculados) de los vehiculos de la flota propia, por su fecha.
-> - Libro de gastos: lo que le toco a cada vehiculo o socio (gastos_reparto)
->   en el mes, por fecha de causacion; los ingresos restan.
-> - Participaciones: por defecto 100 % del dueno del vehiculo; una sociedad
->   se registra con sus porcentajes desde una fecha (lo anterior no cambia).
-> - Aprobar el reparto de un mes guarda la foto (repartos_utilidades); el mes
->   debe estar cerrado en Gastos. Mientras este aprobado, el mes no se abre.
-> - Socios: los de la empresa y los externos (solo estan en una sociedad).
->   La cuenta de cada socio suma lo que se le repartio en los meses aprobados
->   menos los pagos que se le han hecho (pagos_socios) = saldo por pagar.
+> - Libro de gastos: lo que le toco a cada vehiculo, socio o a la empresa
+>   (gastos_reparto) en el mes, por fecha de causacion; los ingresos restan.
+> - Fondo de cada vehiculo: arranca en el mes de inicio de los gastos con su
+>   saldo inicial; cada mes suma la utilidad, resta lo que se le pago al dueno
+>   por los viajes (por la fecha de pago) y lo que se reparte. La base
+>   (10.000.000 por defecto) no se reparte. Todo editable (fondos_vehiculo).
+> - Aprobar un mes: el mes debe estar cerrado en Gastos y el anterior
+>   aprobado (el saldo de cada fondo sale de ahi). Se guarda la foto
+>   (repartos_utilidades) con lo que se decidio repartir de cada vehiculo.
+>   Solo se anula el ultimo mes aprobado.
+> - Empresa: la ganancia de los viajes de terceros (de Rentabilidad) menos
+>   los gastos que asume la empresa. No se reparte.
+> - Socios: los de la empresa y los externos. La cuenta de cada socio arranca
+>   en su saldo inicial, suma el neto de cada mes aprobado y resta los pagos
+>   (pagos_socios); lo que no le alcanza se acumula para el mes siguiente.
 
 - **`placaClave(p)`** · _función_
   Normaliza una placa ("SZX-880" -> "SZX880").
@@ -5444,34 +5518,63 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
 - **`diaAntes(f)`** · _función_
   El dia anterior a una fecha.
 
+- **`c2(v)`** · _función_
+  Redondea a centavos.
+
 - **`json(v, defecto)`** · _función_
   JSON guardado a objeto.
 
 - **`mesDe(v)`** · _función_
   Mes "AAAA-MM" valido.
 
+- **`mesAnterior(m)`** · _función_
+  El mes anterior a "AAAA-MM".
+
+- **`iso(v)`** · _función_
+  Fecha (Date o texto) a ISO.
+
+- **`parametros()`** · _función_
+  Mes de inicio de los fondos (el de la fecha de inicio de los gastos) y el 4 x 1000.
+
+- **`repartimosDe(x)`** · _función_
+  Lo que se decidio repartir de cada vehiculo ({ vehiculoId: monto }), validado.
+
 - **`utilidades`** · _módulo_
-  Utilidades, participaciones y socios.
+  Utilidades, fondos, participaciones y socios.
 
-  - **`utilidades.mes(mesTexto, filtro)`** · _método_
-    Cascada por vehiculo y reparto por socio del mes (M&C: solo sus vehiculos).
+  - **`utilidades.mes(mesTexto, vista, repartimos)`** · _método_
+    Cascada, fondo y reparto del mes, segun lo que ve el rol. Con `repartimos`, simula (aunque este aprobado).
 
-  - **`utilidades.calcular(mes)`** · _método_
-    Calcula la cascada y el reparto del mes con los datos actuales.
+  - **`utilidades.recortar(u, vista)`** · _método_
+    Quita lo que el rol no ve: el reparto (administrativas) o los terceros (M&C).
 
-  - **`utilidades.aprobar(mesTexto, usuarioId)`** · _método_
-    Aprueba el reparto del mes: guarda la foto. El mes debe estar cerrado en Gastos.
+  - **`utilidades.calcular(mes, repartimos)`** · _método_
+    Calcula el mes con los datos actuales y lo que se reparte de cada vehiculo (lo que falte: el sugerido).
+
+  - **`utilidades.aprobar(mesTexto, repartimos, usuarioId)`** · _método_
+    Aprueba el mes con lo que se decidio repartir de cada vehiculo: guarda la
+    foto. El mes debe estar cerrado en Gastos, ser desde el inicio y tener el
+    anterior aprobado.
 
   - **`utilidades.anular(mesTexto)`** · _método_
-    Anula la aprobacion del reparto (vuelve a calcularse con los datos actuales).
+    Anula la aprobacion del ultimo mes aprobado (los siguientes dependen de el).
 
   - **`utilidades.aprobados()`** · _método_
     Meses con reparto aprobado.
 
+  - **`utilidades.fondos()`** · _método_
+    Configuracion del fondo de cada vehiculo de la flota propia (base y saldo inicial).
+
+  - **`utilidades.guardarFondo(vehiculoId, d)`** · _método_
+    Cambia la base y el saldo inicial del fondo de un vehiculo ({ base, saldoInicial, nota? }).
+
+  - **`utilidades.guardarGmf(d)`** · _método_
+    Cambia el 4 x 1000 que se descuenta al repartir ({ gmfPorMil }).
+
   - **`utilidades.participacionesTodas()`** · _método_
     Todas las participaciones (para el calculo).
 
-  - **`utilidades.participaciones(filtro)`** · _método_
+  - **`utilidades.participaciones()`** · _método_
     Vehiculos de la flota propia con su participacion vigente y su historial.
 
   - **`utilidades.guardarParticipacion(vehiculoId, d)`** · _método_
@@ -5482,12 +5585,11 @@ _956 funciones, componentes, métodos y rutas en 66 archivos._
     Socios (activos primero).
 
   - **`utilidades.guardarSocio(d, id)`** · _método_
-    Crea o cambia un socio ({ nombre, externo, documento?, nota? }). Externo = no hace parte de la empresa, solo de una sociedad.
+    Crea o cambia un socio ({ nombre, externo, documento?, nota?, saldoInicial? }). Externo = no hace parte de la empresa, solo de una sociedad.
 
   - **`utilidades.cuentas()`** · _método_
-    Cuenta de cada socio: lo que se le repartio en cada mes aprobado (su
-    utilidad, despues de sus gastos propios), los pagos que se le han hecho y
-    el saldo (repartido - pagado). Un saldo negativo es lo que el socio debe.
+    Cuenta de cada socio mes a mes: saldo inicial + neto de cada mes aprobado
+    - pagos. Lo que no le alcanza (saldo negativo) se acumula para el mes siguiente.
 
   - **`utilidades.registrarPago(socioId, d, usuarioId)`** · _método_
     Registra un pago a un socio ({ fecha, monto, nota?, soporteUrl? }). Negativo = lo que el socio le devolvio a la empresa.

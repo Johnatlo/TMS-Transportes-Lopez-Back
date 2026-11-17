@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { calcularLinea, diasPeriodo, mesDe, pila, producidoPorConductor } from "./calculoNomina";
+import { calcularLinea, diasPeriodo, diasPorVehiculo, mesDe, pesosConductor, pila, producidoPorConductor } from "./calculoNomina";
 import type { AsignacionVehiculo, EntradaLinea, ParametrosNomina, ViajeProducido } from "./calculoNomina";
 
 /** Parametros 2026 del Excel. */
@@ -148,5 +148,58 @@ describe("producido desde los viajes del sistema", () => {
   test("mes calendario del inicio de la nomina", () => {
     expect(mesDe("2026-10-21")).toEqual({ desde: "2026-10-01", hasta: "2026-10-31" });
     expect(mesDe("2026-02-21")).toEqual({ desde: "2026-02-01", hasta: "2026-02-28" });
+  });
+});
+
+describe("costo de un conductor que cambia de carro en el periodo", () => {
+  const c = { variable: 1_000_000, viaticos: 1_250_000, devengado: 4_500_000 };
+  test("dias por vehiculo segun la asignacion (cambio el 05/11 en una nomina del 21/10 al 20/11)", () => {
+    const d = diasPorVehiculo(
+      [
+        { vehiculoId: 1, desde: "2026-01-01", hasta: "2026-11-04" },
+        { vehiculoId: 2, desde: "2026-11-05", hasta: null },
+      ],
+      "2026-10-21",
+      "2026-11-20",
+    );
+    expect([...d.entries()]).toEqual([
+      [1, 15],
+      [2, 16],
+    ]);
+  });
+  test("lo del producido por producido y el resto por dias", () => {
+    // La mitad del devengado sale del producido: 0,5 por producido (todo en el carro 1) y 0,5 por dias (15 y 16).
+    const p = pesosConductor(
+      c,
+      new Map([[1, 30_000_000]]),
+      new Map([
+        [1, 15],
+        [2, 16],
+      ]),
+    );
+    expect(Math.round(p.get(1)! * 10000) / 10000).toBe(Math.round((0.5 + (0.5 * 15) / 31) * 10000) / 10000);
+    expect(Math.round(p.get(2)! * 10000) / 10000).toBe(Math.round(((0.5 * 16) / 31) * 10000) / 10000);
+  });
+  test("sin producido, todo por dias; sin dias, todo por producido", () => {
+    expect([
+      ...pesosConductor(
+        c,
+        new Map(),
+        new Map([
+          [1, 10],
+          [2, 30],
+        ]),
+      ).values(),
+    ]).toEqual([0.25, 0.75]);
+    expect([
+      ...pesosConductor(
+        c,
+        new Map([
+          [1, 1],
+          [2, 3],
+        ]),
+        new Map(),
+      ).values(),
+    ]).toEqual([0.25, 0.75]);
   });
 });

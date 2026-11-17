@@ -10,7 +10,7 @@ import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import "dotenv/config";
 import { DUENOS, PLACAS_POR_DUENO } from "./duenos";
-import { CORREOS_SIEMPRE_TOTAL, EMPRESA_INICIAL, NOMBRES_TOTAL_INICIAL, VISIBLES_PARA_TODOS_INICIAL } from "./roles";
+import { correosSiempreTotal, EMPRESA_INICIAL, NOMBRES_TOTAL_INICIAL, VISIBLES_PARA_TODOS_INICIAL } from "./roles";
 
 export const pool = mysql.createPool({
   host: process.env.DB_HOST ?? "localhost",
@@ -1119,6 +1119,9 @@ export async function initSchema(): Promise<void> {
     ["socios", "externo", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["socios", "documento", "VARCHAR(20)"],
     ["socios", "nota", "VARCHAR(300)"],
+    // Lo que el socio debia (o se le debia) antes del sistema, y el 4 x 1000 que se descuenta al repartir.
+    ["socios", "saldoInicial", "DECIMAL(15,2) NOT NULL DEFAULT 0"],
+    ["parametros_empresa", "gmfPorMil", "DECIMAL(7,3) NOT NULL DEFAULT 4"],
     // Empresa que liquida el vehiculo (LOPEZ o MYC; NULL = tercero) y si lo ven todos los roles.
     ["vehiculos", "empresa", "VARCHAR(10)"],
     ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],
@@ -1295,6 +1298,15 @@ export async function initSchema(): Promise<void> {
       INDEX idx_pago_socio (socioId, fecha)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Fondo de cada vehiculo: base que no se reparte y saldo con que arranca.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fondos_vehiculo (
+      vehiculoId INT PRIMARY KEY,
+      base DECIMAL(15,2) NOT NULL DEFAULT 10000000,
+      saldoInicial DECIMAL(15,2) NOT NULL DEFAULT 0,
+      nota VARCHAR(300)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Foto del reparto aprobado de cada mes.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS repartos_utilidades (
@@ -1464,7 +1476,7 @@ export async function initSchema(): Promise<void> {
     await pool.query("UPDATE nomina_lineas SET producidoManual = 1 WHERE producido > 0");
   }
   // La cuenta principal de la empresa siempre con acceso total (nunca queda el sistema sin quien administre).
-  await pool.query("UPDATE usuarios SET rol = 'TOTAL' WHERE LOWER(email) IN (?) AND rol <> 'TOTAL'", [CORREOS_SIEMPRE_TOTAL]);
+  await pool.query("UPDATE usuarios SET rol = 'TOTAL' WHERE LOWER(email) IN (?) AND rol <> 'TOTAL'", [correosSiempreTotal()]);
   // Una sola vez: Principal y Admin con acceso total; los demas quedan administrativos (el valor por defecto).
   if (rolEsNuevo) {
     await pool.query("UPDATE usuarios SET rol = 'TOTAL' WHERE UPPER(TRIM(nombre)) IN (?)", [NOMBRES_TOTAL_INICIAL]);

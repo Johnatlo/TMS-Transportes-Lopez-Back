@@ -15,7 +15,8 @@
  *   bajan el saldo del tercero pero no son ganancia de la empresa;
  *   menos el anticipo de renta 3,5 % = ganancia. La comision de la matriz
  *   (como en los demas carros) se le descuenta a la empresa, no al tercero.
- * - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD, JTY-221,
+ * - Socios y carros propios (CELSO, MAURICIO, MILLER, SOCIEDAD -los de dos o
+ *   mas socios en Participaciones, ademas de XJB-207 y SPI-982-, JTY-221,
  *   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
  *   el anticipo = lo que se le paga al dueno. La comision y T. Lopez son
  *   gastos del dueno: estos carros no le dejan rentabilidad a la empresa.
@@ -65,9 +66,19 @@ export const ORDEN_GRUPOS = ["TERCEROS", "CELSO", "MAURICIO", "MILLER", "SOCIEDA
 /** Dobletroque: sin descargue ni poliza (y el anticipo va en efectivo y combustible). */
 const SIN_DESCARGUE_NI_POLIZA = new Set(["XGJ-197"]);
 
-/** Grupo de un viaje: por la placa; si no, los terceros, el socio dueno o PROPIOS. */
-export function grupoDe(placa: string, flota: string, dueno: string | null): string {
+/** Carros con hoja propia en el Excel: conservan su pestana aunque sean sociedad. */
+const HOJA_PROPIA = new Set(["JTY-221", "SWK-973", "XGJ-197"]);
+
+/**
+ * Grupo de un viaje: los carros con hoja propia (JTY-221, SWK-973, XGJ-197);
+ * si el carro tiene dos o mas socios en Utilidades > Participaciones en la
+ * fecha del viaje, SOCIEDAD; si no, por la placa, los terceros, el socio
+ * dueno o PROPIOS.
+ */
+export function grupoDe(placa: string, flota: string, dueno: string | null, esSociedad = false): string {
   const g = PLACAS_GRUPO[placa.replace(/[^A-Z0-9]/gi, "").toUpperCase()];
+  if (g && HOJA_PROPIA.has(g)) return g;
+  if (esSociedad) return "SOCIEDAD";
   if (g) return g;
   if (flota === "TERCERO" && !dueno) return "TERCEROS";
   return dueno ? dueno.toUpperCase() : "PROPIOS";
@@ -487,8 +498,13 @@ export const rentabilidad = {
       g.fechaTransferencia = g.fechaTransferencia ?? x.fechaTransferencia;
       anticipoManifiesto.set(f.manifiesto, g);
     }
+    // Sociedades: carros con dos o mas socios vigentes en la fecha del viaje (Utilidades > Participaciones).
+    const [partes] = await pool.query<RowDataPacket[]>("SELECT vehiculoId, desde, hasta FROM participaciones");
+    const tramos = partes.map((p) => ({ vehiculoId: Number(p.vehiculoId), desde: dia(p.desde)!, hasta: dia(p.hasta) }));
+    const esSociedad = (vehiculoId: number | null, fecha: string) =>
+      !!vehiculoId && tramos.filter((t) => t.vehiculoId === vehiculoId && t.desde <= fecha && (!t.hasta || t.hasta >= fecha)).length >= 2;
     const resultado = vivos.map((f: FilaCuadro): FilaRentabilidad => {
-      const grupo = grupoDe(f.placa, f.flota, f.dueno);
+      const grupo = grupoDe(f.placa, f.flota, f.dueno, esSociedad(f.vehiculoId, f.fecha));
       // Comision una vez por remision; descargue, poliza y anticipos una vez por
       // manifiesto, en su fila de flete mas alto.
       const claveRemision = `${f.placa}|${f.remision || f.manifiesto || `id${f.id}`}`;

@@ -8,8 +8,8 @@ import type { EmpresaVehiculo } from "../roles";
 /**
  * Libro de gastos, cierres de mes y creditos (ver src/gastos.ts). Montado en
  * /api/gastos con sesion y el area GASTOS (total, administrativo y M&C).
- * Transportes M&C solo ve y registra lo de su empresa; cerrar meses y cambiar
- * la fecha de corte es solo del rol total.
+ * Transportes M&C ve todos los gastos y registra y cambia los de su empresa;
+ * cerrar meses y cambiar la fecha de corte es solo del rol total.
  */
 export const gastosRouter = Router();
 
@@ -50,7 +50,7 @@ gastosRouter.get("/opciones", async (_req, res) => {
 
 /** GET /api/gastos: el libro de gastos (M&C: solo los de su empresa). */
 gastosRouter.get("/", async (req, res) => {
-  res.json(await gastos.listar({ empresa: empresaDe(req) }));
+  res.json(await gastos.listar());
 });
 
 /** POST /api/gastos: registra un gasto ({ empresa, tipo, categoria, descripcion, monto, fechaPago?, soporteUrl?, causaDesde, causaCuotas?, destinos }). */
@@ -111,7 +111,7 @@ gastosRouter.put("/corte", async (req, res) => {
 
 /** GET /api/gastos/creditos: creditos con su tabla de amortizacion y saldo. */
 gastosRouter.get("/creditos", async (req, res) => {
-  res.json(await gastos.creditos({ empresa: empresaDe(req) }));
+  res.json(await gastos.creditos());
 });
 
 /** POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, tasaMensual, plazo, primeraCuota, cuotaFija?, prorratea, destinos, nota? }). */

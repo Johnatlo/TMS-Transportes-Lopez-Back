@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { cascadas, finDeMes, participacionesEn, pasoDe, repartirUtilidades } from "./calculoUtilidades";
+import { cascadas, cuentaSocio, finDeMes, participacionesEn, participacionPonderada, pasoDe, repartoMes } from "./calculoUtilidades";
 import type { Participacion, PartidaGasto, ViajeCascada } from "./calculoUtilidades";
 
 const SZX880 = 1;
@@ -38,6 +38,7 @@ const partida = (gastoId: number, monto: number, paso: PartidaGasto["paso"], veh
   vehiculoId,
   socioId,
   paso,
+  empresa: "LOPEZ",
 });
 
 describe("cascada de un vehiculo", () => {
@@ -73,48 +74,6 @@ describe("cascada de un vehiculo", () => {
   });
 });
 
-describe("reparto por socio", () => {
-  const participaciones: Participacion[] = [
-    { vehiculoId: SZX880, socioId: MAURICIO, porcentaje: 100, desde: "2000-01-01", hasta: "2026-09-30" },
-    // Desde octubre la SZX-880 es sociedad 50/50 Mauricio y Celso.
-    { vehiculoId: SZX880, socioId: MAURICIO, porcentaje: 50, desde: "2026-10-01", hasta: null },
-    { vehiculoId: SZX880, socioId: CELSO, porcentaje: 50, desde: "2026-10-01", hasta: null },
-    { vehiculoId: XJB207, socioId: LUISA, porcentaje: 100, desde: "2000-01-01", hasta: null },
-  ];
-  const lista = [
-    { ...cascadas([SZX880], [viaje(1, SZX880)], [])[0], utilidad: 1_000_001, saldoViajes: 2_437_163 },
-    { ...cascadas([XJB207], [viaje(2, XJB207)], [])[0], utilidad: 500_000, saldoViajes: 2_437_163 },
-  ];
-  // Chelo: 536.264 fijos a Celso (va solo a el).
-  const partidas = [partida(20, 536_264, "GENERAL", null, CELSO)];
-  const { socios, sinParticipacion } = repartirUtilidades(lista, participaciones, partidas, "2026-10-31");
-  const de = (id: number) => socios.find((s) => s.socioId === id)!;
-
-  test("la participacion vigente al cierre del mes: sociedad 50/50", () => {
-    expect(participacionesEn(participaciones, SZX880, "2026-09-15").map((p) => p.socioId)).toEqual([MAURICIO]);
-    expect(de(MAURICIO).utilidadVehiculos + de(CELSO).utilidadVehiculos).toBe(1_000_001);
-    expect([de(MAURICIO).utilidadVehiculos, de(CELSO).utilidadVehiculos]).toEqual([500_000.5, 500_000.5]);
-  });
-
-  test("los gastos propios del socio se le descuentan solo a el", () => {
-    expect(de(CELSO).totalGastosPropios).toBe(536_264);
-    expect(de(CELSO).total).toBe(500_000.5 - 536_264);
-    expect(de(MAURICIO).total).toBe(500_000.5);
-    expect(de(LUISA).total).toBe(500_000);
-  });
-
-  test("diferencia contra lo ya liquidado por los viajes", () => {
-    expect(de(LUISA).saldoViajes).toBe(2_437_163);
-    expect(de(LUISA).diferencia).toBe(500_000 - 2_437_163);
-  });
-
-  test("vehiculo sin participacion (o que no suma 100 %) queda aparte", () => {
-    const r = repartirUtilidades(lista, [{ vehiculoId: XJB207, socioId: LUISA, porcentaje: 60, desde: "2000-01-01", hasta: null }], [], "2026-10-31");
-    expect(r.sinParticipacion).toEqual([SZX880, XJB207]);
-    expect(r.socios).toEqual([]);
-  });
-});
-
 describe("paso de un gasto del libro", () => {
   test("nomina de conductor, directo, general", () => {
     expect(pasoDe({ esNominaConductor: true, destinosVehiculo: 1, destinosSocio: 0 })).toBe("CONDUCTOR");
@@ -127,29 +86,117 @@ describe("paso de un gasto del libro", () => {
   });
 });
 
-describe("lo ya liquidado por los viajes va al dueno en Flota", () => {
-  const EXTERNO = 40;
-  const participaciones: Participacion[] = [
-    { vehiculoId: XJB207, socioId: MAURICIO, porcentaje: 50, desde: "2000-01-01", hasta: null },
-    { vehiculoId: XJB207, socioId: EXTERNO, porcentaje: 50, desde: "2000-01-01", hasta: null },
-  ];
-  const lista = [{ ...cascadas([XJB207], [viaje(1, XJB207)], [])[0], utilidad: 2_000_000, saldoViajes: 2_437_163 }];
-
-  test("sociedad con un socio externo: el dueno recibio todo el saldo; el externo queda por cobrar su parte", () => {
-    const { socios } = repartirUtilidades(lista, participaciones, [], "2026-10-31", new Map([[XJB207, MAURICIO]]));
-    const de = (id: number) => socios.find((s) => s.socioId === id)!;
-    expect([de(MAURICIO).total, de(MAURICIO).saldoViajes, de(MAURICIO).diferencia]).toEqual([1_000_000, 2_437_163, -1_437_163]);
-    expect([de(EXTERNO).total, de(EXTERNO).saldoViajes, de(EXTERNO).diferencia]).toEqual([1_000_000, 0, 1_000_000]);
+describe("fondo por vehiculo (hoja de la SWK-973)", () => {
+  const SWK973 = 3;
+  const cascada = (vehiculoId: number, utilidad: number) => ({ ...cascadas([vehiculoId], [], [])[0], utilidad });
+  const base = (extra: Partial<Parameters<typeof repartoMes>[0]> = {}) => ({
+    lista: [cascada(SWK973, 13_854_672.16)],
+    fondos: new Map([[SWK973, { base: 10_000_000, saldoAnterior: 4_537_623 }]]),
+    liquidado: new Map<number, number>(),
+    repartimos: new Map<number, number>(),
+    participaciones: [
+      { vehiculoId: SWK973, socioId: MAURICIO, porcentaje: 50, desde: "2000-01-01", hasta: null },
+      { vehiculoId: SWK973, socioId: CELSO, porcentaje: 50, desde: "2000-01-01", hasta: null },
+    ],
+    partidas: [] as PartidaGasto[],
+    desde: "2026-09-01",
+    hasta: "2026-09-30",
+    receptor: new Map<number, number>(),
+    gmfPorMil: 4,
+    ...extra,
   });
 
-  test("el dueno que ya no tiene participacion igual figura con lo que recibio", () => {
-    const solo = [{ vehiculoId: XJB207, socioId: EXTERNO, porcentaje: 100, desde: "2000-01-01", hasta: null }];
-    const { socios } = repartirUtilidades(lista, solo, [], "2026-10-31", new Map([[XJB207, MAURICIO]]));
-    expect(socios.find((s) => s.socioId === MAURICIO)).toMatchObject({ total: 0, saldoViajes: 2_437_163, diferencia: -2_437_163 });
+  test("septiembre: queda 13.854.672,16 + mes anterior 4.537.623 - repartimos 8.000.000 = 10.392.295,16", () => {
+    const { fondos } = repartoMes(base({ repartimos: new Map([[SWK973, 8_000_000]]) }));
+    expect(fondos[0]).toMatchObject({
+      antesDeRepartir: 18_392_295.16,
+      disponible: 8_392_295.16,
+      sugerido: 8_392_295,
+      repartimos: 8_000_000,
+      saldoFinal: 10_392_295.16,
+    });
   });
 
-  test("sin dueno en Flota: el saldo se reparte segun la participacion", () => {
-    const { socios } = repartirUtilidades(lista, participaciones, [], "2026-10-31");
-    expect(socios.map((s) => s.saldoViajes).sort()).toEqual([1_218_581.5, 1_218_581.5]);
+  test("sin decir cuanto, se sugiere el disponible; con saldo negativo (motor Cummins) no se sugiere nada", () => {
+    expect(repartoMes(base()).fondos[0]).toMatchObject({ repartimos: 8_392_295, saldoFinal: 10_000_000.16 });
+    const abril = repartoMes(base({ lista: [cascada(SWK973, -41_994_983.46)], fondos: new Map([[SWK973, { base: 10_000_000, saldoAnterior: 12_097_282 }]]) }));
+    expect(abril.fondos[0]).toMatchObject({ antesDeRepartir: -29_897_701.46, sugerido: 0, repartimos: 0, saldoFinal: -29_897_701.46 });
+  });
+
+  test("lo repartido se divide segun la participacion y a cada socio se le descuenta el 4 x 1000", () => {
+    const { socios } = repartoMes(base({ repartimos: new Map([[SWK973, 8_000_000]]) }));
+    const m = socios.find((x) => x.socioId === MAURICIO)!;
+    expect([m.repartido, m.gmf, m.neto]).toEqual([4_000_000, 16_000, 3_984_000]);
+  });
+
+  test("lo liquidado al dueno sale del fondo; en la sociedad el que lo recibio le queda debiendo al otro", () => {
+    const r = repartoMes(base({ liquidado: new Map([[SWK973, 2_000_000]]), repartimos: new Map([[SWK973, 0]]), receptor: new Map([[SWK973, MAURICIO]]) }));
+    expect(r.fondos[0].antesDeRepartir).toBe(16_392_295.16);
+    const de = (id: number) => r.socios.find((x) => x.socioId === id)!;
+    expect([de(MAURICIO).liquidado, de(MAURICIO).recibido, de(MAURICIO).neto]).toEqual([1_000_000, 2_000_000, -1_000_000]);
+    expect([de(CELSO).liquidado, de(CELSO).recibido, de(CELSO).neto]).toEqual([1_000_000, 0, 1_000_000]);
+  });
+
+  test("dueno al 100 %: lo liquidado y lo recibido se cancelan", () => {
+    const r = repartoMes(
+      base({
+        participaciones: [{ vehiculoId: SWK973, socioId: MAURICIO, porcentaje: 100, desde: "2000-01-01", hasta: null }],
+        liquidado: new Map([[SWK973, 2_000_000]]),
+        repartimos: new Map([[SWK973, 0]]),
+        receptor: new Map([[SWK973, MAURICIO]]),
+      }),
+    );
+    expect(r.socios[0].neto).toBe(0);
+  });
+
+  test("los gastos propios del socio se le descuentan solo a el (Chelo: 536.264 a Celso)", () => {
+    const r = repartoMes(base({ repartimos: new Map([[SWK973, 0]]), partidas: [partida(20, 536_264, "GENERAL", null, CELSO)] }));
+    expect(r.socios.find((x) => x.socioId === CELSO)!.neto).toBe(-536_264);
+  });
+
+  test("participacion por dias: 100 % de A del 1 al 15 y 50/50 desde el 16 (octubre, 31 dias)", () => {
+    const ps = participacionPonderada(
+      [
+        { vehiculoId: SWK973, socioId: MAURICIO, porcentaje: 100, desde: "2000-01-01", hasta: "2026-10-15" },
+        { vehiculoId: SWK973, socioId: MAURICIO, porcentaje: 50, desde: "2026-10-16", hasta: null },
+        { vehiculoId: SWK973, socioId: CELSO, porcentaje: 50, desde: "2026-10-16", hasta: null },
+      ],
+      SWK973,
+      "2026-10-01",
+      "2026-10-31",
+    );
+    expect(ps).toEqual([
+      { socioId: MAURICIO, porcentaje: 74.1935 },
+      { socioId: CELSO, porcentaje: 25.8065 },
+    ]);
+    expect(participacionesEn([], SWK973, "2026-10-01")).toEqual([]);
+  });
+
+  test("vehiculo que reparte sin participacion completa queda aparte", () => {
+    const r = repartoMes(base({ participaciones: [{ vehiculoId: SWK973, socioId: LUISA, porcentaje: 60, desde: "2000-01-01", hasta: null }] }));
+    expect([r.sinParticipacion, r.socios]).toEqual([[SWK973], []]);
+  });
+});
+
+describe("cuenta del socio: lo que no alcanza se acumula para el mes siguiente", () => {
+  test("octubre debe 536.264 (no le alcanzo), noviembre recibe 1.000.000 y se le pagan 400.000", () => {
+    const meses = cuentaSocio(
+      0,
+      new Map([
+        ["2026-10", -536_264],
+        ["2026-11", 1_000_000],
+      ]),
+      [{ fecha: "2026-11-30", monto: 400_000 }],
+    );
+    expect(meses).toEqual([
+      { mes: "2026-10", saldoAnterior: 0, neto: -536_264, pagos: 0, saldo: -536_264 },
+      { mes: "2026-11", saldoAnterior: -536_264, neto: 1_000_000, pagos: 400_000, saldo: 63_736 },
+    ]);
+  });
+  test("arranca en su saldo inicial (lo que venia debiendo antes del sistema)", () => {
+    expect(cuentaSocio(-200_000, new Map([["2026-10", 150_000]]), []).at(-1)!.saldo).toBe(-50_000);
+  });
+  test("la parte que va a la empresa es de la empresa", () => {
+    expect(pasoDe({ esNominaConductor: false, destinosVehiculo: 3, destinosSocio: 0, aLaEmpresa: true })).toBe("EMPRESA");
   });
 });

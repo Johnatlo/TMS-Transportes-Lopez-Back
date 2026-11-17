@@ -1,14 +1,13 @@
 /**
  * Roles de los usuarios y lo que puede ver cada uno.
  *
- * - TOTAL: todo el aplicativo (hoy Principal y Admin).
- * - ADMINISTRATIVO: lo operativo del TMS (despacho, RNDC, Cuadro pagos,
- *   anticipos, cartera, pago a terceros...) y Rentabilidad, sin liquidar a
- *   los duenos, repartir ganancias ni liquidar a los empleados.
- * - MYC: Transportes M&C. Lo del RNDC (despachar, RNDC, plantillas, clientes,
- *   flota, conductores, preoperacional) y las cuentas solo de sus vehiculos
- *   (Rentabilidad, liquidacion y reparto de ganancias), sin los de Transportes
- *   Lopez ni los terceros.
+ * - TOTAL: todo el aplicativo (hoy Principal y Admin), incluido aprobar el
+ *   reparto y cambiar participaciones, socios y fondos.
+ * - ADMINISTRATIVO: ve y edita todo menos el reparto de los socios (fondos,
+ *   reparto y cuentas de socios) y el cambio de roles (17/11/2026).
+ * - MYC: Transportes M&C. Ve todo (tambien todos los gastos) menos la
+ *   rentabilidad de los terceros y el cambio de roles (17/11/2026). Registra
+ *   y cambia los gastos y empleados de su empresa.
  *
  * Que vehiculos ve cada rol lo dice vehiculos.empresa (LOPEZ o MYC) y
  * vehiculos.visibleTodos (los que ven todos, como el Volvo XGJ-197).
@@ -33,9 +32,11 @@ export type Area =
   | "OPERACION"
   /** Rentabilidad (filtrada por vehiculo segun el rol). */
   | "CUENTAS"
-  /** Liquidacion a duenos, reparto de ganancias y (despues) liquidacion de empleados. */
+  /** Liquidacion a duenos y la cascada de utilidades por vehiculo. */
   | "LIQUIDACION"
-  /** Libro de gastos y creditos (M&C: solo los de su empresa). */
+  /** Reparto de los socios: fondos de los vehiculos, reparto mensual y cuentas de socios. */
+  | "REPARTO"
+  /** Libro de gastos, creditos y nomina (M&C los ve todos; registra los de su empresa). */
   | "GASTOS"
   /** Configuracion de la empresa y la empresa de cada vehiculo. */
   | "ADMINISTRACION"
@@ -43,9 +44,9 @@ export type Area =
   | "USUARIOS";
 
 const AREAS: Record<Rol, Area[]> = {
-  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "ADMINISTRACION", "USUARIOS"],
-  ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "GASTOS", "ADMINISTRACION"],
-  MYC: ["RNDC", "CUENTAS", "LIQUIDACION", "GASTOS"],
+  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "ADMINISTRACION", "USUARIOS"],
+  ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "ADMINISTRACION"],
+  MYC: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "ADMINISTRACION"],
 };
 
 /** El rol tiene acceso a esa area. */
@@ -58,22 +59,26 @@ export interface VisibilidadVehiculo {
 }
 
 /**
- * El rol ve las cuentas de ese vehiculo: TOTAL y ADMINISTRATIVO todos
- * (propios y terceros); MYC solo los de M&C y los marcados para todos.
+ * El rol ve las cuentas (rentabilidad) de ese vehiculo: TOTAL y
+ * ADMINISTRATIVO todos; MYC los de la flota propia (Lopez y M&C) y los
+ * marcados para todos, no los de terceros.
  */
 export function veCuentasDe(rol: Rol, v: VisibilidadVehiculo | null | undefined): boolean {
-  if (rol === "MYC") return !!v && (v.empresa === "MYC" || v.visibleTodos);
+  if (rol === "MYC") return !!v && (!!v.empresa || v.visibleTodos);
   return true;
 }
 
+/** El rol ve la rentabilidad de los viajes de terceros (M&C no). */
+export const veRentabilidadTerceros = (rol: Rol) => rol !== "MYC";
+
 /**
- * El rol ve ese vehiculo en lo operativo filtrado por empresa (perfil de
- * vehiculos, preoperacional): TOTAL y ADMINISTRATIVO todos; MYC los suyos y
- * los marcados para todos.
+ * El rol ve ese vehiculo en lo operativo (perfil de vehiculos,
+ * preoperacional). Desde el 17/11/2026 todos los roles ven todos.
  */
 export function veVehiculo(rol: Rol, v: VisibilidadVehiculo | null | undefined): boolean {
-  if (rol !== "MYC") return true;
-  return !!v && (v.empresa === "MYC" || v.visibleTodos);
+  void rol;
+  void v;
+  return true;
 }
 
 /** Placa comparable (sin guion ni espacios, en mayuscula). */
@@ -96,6 +101,19 @@ export const VISIBLES_PARA_TODOS_INICIAL = ["XGJ197"];
  * administre los usuarios. Es el correo publico de la empresa.
  */
 export const CORREOS_SIEMPRE_TOTAL = ["transporteslopezcsas@gmail.com"];
+
+/**
+ * Las cuentas con acceso total siempre: la principal y las que se pongan en
+ * TMS_CORREOS_TOTAL (separadas por comas) en el .env del servidor. Los
+ * correos personales van ahi y no en el codigo.
+ */
+export function correosSiempreTotal(): string[] {
+  const extra = (process.env.TMS_CORREOS_TOTAL ?? "")
+    .split(",")
+    .map((c) => c.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set([...CORREOS_SIEMPRE_TOTAL, ...extra])];
+}
 
 /** Nombres de los usuarios que quedan con acceso total al crear los roles; los demas quedan administrativos. */
 export const NOMBRES_TOTAL_INICIAL = ["PRINCIPAL", "ADMIN"];

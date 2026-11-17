@@ -14,8 +14,9 @@
  *   conductor sale de los viajes del cuadro (flete de los vehiculos que
  *   manejaba en el mes del producido, por defecto el mes calendario en que
  *   empieza la nomina); se puede escribir a mano y volver al del sistema.
- *   Si manejo varios carros, su costo se reparte entre ellos segun lo que
- *   produjo en cada uno. Mientras es borrador se
+ *   Si manejo varios carros, su costo se reparte entre ellos: lo que sale del
+ *   producido segun lo que produjo en cada uno y el resto por los dias que
+ *   tuvo cada uno. Mientras es borrador se
  *   calcula con los datos actuales; al aprobarla el calculo queda guardado y
  *   se crea un gasto por empleado (categoria NOMINA) por su costo total,
  *   causado por dias entre los meses del periodo: el del conductor a su
@@ -24,7 +25,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
-import { calcularLinea, diasPeriodo, mesDe, producidoPorConductor } from "./calculoNomina";
+import { calcularLinea, diasPeriodo, diasPorVehiculo, mesDe, pesosConductor, producidoPorConductor } from "./calculoNomina";
 import type { CalculoLinea, EntradaLinea, ParametrosNomina, ProducidoConductor, ViajeProducido } from "./calculoNomina";
 import { gastos, EMPRESAS } from "./gastos";
 import type { Destino } from "./prorrateo";
@@ -188,7 +189,7 @@ async function destinosValidos(x: unknown): Promise<Destino[]> {
   const lista = Array.isArray(x) ? x : [];
   const destinos: Destino[] = [];
   for (const d of lista as Array<Record<string, unknown>>) {
-    const tipo = d.tipo === "SOCIO" ? "SOCIO" : "VEHICULO";
+    const tipo = d.tipo === "SOCIO" ? "SOCIO" : d.tipo === "EMPRESA" ? "EMPRESA" : "VEHICULO";
     const modo = d.modo === "FIJO" || d.modo === "PORCENTAJE" ? d.modo : "PARTE";
     const id = Number(d.id);
     const valor = Number(d.valor);
@@ -634,7 +635,7 @@ export const nomina = {
             monto: l.calculo.costoTotal,
             causaDesde: n.desde,
             causaHasta: n.hasta,
-            destinos: e.tipo === "CONDUCTOR" ? destinosConductor(l) : e.destinos,
+            destinos: e.tipo === "CONDUCTOR" ? destinosConductor(l, e, n.desde, n.hasta) : e.destinos,
           },
           usuarioId,
           { origen: "NOMINA", creditoId: null, nominaId },
@@ -696,11 +697,19 @@ async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProdu
     .map((f) => ({ id: f.id, fecha: dia(f.fecha)!, vehiculoId: f.vehiculoId, flete: f.flete === null ? null : Number(f.flete) }));
 }
 
-/** A quien va el costo de un conductor: sus vehiculos segun lo que produjo en cada uno; si no produjo, el vehiculo de la linea. */
-function destinosConductor(l: LineaNomina): Destino[] {
-  const con = l.porVehiculo.filter((v) => v.producido > 0);
-  if (con.length) return con.map((v) => ({ tipo: "VEHICULO", id: v.vehiculoId, modo: "PARTE", valor: v.producido }));
-  return [{ tipo: "VEHICULO", id: l.vehiculoId!, modo: "PARTE", valor: 1 }];
+/**
+ * A quien va el costo de un conductor: si manejo varios carros en el periodo,
+ * la parte del producido segun lo que produjo en cada uno y el resto segun
+ * los dias que tuvo cada uno (ver pesosConductor); si no hay datos, el
+ * vehiculo de la linea.
+ */
+function destinosConductor(l: LineaNomina, e: Empleado, desde: string, hasta: string): Destino[] {
+  const producido = new Map(l.porVehiculo.map((v) => [v.vehiculoId, v.producido]));
+  const dias = diasPorVehiculo(e.vehiculos, desde, hasta);
+  if (!dias.size && l.vehiculoId) dias.set(l.vehiculoId, 1);
+  const pesos = [...pesosConductor(l.calculo, producido, dias).entries()].filter(([, p]) => p > 0);
+  if (!pesos.length) return [{ tipo: "VEHICULO", id: l.vehiculoId!, modo: "PARTE", valor: 1 }];
+  return pesos.map(([id, p]) => ({ tipo: "VEHICULO", id, modo: "PARTE", valor: Math.round(p * 1_000_000) / 1_000_000 }));
 }
 
 const VACIOS: Omit<ParametrosNomina, "anio"> = {

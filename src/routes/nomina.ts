@@ -7,8 +7,8 @@ import type { EmpresaVehiculo } from "../roles";
 
 /**
  * Empleados, parametros de nomina y nominas (ver src/nomina.ts). Montado en
- * /api/nomina con sesion y el area GASTOS. Transportes M&C solo ve y cambia
- * sus empleados (y sus lineas en las nominas); crear, aprobar, reabrir y
+ * /api/nomina con sesion y el area GASTOS. Transportes M&C ve todo y cambia
+ * solo sus empleados (y sus lineas en las nominas); crear, aprobar, reabrir y
  * borrar nominas es del rol total y el administrativo; los parametros, solo
  * del rol total.
  */
@@ -55,7 +55,7 @@ nominaRouter.put("/parametros", async (req, res) => {
 
 /** GET /api/nomina/empleados: empleados (M&C: los suyos). */
 nominaRouter.get("/empleados", async (req, res) => {
-  res.json(await nomina.empleados({ empresa: empresaDe(req) }));
+  res.json(await nomina.empleados());
 });
 
 /** POST /api/nomina/empleados: crea un empleado. */
@@ -109,7 +109,7 @@ nominaRouter.delete("/empleados/:id/vehiculos/:asignacion", async (req, res) => 
 
 /** GET /api/nomina: nominas con sus lineas (M&C: solo las de sus empleados). */
 nominaRouter.get("/", async (req, res) => {
-  res.json(await nomina.nominas({ empresa: empresaDe(req) }));
+  res.json(await nomina.nominas());
 });
 
 /** POST /api/nomina: crea una nomina ({ desde, hasta, nota? }) con los empleados activos. */

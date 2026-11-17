@@ -6,8 +6,9 @@
  * - Un gasto (o ingreso) tiene empresa, categoria, monto, fecha de pago (flujo
  *   de caja) y una o varias causaciones mensuales (rentabilidad): un seguro
  *   anual se paga una vez y se causa en 12 meses.
- * - Destinos: los vehiculos que se marquen (una parte por carro) y/o partes
- *   directas a socios (valor fijo, porcentaje o partes).
+ * - Destinos: los vehiculos que se marquen (una parte por carro), partes
+ *   directas a socios (valor fijo, porcentaje o partes) y/o la empresa (lo
+ *   que no se le carga a ningun carro: baja la rentabilidad de la empresa).
  * - El reparto se calcula al guardar y queda escrito (gastos_reparto): no
  *   cambia solo. Editar el gasto lo recalcula, y solo se puede en meses
  *   abiertos (periodos_cierre).
@@ -128,12 +129,12 @@ function linkDe(v: unknown): string | null {
 
 /** Destinos que llegan del navegador, validados contra los vehiculos propios y los socios. */
 async function leerDestinos(x: unknown): Promise<Destino[]> {
-  if (!Array.isArray(x) || !x.length) throw new ErrorCuadro("Elige a que vehiculos o socios va.");
+  if (!Array.isArray(x) || !x.length) throw new ErrorCuadro("Elige a que vehiculos, socios o a la empresa va.");
   const [vehiculos] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE eliminado = 0 AND empresa IS NOT NULL");
   const [socios] = await pool.query<RowDataPacket[]>("SELECT id FROM socios");
-  const validos = { VEHICULO: new Set(vehiculos.map((v) => v.id)), SOCIO: new Set(socios.map((s) => s.id)) };
+  const validos = { VEHICULO: new Set(vehiculos.map((v) => v.id)), SOCIO: new Set(socios.map((s) => s.id)), EMPRESA: new Set([0]) };
   return x.map((d) => {
-    const tipo = d?.tipo === "SOCIO" ? "SOCIO" : "VEHICULO";
+    const tipo = d?.tipo === "SOCIO" ? "SOCIO" : d?.tipo === "EMPRESA" ? "EMPRESA" : "VEHICULO";
     const modo = d?.modo === "FIJO" || d?.modo === "PORCENTAJE" ? d.modo : "PARTE";
     const id = Number(d?.id);
     const valor = Number(d?.valor);

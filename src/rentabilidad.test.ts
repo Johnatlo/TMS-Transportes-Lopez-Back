@@ -176,6 +176,8 @@ describe("grupoDe", () => {
   test("por placa, terceros, socio o propios", () => {
     expect(grupoDe("TEK-298", "TERCERO", "CELSO")).toBe("CELSO");
     expect(grupoDe("XJB207", "LOPEZ", "MAURICIO")).toBe("SOCIEDAD");
+    // Con dos o mas socios en Participaciones pasa a SOCIEDAD; los de hoja propia conservan la suya.
+    expect([grupoDe("SZX880", "LOPEZ", "MAURICIO", true), grupoDe("SWK973", "LOPEZ", null, true), grupoDe("SZX880", "LOPEZ", "MAURICIO")]).toEqual(["SOCIEDAD", "SWK-973", "MAURICIO"]);
     expect(grupoDe("SPS199", "TERCERO", null)).toBe("TERCEROS");
     expect(grupoDe("ZAP745", "TERCERO", "CELSO")).toBe("CELSO");
     expect(grupoDe("ABC123", "LOPEZ", null)).toBe("PROPIOS");

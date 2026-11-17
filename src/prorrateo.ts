@@ -36,8 +36,9 @@ export function repartir(total: number, pesos: number[]): number[] {
 
 /** A quien va una parte del gasto. */
 export interface Destino {
-  tipo: "VEHICULO" | "SOCIO";
-  /** Id del vehiculo o del socio. */
+  /** EMPRESA: lo asume la empresa (no se carga a ningun vehiculo ni socio; id 0). */
+  tipo: "VEHICULO" | "SOCIO" | "EMPRESA";
+  /** Id del vehiculo o del socio (0 para la empresa). */
   id: number;
   /**
    * FIJO: `valor` pesos; PORCENTAJE: `valor` % del gasto; PARTE: `valor`
@@ -65,7 +66,7 @@ export class ErrorReparto extends Error {}
  */
 export function repartirGasto(total: number, destinos: Destino[]): ParteRepartida[] {
   if (total <= 0) throw new ErrorReparto("El valor del gasto debe ser mayor que cero.");
-  if (!destinos.length) throw new ErrorReparto("Elige a que vehiculos o socios va el gasto.");
+  if (!destinos.length) throw new ErrorReparto("Elige a que vehiculos, socios o a la empresa va el gasto.");
   if (destinos.some((d) => !(d.valor > 0))) throw new ErrorReparto("Cada destino necesita un valor mayor que cero.");
   const directos = destinos.filter((d) => d.modo !== "PARTE");
   const porPartes = destinos.filter((d) => d.modo === "PARTE");

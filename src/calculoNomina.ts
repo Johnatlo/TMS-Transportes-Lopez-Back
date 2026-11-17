@@ -219,3 +219,43 @@ export function mesDe(fecha: string): { desde: string; hasta: string } {
   const mm = String(m).padStart(2, "0");
   return { desde: `${a}-${mm}-01`, hasta: `${a}-${mm}-${ultimo}` };
 }
+
+/**
+ * Pesos para repartir el costo de un conductor entre los vehiculos que
+ * manejo en el periodo: la parte que sale del producido (variable y viaticos)
+ * segun lo que produjo en cada carro, y el resto (basico, auxilio y su carga)
+ * segun los dias que manejo cada uno. Si no produjo nada, todo por dias; si no
+ * hay dias, todo por producido. Los pesos suman 1.
+ */
+export function pesosConductor(
+  c: Pick<CalculoLinea, "variable" | "viaticos" | "devengado">,
+  producidoPor: Map<number, number>,
+  diasPor: Map<number, number>,
+): Map<number, number> {
+  const totalProd = [...producidoPor.values()].reduce((s, x) => s + Math.max(0, x), 0);
+  const totalDias = [...diasPor.values()].reduce((s, x) => s + Math.max(0, x), 0);
+  let f = c.devengado > 0 ? (c.variable + c.viaticos) / c.devengado : 0;
+  if (totalProd <= 0) f = 0;
+  if (totalDias <= 0) f = totalProd > 0 ? 1 : 0;
+  const pesos = new Map<number, number>();
+  for (const [v, p] of producidoPor) if (totalProd > 0 && p > 0) pesos.set(v, (pesos.get(v) ?? 0) + (f * p) / totalProd);
+  for (const [v, d] of diasPor) if (totalDias > 0 && d > 0) pesos.set(v, (pesos.get(v) ?? 0) + ((1 - f) * d) / totalDias);
+  return pesos;
+}
+
+/** Dias que el conductor tuvo cada vehiculo dentro del periodo (por su asignacion con fechas). */
+export function diasPorVehiculo(
+  asignaciones: Array<{ vehiculoId: number; desde: string; hasta: string | null }>,
+  desde: string,
+  hasta: string,
+): Map<number, number> {
+  const dias = new Map<number, number>();
+  for (const a of asignaciones) {
+    const ini = a.desde > desde ? a.desde : desde;
+    const fin = a.hasta && a.hasta < hasta ? a.hasta : hasta;
+    if (fin < ini) continue;
+    const n = Math.round((Date.parse(fin) - Date.parse(ini)) / 86_400_000) + 1;
+    dias.set(a.vehiculoId, (dias.get(a.vehiculoId) ?? 0) + n);
+  }
+  return dias;
+}

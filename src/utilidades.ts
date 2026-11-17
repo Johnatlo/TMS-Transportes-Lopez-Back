@@ -1,48 +1,105 @@
 /**
- * Utilidades (fase 3 del modulo de gastos): cascada de rentabilidad por
- * vehiculo y reparto entre socios de un mes, participaciones (quien es dueno
- * de que vehiculo y en que porcentaje, con vigencia) y aprobacion del reparto.
- * Los calculos estan en calculoUtilidades.ts.
+ * Utilidades (fases 3 y 4 del modulo de gastos): cascada de rentabilidad por
+ * vehiculo, fondo de cada vehiculo y reparto entre socios mes a mes,
+ * participaciones (quien es dueno de que vehiculo y en que porcentaje, con
+ * vigencia), rentabilidad de la empresa y la cuenta de cada socio. Los
+ * calculos estan en calculoUtilidades.ts.
  *
  * - Viajes: los de Rentabilidad (flete, descuentos, anticipos y saldo del
  *   dueno, ya calculados) de los vehiculos de la flota propia, por su fecha.
- * - Libro de gastos: lo que le toco a cada vehiculo o socio (gastos_reparto)
- *   en el mes, por fecha de causacion; los ingresos restan.
- * - Participaciones: por defecto 100 % del dueno del vehiculo; una sociedad
- *   se registra con sus porcentajes desde una fecha (lo anterior no cambia).
- * - Aprobar el reparto de un mes guarda la foto (repartos_utilidades); el mes
- *   debe estar cerrado en Gastos. Mientras este aprobado, el mes no se abre.
- * - Socios: los de la empresa y los externos (solo estan en una sociedad).
- *   La cuenta de cada socio suma lo que se le repartio en los meses aprobados
- *   menos los pagos que se le han hecho (pagos_socios) = saldo por pagar.
+ * - Libro de gastos: lo que le toco a cada vehiculo, socio o a la empresa
+ *   (gastos_reparto) en el mes, por fecha de causacion; los ingresos restan.
+ * - Fondo de cada vehiculo: arranca en el mes de inicio de los gastos con su
+ *   saldo inicial; cada mes suma la utilidad, resta lo que se le pago al dueno
+ *   por los viajes (por la fecha de pago) y lo que se reparte. La base
+ *   (10.000.000 por defecto) no se reparte. Todo editable (fondos_vehiculo).
+ * - Aprobar un mes: el mes debe estar cerrado en Gastos y el anterior
+ *   aprobado (el saldo de cada fondo sale de ahi). Se guarda la foto
+ *   (repartos_utilidades) con lo que se decidio repartir de cada vehiculo.
+ *   Solo se anula el ultimo mes aprobado.
+ * - Empresa: la ganancia de los viajes de terceros (de Rentabilidad) menos
+ *   los gastos que asume la empresa. No se reparte.
+ * - Socios: los de la empresa y los externos. La cuenta de cada socio arranca
+ *   en su saldo inicial, suma el neto de cada mes aprobado y resta los pagos
+ *   (pagos_socios); lo que no le alcanza se acumula para el mes siguiente.
  */
 import type { RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
 import { rentabilidad } from "./rentabilidad";
-import { cascadas, finDeMes, participacionesEn, pasoDe, repartirUtilidades } from "./calculoUtilidades";
-import type { Cascada, Participacion, PartidaGasto, RepartoSocio, ViajeCascada } from "./calculoUtilidades";
+import { cascadas, cuentaSocio, finDeMes, participacionPonderada, pasoDe, repartoMes } from "./calculoUtilidades";
+import type { Cascada, FondoVehiculo, MesCuenta, Participacion, PartidaGasto, RepartoSocio, ViajeCascada } from "./calculoUtilidades";
 import type { EmpresaVehiculo } from "./roles";
 
-/** La cascada y el reparto de un mes. */
+/** Un viaje de terceros en la rentabilidad de la empresa. */
+export interface ViajeTercero {
+  id: number;
+  fecha: string;
+  placa: string;
+  tercero: string | null;
+  cliente: string;
+  manifiesto: string | null;
+  flete: number;
+  saldoEmpresa: number;
+  saldoTercero: number;
+  rentabilidad: number;
+  anticipoRenta: number;
+  ganancia: number;
+}
+
+/** La cascada, el fondo y el reparto de un mes. */
 export interface UtilidadesMes {
   mes: string;
+  /** Mes en que arrancan los fondos (el de la fecha de inicio de los gastos). */
+  inicio: string;
   /** Mes cerrado en Gastos. */
   cerrado: boolean;
-  /** Si el reparto esta aprobado: quien y cuando (y entonces los datos son la foto guardada). */
+  /** Si esta aprobado: quien y cuando (y entonces los datos son la foto guardada). */
   aprobado: { por: string | null; en: string } | null;
+  /** Meses anteriores sin aprobar (el saldo anterior de los fondos no los incluye). */
+  pendientes: string[];
+  gmfPorMil: number;
   vehiculos: Array<{
     vehiculoId: number;
     placa: string;
     empresa: EmpresaVehiculo;
     dueno: string | null;
+    /** Participacion del mes, ponderada por los dias. */
     participaciones: Array<{ socioId: number; socio: string; porcentaje: number }>;
     cascada: Cascada;
     detalleViajes: ViajeCascada[];
+    fondo: FondoVehiculo | null;
   }>;
-  socios: Array<RepartoSocio & { nombre: string }>;
-  /** Vehiculos con utilidad pero sin participacion que sume 100 %: su utilidad no se reparte. */
+  socios: Array<RepartoSocio & { nombre: string; externo: boolean }>;
+  /** Vehiculos que reparten o liquidan algo sin participacion que sume 100 %. */
   sinParticipacion: string[];
+  /** Rentabilidad de la empresa (no se reparte). */
+  empresa: {
+    viajesTerceros: number;
+    gananciaTerceros: number;
+    detalleTerceros: ViajeTercero[];
+    gastos: PartidaGasto[];
+    totalGastos: number;
+    utilidad: number;
+  };
+}
+
+/** Lo que ve cada rol de Utilidades. */
+export interface VistaUtilidades {
+  /** Fondos y reparto por socio (administrativas: no). */
+  reparto: boolean;
+  /** Rentabilidad de los viajes de terceros (M&C: no). */
+  terceros: boolean;
+}
+
+/** Configuracion del fondo de un vehiculo. */
+export interface ConfigFondo {
+  vehiculoId: number;
+  placa: string;
+  empresa: EmpresaVehiculo;
+  base: number;
+  saldoInicial: number;
+  nota: string | null;
 }
 
 /** Un socio: de la empresa o externo (solo esta en una sociedad). */
@@ -53,22 +110,30 @@ export interface Socio {
   externo: boolean;
   documento: string | null;
   nota: string | null;
+  /** Lo que se le debia (o el debia, negativo) antes de empezar en el sistema. */
+  saldoInicial: number;
 }
 
-/** La cuenta de un socio: lo repartido por mes, sus pagos y el saldo. */
+/** La cuenta de un socio: cada mes con su detalle, sus pagos y el saldo. */
 export interface CuentaSocio extends Socio {
-  meses: Array<{ mes: string; utilidadVehiculos: number; gastosPropios: number; total: number; vehiculos: number }>;
+  meses: Array<MesCuenta & { detalle: Pick<RepartoSocio, "repartido" | "gmf" | "liquidado" | "recibido" | "totalGastosPropios"> | null }>;
   pagos: Array<{ id: number; fecha: string; monto: number; nota: string | null; soporteUrl: string | null; registradoPor: string | null }>;
-  repartido: number;
-  pagado: number;
-  /** repartido - pagado: lo que falta por pagarle (negativo = lo que debe). */
+  /** Lo que se le debe hoy (negativo = lo que debe el). */
   saldo: number;
 }
+
+/** Lo que se lee de la foto de un mes aprobado para el fondo del siguiente. */
+type FotoMes = { vehiculos?: Array<{ fondo: FondoVehiculo | null }> };
+
+/** Base de un fondo cuando no se ha configurado. */
+export const BASE_POR_DEFECTO = 10_000_000;
 
 /** Normaliza una placa ("SZX-880" -> "SZX880"). */
 const placaClave = (p: string) => p.replace(/[^A-Z0-9]/gi, "").toUpperCase();
 /** El dia anterior a una fecha. */
 const diaAntes = (f: string) => new Date(Date.parse(f) - 86_400_000).toISOString().slice(0, 10);
+/** Redondea a centavos. */
+const c2 = (v: number) => Math.round(v * 100) / 100;
 /** JSON guardado a objeto. */
 function json<T>(v: unknown, defecto: T): T {
   try {
@@ -77,56 +142,85 @@ function json<T>(v: unknown, defecto: T): T {
     return defecto;
   }
 }
-
 /** Mes "AAAA-MM" valido. */
 function mesDe(v: unknown): string {
   const m = String(v ?? "");
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) throw new ErrorCuadro("Elige el mes.");
   return m;
 }
+/** El mes anterior a "AAAA-MM". */
+const mesAnterior = (m: string) => {
+  const [a, n] = m.split("-").map(Number);
+  return n === 1 ? `${a - 1}-12` : `${a}-${String(n - 1).padStart(2, "0")}`;
+};
+/** Fecha (Date o texto) a ISO. */
+const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : String(v));
 
-/** Utilidades, participaciones y socios. */
+/** Mes de inicio de los fondos (el de la fecha de inicio de los gastos) y el 4 x 1000. */
+async function parametros(): Promise<{ inicio: string; gmfPorMil: number }> {
+  const [[p]] = await pool.query<RowDataPacket[]>("SELECT gastosDesde, gmfPorMil FROM parametros_empresa WHERE id = 1");
+  return {
+    inicio: (dia(p?.gastosDesde) ?? "2026-10-01").slice(0, 7),
+    gmfPorMil: p?.gmfPorMil === undefined || p?.gmfPorMil === null ? 4 : Number(p.gmfPorMil),
+  };
+}
+
+/** Lo que se decidio repartir de cada vehiculo ({ vehiculoId: monto }), validado. */
+function repartimosDe(x: unknown): Map<number, number> {
+  const r = new Map<number, number>();
+  if (!x || typeof x !== "object") return r;
+  for (const [k, v] of Object.entries(x as Record<string, unknown>)) {
+    if (v === null || v === undefined || v === "") continue;
+    const monto = Number(v);
+    if (!Number.isFinite(monto) || monto < 0) throw new ErrorCuadro("Lo que se reparte de cada vehiculo debe ser un valor de cero o mas.");
+    r.set(Number(k), Math.round(monto * 100) / 100);
+  }
+  return r;
+}
+
+/** Utilidades, fondos, participaciones y socios. */
 export const utilidades = {
-  /** Cascada por vehiculo y reparto por socio del mes (M&C: solo sus vehiculos). */
-  async mes(mesTexto: unknown, filtro: { empresa?: EmpresaVehiculo | null } = {}): Promise<UtilidadesMes> {
+  /** Cascada, fondo y reparto del mes, segun lo que ve el rol. Con `repartimos`, simula (aunque este aprobado). */
+  async mes(mesTexto: unknown, vista: VistaUtilidades, repartimos?: unknown): Promise<UtilidadesMes> {
     const mes = mesDe(mesTexto);
     const [[aprob]] = await pool.query<RowDataPacket[]>(
       "SELECT r.datos, r.aprobadoEn, u.nombre AS por FROM repartos_utilidades r LEFT JOIN usuarios u ON u.id = r.aprobadoPorId WHERE r.mes = ?",
       [mes],
     );
     const [[cierre]] = await pool.query<RowDataPacket[]>("SELECT 1 AS si FROM periodos_cierre WHERE mes = ?", [mes]);
-    const datos: Omit<UtilidadesMes, "cerrado" | "aprobado"> = aprob ? json(aprob.datos, null)! : await this.calcular(mes);
-    const aprobado = aprob
-      ? { por: aprob.por ?? null, en: aprob.aprobadoEn instanceof Date ? aprob.aprobadoEn.toISOString() : String(aprob.aprobadoEn) }
-      : null;
-    const resultado: UtilidadesMes = { ...datos, cerrado: !!cierre, aprobado };
-    if (!filtro.empresa) return resultado;
-    // M&C: solo sus vehiculos y el reparto que sale de ellos (y los gastos propios de M&C).
-    const vehiculos = resultado.vehiculos.filter((v) => v.empresa === filtro.empresa);
-    const ids = new Set(vehiculos.map((v) => v.vehiculoId));
-    const c2 = (v: number) => Math.round(v * 100) / 100;
-    const socios = resultado.socios
-      .map((s) => {
-        const porVehiculo = s.porVehiculo.filter((v) => ids.has(v.vehiculoId));
-        const utilidadVehiculos = c2(porVehiculo.reduce((t, v) => t + v.utilidad, 0));
-        const saldoViajes = c2(porVehiculo.reduce((t, v) => t + v.saldoViajes, 0));
-        const total = c2(utilidadVehiculos - s.totalGastosPropios);
-        return { ...s, porVehiculo, utilidadVehiculos, saldoViajes, total, diferencia: c2(total - saldoViajes) };
-      })
-      .filter((s) => s.porVehiculo.length);
-    return { ...resultado, vehiculos, socios, sinParticipacion: resultado.sinParticipacion.filter((p) => vehiculos.some((v) => v.placa === p)) };
+    const datos: Omit<UtilidadesMes, "cerrado" | "aprobado"> =
+      aprob && repartimos === undefined ? json(aprob.datos, null)! : await this.calcular(mes, repartimosDe(repartimos));
+    const resultado: UtilidadesMes = {
+      ...datos,
+      cerrado: !!cierre,
+      aprobado: aprob ? { por: aprob.por ?? null, en: iso(aprob.aprobadoEn) } : null,
+    };
+    return this.recortar(resultado, vista);
   },
 
-  /** Calcula la cascada y el reparto del mes con los datos actuales. */
-  async calcular(mes: string): Promise<Omit<UtilidadesMes, "cerrado" | "aprobado">> {
+  /** Quita lo que el rol no ve: el reparto (administrativas) o los terceros (M&C). */
+  recortar(u: UtilidadesMes, vista: VistaUtilidades): UtilidadesMes {
+    let r = u;
+    if (!vista.reparto) r = { ...r, vehiculos: r.vehiculos.map((v) => ({ ...v, fondo: null })), socios: [], sinParticipacion: [] };
+    if (!vista.terceros) {
+      const totalGastos = r.empresa.totalGastos;
+      r = { ...r, empresa: { viajesTerceros: 0, gananciaTerceros: 0, detalleTerceros: [], gastos: r.empresa.gastos, totalGastos, utilidad: c2(-totalGastos) } };
+    }
+    return r;
+  },
+
+  /** Calcula el mes con los datos actuales y lo que se reparte de cada vehiculo (lo que falte: el sugerido). */
+  async calcular(mes: string, repartimos: Map<number, number>): Promise<Omit<UtilidadesMes, "cerrado" | "aprobado">> {
+    const { inicio, gmfPorMil } = await parametros();
     const desde = `${mes}-01`;
     const hasta = finDeMes(mes);
     const [flota] = await pool.query<RowDataPacket[]>(
       "SELECT id, placa, empresa, dueno FROM vehiculos WHERE eliminado = 0 AND empresa IS NOT NULL ORDER BY empresa, placa",
     );
     const porPlaca = new Map(flota.map((v) => [placaClave(v.placa), v.id as number]));
+    const filasRent = await rentabilidad.listar();
     // 1 y 2 (y los anticipos del 3): los viajes de Rentabilidad de la flota propia en el mes.
-    const viajes: ViajeCascada[] = (await rentabilidad.listar())
+    const viajes: ViajeCascada[] = filasRent
       .filter((f) => f.fecha >= desde && f.fecha <= hasta && porPlaca.has(placaClave(f.placa)))
       .map((f) => ({
         id: f.id,
@@ -148,14 +242,38 @@ export const utilidades = {
         anticipo: f.anticipo,
         saldoBeneficiario: f.saldoBeneficiario,
       }));
-    // 3, 4 y 5: lo que le toco a cada vehiculo o socio del libro de gastos en el mes.
+    // Lo que se le pago al dueno por los viajes en el mes (por la fecha de pago, sea cual sea la del viaje).
+    const liquidado = new Map<number, number>();
+    for (const f of filasRent) {
+      const id = porPlaca.get(placaClave(f.placa));
+      if (!id || !f.fechaPagoBeneficiario || f.fechaPagoBeneficiario < desde || f.fechaPagoBeneficiario > hasta) continue;
+      liquidado.set(id, c2((liquidado.get(id) ?? 0) + f.saldoBeneficiario));
+    }
+    // Empresa: la ganancia de los viajes de terceros del mes.
+    const detalleTerceros: ViajeTercero[] = filasRent
+      .filter((f) => f.grupo === "TERCEROS" && f.fecha >= desde && f.fecha <= hasta)
+      .map((f) => ({
+        id: f.id,
+        fecha: f.fecha,
+        placa: f.placa,
+        tercero: f.tercero,
+        cliente: f.empresa,
+        manifiesto: f.manifiesto,
+        flete: f.valorEmpresa,
+        saldoEmpresa: f.saldoEmpresa,
+        saldoTercero: f.saldoBeneficiario,
+        rentabilidad: f.rentabilidad,
+        anticipoRenta: f.anticipoRenta,
+        ganancia: f.ganancia,
+      }));
+    // 3, 4, 5 y lo de la empresa: lo que le toco a cada vehiculo, socio o a la empresa del libro de gastos.
     const [filas] = await pool.query<RowDataPacket[]>(
-      `SELECT r.gastoId, r.vehiculoId, r.socioId, SUM(r.monto) AS monto, g.descripcion, g.categoria, g.tipo, g.destinos,
+      `SELECT r.gastoId, r.vehiculoId, r.socioId, SUM(r.monto) AS monto, g.descripcion, g.categoria, g.tipo, g.destinos, g.empresa,
               MAX(e.tipo = 'CONDUCTOR') AS nominaConductor
          FROM gastos_reparto r JOIN gastos g ON g.id = r.gastoId
          LEFT JOIN nomina_lineas nl ON nl.gastoId = g.id LEFT JOIN empleados e ON e.id = nl.empleadoId
         WHERE g.anulado = 0 AND r.fecha BETWEEN ? AND ?
-        GROUP BY r.gastoId, r.vehiculoId, r.socioId, g.descripcion, g.categoria, g.tipo, g.destinos`,
+        GROUP BY r.gastoId, r.vehiculoId, r.socioId, g.descripcion, g.categoria, g.tipo, g.destinos, g.empresa`,
       [desde, hasta],
     );
     const partidas: PartidaGasto[] = filas.map((f) => {
@@ -164,13 +282,15 @@ export const utilidades = {
         gastoId: f.gastoId,
         descripcion: f.descripcion,
         categoria: f.categoria,
-        monto: Math.round((f.tipo === "INGRESO" ? -1 : 1) * Number(f.monto) * 100) / 100,
+        monto: c2((f.tipo === "INGRESO" ? -1 : 1) * Number(f.monto)),
         vehiculoId: f.vehiculoId ?? null,
         socioId: f.socioId ?? null,
+        empresa: f.empresa,
         paso: pasoDe({
           esNominaConductor: !!Number(f.nominaConductor),
           destinosVehiculo: destinos.filter((d) => d.tipo === "VEHICULO").length,
           destinosSocio: destinos.filter((d) => d.tipo === "SOCIO").length,
+          aLaEmpresa: !f.vehiculoId && !f.socioId,
         }),
       };
     });
@@ -179,9 +299,31 @@ export const utilidades = {
       viajes,
       partidas,
     );
+    // Fondos: saldo anterior = saldo final del mes anterior aprobado (o el inicial en el mes de inicio).
+    const config = new Map((await this.fondos()).map((f) => [f.vehiculoId, f]));
+    const pendientes: string[] = [];
+    let anterior = null as FotoMes | null;
+    if (mes > inicio) {
+      const [aprobados] = await pool.query<RowDataPacket[]>("SELECT mes, datos FROM repartos_utilidades WHERE mes >= ? AND mes < ? ORDER BY mes", [
+        inicio,
+        mes,
+      ]);
+      const hechos = new Set(aprobados.map((a) => String(a.mes)));
+      for (let m = mesAnterior(mes); m >= inicio; m = mesAnterior(m)) if (!hechos.has(m)) pendientes.unshift(m);
+      const ultimo = aprobados.at(-1);
+      anterior = ultimo ? json<FotoMes | null>(ultimo.datos, null) : null;
+    }
+    const fondosPrevios = (anterior?.vehiculos ?? []).map((v) => v.fondo).filter((f): f is FondoVehiculo => !!f);
+    const fondos = new Map<number, { base: number; saldoAnterior: number }>();
+    for (const v of flota) {
+      const cfg = config.get(v.id);
+      const previo = fondosPrevios.find((f) => f.vehiculoId === v.id);
+      fondos.set(v.id, { base: cfg?.base ?? BASE_POR_DEFECTO, saldoAnterior: previo ? previo.saldoFinal : (cfg?.saldoInicial ?? 0) });
+    }
     const participaciones = await this.participacionesTodas();
-    const [socios] = await pool.query<RowDataPacket[]>("SELECT id, nombre FROM socios");
+    const [socios] = await pool.query<RowDataPacket[]>("SELECT id, nombre, externo FROM socios");
     const nombre = new Map(socios.map((s) => [s.id as number, s.nombre as string]));
+    const externo = new Map(socios.map((s) => [s.id as number, !!s.externo]));
     // Quien recibe la liquidacion de los viajes de cada carro: su dueno en Flota (si es un socio).
     const idSocio = new Map(socios.map((s) => [String(s.nombre).toUpperCase(), s.id as number]));
     const receptor = new Map<number, number>();
@@ -189,46 +331,116 @@ export const utilidades = {
       const id = v.dueno ? idSocio.get(String(v.dueno).trim().toUpperCase()) : undefined;
       if (id) receptor.set(v.id, id);
     }
-    const reparto = repartirUtilidades(lista, participaciones, partidas, hasta, receptor);
+    const reparto = repartoMes({ lista, fondos, liquidado, repartimos, participaciones, partidas, desde, hasta, receptor, gmfPorMil });
+    const gastosEmpresa = partidas.filter((p) => p.paso === "EMPRESA");
+    const totalGastosEmpresa = c2(gastosEmpresa.reduce((t, p) => t + p.monto, 0));
+    const gananciaTerceros = c2(detalleTerceros.reduce((t, v) => t + v.ganancia, 0));
+    const conFondo = mes >= inicio;
     return {
       mes,
+      inicio,
+      pendientes,
+      gmfPorMil,
       vehiculos: flota.map((v, i) => ({
         vehiculoId: v.id,
         placa: v.placa,
         empresa: v.empresa,
         dueno: v.dueno ?? null,
-        participaciones: participacionesEn(participaciones, v.id, hasta).map((p) => ({
-          socioId: p.socioId,
-          socio: nombre.get(p.socioId) ?? "?",
-          porcentaje: p.porcentaje,
-        })),
+        participaciones: participacionPonderada(participaciones, v.id, desde, hasta).map((p) => ({ ...p, socio: nombre.get(p.socioId) ?? "?" })),
         cascada: lista[i],
         detalleViajes: viajes.filter((x) => x.vehiculoId === v.id),
+        fondo: conFondo ? reparto.fondos[i] : null,
       })),
-      socios: reparto.socios.map((s) => ({ ...s, nombre: nombre.get(s.socioId) ?? "?" })).sort((a, b) => a.nombre.localeCompare(b.nombre)),
-      sinParticipacion: reparto.sinParticipacion.map((id) => flota.find((v) => v.id === id)?.placa ?? "?"),
+      socios: conFondo
+        ? reparto.socios
+            .map((s) => ({ ...s, nombre: nombre.get(s.socioId) ?? "?", externo: externo.get(s.socioId) ?? false }))
+            .sort((a, b) => a.nombre.localeCompare(b.nombre))
+        : [],
+      sinParticipacion: conFondo ? reparto.sinParticipacion.map((id) => flota.find((v) => v.id === id)?.placa ?? "?") : [],
+      empresa: {
+        viajesTerceros: detalleTerceros.length,
+        gananciaTerceros,
+        detalleTerceros,
+        gastos: gastosEmpresa,
+        totalGastos: totalGastosEmpresa,
+        utilidad: c2(gananciaTerceros - totalGastosEmpresa),
+      },
     };
   },
 
-  /** Aprueba el reparto del mes: guarda la foto. El mes debe estar cerrado en Gastos. */
-  async aprobar(mesTexto: unknown, usuarioId: number | null): Promise<void> {
+  /**
+   * Aprueba el mes con lo que se decidio repartir de cada vehiculo: guarda la
+   * foto. El mes debe estar cerrado en Gastos, ser desde el inicio y tener el
+   * anterior aprobado.
+   */
+  async aprobar(mesTexto: unknown, repartimos: unknown, usuarioId: number | null): Promise<void> {
     const mes = mesDe(mesTexto);
+    const { inicio } = await parametros();
+    if (mes < inicio) throw new ErrorCuadro(`Los repartos empiezan en ${inicio} (la fecha de inicio de los gastos).`);
     const [[cierre]] = await pool.query<RowDataPacket[]>("SELECT 1 AS si FROM periodos_cierre WHERE mes = ?", [mes]);
     if (!cierre) throw new ErrorCuadro(`Primero cierra el mes ${mes} en Gastos (Mas > Cierre de meses): asi sus gastos ya no cambian.`);
-    const datos = await this.calcular(mes);
+    const datos = await this.calcular(mes, repartimosDe(repartimos));
+    if (datos.pendientes.length) throw new ErrorCuadro(`Primero aprueba ${datos.pendientes.join(", ")}: el saldo de los fondos sale del mes anterior.`);
     if (datos.sinParticipacion.length) throw new ErrorCuadro(`Falta la participacion de ${datos.sinParticipacion.join(", ")}: registrala en Participaciones.`);
     await pool.query("REPLACE INTO repartos_utilidades (mes, datos, aprobadoPorId) VALUES (?, ?, ?)", [mes, JSON.stringify(datos), usuarioId]);
   },
 
-  /** Anula la aprobacion del reparto (vuelve a calcularse con los datos actuales). */
+  /** Anula la aprobacion del ultimo mes aprobado (los siguientes dependen de el). */
   async anular(mesTexto: unknown): Promise<void> {
-    await pool.query("DELETE FROM repartos_utilidades WHERE mes = ?", [mesDe(mesTexto)]);
+    const mes = mesDe(mesTexto);
+    const [[despues]] = await pool.query<RowDataPacket[]>("SELECT MIN(mes) AS mes FROM repartos_utilidades WHERE mes > ?", [mes]);
+    if (despues?.mes) throw new ErrorCuadro(`Primero anula ${despues.mes}: su fondo sale de este mes.`);
+    await pool.query("DELETE FROM repartos_utilidades WHERE mes = ?", [mes]);
   },
 
   /** Meses con reparto aprobado. */
   async aprobados(): Promise<string[]> {
     const [filas] = await pool.query<RowDataPacket[]>("SELECT mes FROM repartos_utilidades ORDER BY mes");
     return filas.map((f) => String(f.mes));
+  },
+
+  /** Configuracion del fondo de cada vehiculo de la flota propia (base y saldo inicial). */
+  async fondos(): Promise<ConfigFondo[]> {
+    const [filas] = await pool.query<RowDataPacket[]>(
+      `SELECT v.id, v.placa, v.empresa, f.base, f.saldoInicial, f.nota FROM vehiculos v LEFT JOIN fondos_vehiculo f ON f.vehiculoId = v.id
+        WHERE v.eliminado = 0 AND v.empresa IS NOT NULL ORDER BY v.empresa, v.placa`,
+    );
+    return filas.map((f) => ({
+      vehiculoId: f.id,
+      placa: f.placa,
+      empresa: f.empresa,
+      base: f.base === null || f.base === undefined ? BASE_POR_DEFECTO : Number(f.base),
+      saldoInicial: f.saldoInicial === null || f.saldoInicial === undefined ? 0 : Number(f.saldoInicial),
+      nota: f.nota ?? null,
+    }));
+  },
+
+  /** Cambia la base y el saldo inicial del fondo de un vehiculo ({ base, saldoInicial, nota? }). */
+  async guardarFondo(vehiculoId: number, d: Record<string, unknown>): Promise<void> {
+    const base = Number(d.base);
+    if (!Number.isFinite(base) || base < 0) throw new ErrorCuadro("La base debe ser un valor de cero o mas.");
+    const saldoInicial = Number(d.saldoInicial ?? 0);
+    if (!Number.isFinite(saldoInicial)) throw new ErrorCuadro("Revisa el saldo inicial.");
+    const [[aprob]] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM repartos_utilidades");
+    const [[actual]] = await pool.query<RowDataPacket[]>("SELECT saldoInicial FROM fondos_vehiculo WHERE vehiculoId = ?", [vehiculoId]);
+    if (aprob.n > 0 && Number(actual?.saldoInicial ?? 0) !== saldoInicial)
+      throw new ErrorCuadro("Ya hay meses aprobados: el saldo inicial no se cambia (anula las aprobaciones primero).");
+    const nota =
+      String(d.nota ?? "")
+        .trim()
+        .slice(0, 300) || null;
+    await pool.query(
+      `INSERT INTO fondos_vehiculo (vehiculoId, base, saldoInicial, nota) VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE base = VALUES(base), saldoInicial = VALUES(saldoInicial), nota = VALUES(nota)`,
+      [vehiculoId, base.toFixed(2), saldoInicial.toFixed(2), nota],
+    );
+  },
+
+  /** Cambia el 4 x 1000 que se descuenta al repartir ({ gmfPorMil }). */
+  async guardarGmf(d: Record<string, unknown>): Promise<void> {
+    const v = Number(d.gmfPorMil);
+    if (!Number.isFinite(v) || v < 0 || v > 100) throw new ErrorCuadro("Revisa el 4 x 1000 (por mil).");
+    await pool.query("UPDATE parametros_empresa SET gmfPorMil = ? WHERE id = 1", [v]);
   },
 
   /** Todas las participaciones (para el calculo). */
@@ -238,19 +450,26 @@ export const utilidades = {
   },
 
   /** Vehiculos de la flota propia con su participacion vigente y su historial. */
-  async participaciones(filtro: { empresa?: EmpresaVehiculo | null } = {}) {
+  async participaciones() {
     const [flota] = await pool.query<RowDataPacket[]>(
-      `SELECT id, placa, empresa, dueno FROM vehiculos WHERE eliminado = 0 AND empresa IS NOT NULL ${filtro.empresa ? "AND empresa = ?" : ""} ORDER BY empresa, placa`,
-      filtro.empresa ? [filtro.empresa] : [],
+      "SELECT id, placa, empresa, dueno FROM vehiculos WHERE eliminado = 0 AND empresa IS NOT NULL ORDER BY empresa, placa",
     );
     const [filas] = await pool.query<RowDataPacket[]>(
-      "SELECT p.id, p.vehiculoId, p.socioId, s.nombre AS socio, p.porcentaje, p.desde, p.hasta FROM participaciones p JOIN socios s ON s.id = p.socioId ORDER BY p.desde, s.nombre",
+      "SELECT p.id, p.vehiculoId, p.socioId, s.nombre AS socio, s.externo, p.porcentaje, p.desde, p.hasta FROM participaciones p JOIN socios s ON s.id = p.socioId ORDER BY p.desde, s.nombre",
     );
     const hoy = hoyColombia();
     return flota.map((v) => {
       const historial = filas
         .filter((f) => f.vehiculoId === v.id)
-        .map((f) => ({ id: f.id, socioId: f.socioId, socio: f.socio, porcentaje: Number(f.porcentaje), desde: dia(f.desde)!, hasta: dia(f.hasta) }));
+        .map((f) => ({
+          id: f.id,
+          socioId: f.socioId,
+          socio: f.socio,
+          externo: !!f.externo,
+          porcentaje: Number(f.porcentaje),
+          desde: dia(f.desde)!,
+          hasta: dia(f.hasta),
+        }));
       const vigentes = historial.filter((p) => p.desde <= hoy && (!p.hasta || p.hasta >= hoy));
       return { vehiculoId: v.id, placa: v.placa, empresa: v.empresa as EmpresaVehiculo, dueno: v.dueno ?? null, vigentes, historial };
     });
@@ -281,7 +500,9 @@ export const utilidades = {
 
   /** Socios (activos primero). */
   async socios(): Promise<Socio[]> {
-    const [filas] = await pool.query<RowDataPacket[]>("SELECT id, nombre, activo, externo, documento, nota FROM socios ORDER BY activo DESC, nombre");
+    const [filas] = await pool.query<RowDataPacket[]>(
+      "SELECT id, nombre, activo, externo, documento, nota, saldoInicial FROM socios ORDER BY activo DESC, nombre",
+    );
     return filas.map((f) => ({
       id: f.id as number,
       nombre: f.nombre as string,
@@ -289,10 +510,11 @@ export const utilidades = {
       externo: !!f.externo,
       documento: f.documento ?? null,
       nota: f.nota ?? null,
+      saldoInicial: Number(f.saldoInicial ?? 0),
     }));
   },
 
-  /** Crea o cambia un socio ({ nombre, externo, documento?, nota? }). Externo = no hace parte de la empresa, solo de una sociedad. */
+  /** Crea o cambia un socio ({ nombre, externo, documento?, nota?, saldoInicial? }). Externo = no hace parte de la empresa, solo de una sociedad. */
   async guardarSocio(d: Record<string, unknown>, id?: number): Promise<void> {
     const nombre = String(d.nombre ?? "")
       .trim()
@@ -301,19 +523,20 @@ export const utilidades = {
     if (!nombre) throw new ErrorCuadro("Escribe el nombre del socio.");
     const [[existe]] = await pool.query<RowDataPacket[]>("SELECT id FROM socios WHERE nombre = ? AND id <> ?", [nombre, id ?? 0]);
     if (existe) throw new ErrorCuadro("Ya hay un socio con ese nombre.");
+    const saldoInicial = Number(d.saldoInicial ?? 0);
+    if (!Number.isFinite(saldoInicial)) throw new ErrorCuadro("Revisa el saldo inicial.");
     const texto = (v: unknown, max: number) =>
       String(v ?? "")
         .trim()
         .slice(0, max) || null;
-    const valores = [nombre, d.externo ? 1 : 0, texto(d.documento, 20), texto(d.nota, 300)];
-    if (id) await pool.query("UPDATE socios SET nombre = ?, externo = ?, documento = ?, nota = ? WHERE id = ?", [...valores, id]);
-    else await pool.query("INSERT INTO socios (nombre, externo, documento, nota) VALUES (?, ?, ?, ?)", valores);
+    const valores = [nombre, d.externo ? 1 : 0, texto(d.documento, 20), texto(d.nota, 300), saldoInicial.toFixed(2)];
+    if (id) await pool.query("UPDATE socios SET nombre = ?, externo = ?, documento = ?, nota = ?, saldoInicial = ? WHERE id = ?", [...valores, id]);
+    else await pool.query("INSERT INTO socios (nombre, externo, documento, nota, saldoInicial) VALUES (?, ?, ?, ?, ?)", valores);
   },
 
   /**
-   * Cuenta de cada socio: lo que se le repartio en cada mes aprobado (su
-   * utilidad, despues de sus gastos propios), los pagos que se le han hecho y
-   * el saldo (repartido - pagado). Un saldo negativo es lo que el socio debe.
+   * Cuenta de cada socio mes a mes: saldo inicial + neto de cada mes aprobado
+   * - pagos. Lo que no le alcanza (saldo negativo) se acumula para el mes siguiente.
    */
   async cuentas(): Promise<CuentaSocio[]> {
     const socios = await this.socios();
@@ -321,23 +544,13 @@ export const utilidades = {
     const [pagos] = await pool.query<RowDataPacket[]>(
       "SELECT p.id, p.socioId, p.fecha, p.monto, p.nota, p.soporteUrl, u.nombre AS registradoPor FROM pagos_socios p LEFT JOIN usuarios u ON u.id = p.creadoPorId ORDER BY p.fecha, p.id",
     );
-    const c2 = (v: number) => Math.round(v * 100) / 100;
+    const fotos = repartos.map((r) => ({ mes: String(r.mes), socios: json<{ socios?: RepartoSocio[] } | null>(r.datos, null)?.socios ?? [] }));
     return socios.map((s) => {
-      const meses = repartos.flatMap((r) => {
-        const datos = json<{ socios: RepartoSocio[] } | null>(r.datos, null);
-        const suyo = datos?.socios.find((x) => x.socioId === s.id);
-        return suyo
-          ? [
-              {
-                mes: String(r.mes),
-                utilidadVehiculos: suyo.utilidadVehiculos,
-                gastosPropios: suyo.totalGastosPropios,
-                total: suyo.total,
-                vehiculos: suyo.porVehiculo.length,
-              },
-            ]
-          : [];
-      });
+      const detalle = new Map<string, RepartoSocio>();
+      for (const f of fotos) {
+        const suyo = f.socios.find((x) => x.socioId === s.id);
+        if (suyo) detalle.set(f.mes, suyo);
+      }
       const suyos = pagos
         .filter((p) => p.socioId === s.id)
         .map((p) => ({
@@ -348,9 +561,15 @@ export const utilidades = {
           soporteUrl: p.soporteUrl ?? null,
           registradoPor: p.registradoPor ?? null,
         }));
-      const repartido = c2(meses.reduce((t, m) => t + m.total, 0));
-      const pagado = c2(suyos.reduce((t, p) => t + p.monto, 0));
-      return { ...s, meses, pagos: suyos, repartido, pagado, saldo: c2(repartido - pagado) };
+      const netos = new Map([...detalle.entries()].map(([m, d]) => [m, d.neto]));
+      const meses = cuentaSocio(s.saldoInicial, netos, suyos).map((m) => {
+        const d = detalle.get(m.mes);
+        return {
+          ...m,
+          detalle: d ? { repartido: d.repartido, gmf: d.gmf, liquidado: d.liquidado, recibido: d.recibido, totalGastosPropios: d.totalGastosPropios } : null,
+        };
+      });
+      return { ...s, meses, pagos: suyos, saldo: meses.at(-1)?.saldo ?? s.saldoInicial };
     });
   },
 
