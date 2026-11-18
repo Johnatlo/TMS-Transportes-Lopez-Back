@@ -536,7 +536,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_976 funciones, componentes, métodos y rutas en 66 archivos._
+_978 funciones, componentes, métodos y rutas en 66 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -563,7 +563,7 @@ _976 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/nomina.ts`](#srcnominats) (34)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
-- [`src/prorrateo.ts`](#srcprorrateots) (9)
+- [`src/prorrateo.ts`](#srcprorrateots) (11)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
 - [`src/repo.ts`](#srcrepots) (94)
@@ -1758,8 +1758,11 @@ _976 funciones, componentes, métodos y rutas en 66 archivos._
 > - Lo que una empresa le debe a la otra no es una cuenta entre empresas: es
 >   un gasto en una y un ingreso en la otra, cada uno con su reparto.
 > - Montos en DECIMAL; las cuentas se hacen en centavos (ver prorrateo.ts).
-> - Creditos: tabla de amortizacion (capital, interes, saldo); al registrar
->   el pago de una cuota se crea su gasto con el reparto del credito.
+> - Creditos: se crean con la cuota que cobra el banco (la tasa, que cambia
+>   mes a mes, se deduce de monto, plazo y cuota) y el 4 x 1000 que se
+>   descuenta a cada cuota. Tabla de amortizacion (capital, interes, saldo);
+>   al registrar el pago de una cuota (con el valor que de verdad se pago) se
+>   crea su gasto con el reparto del credito, sumando su 4 x 1000.
 > - Nomina (fase 2): al aprobarla se crea un gasto por empleado, causado por
 >   dias entre los meses que cubre (causaHasta). Esos gastos se cambian
 >   desde la nomina, no desde el libro.
@@ -2270,6 +2273,16 @@ _976 funciones, componentes, métodos y rutas en 66 archivos._
   `tasaMensual` en fraccion (0.016725 = 1,6725 %). Si se da `cuotaFija` (la
   que cobra el banco) se usa esa; si no, se calcula. La ultima cuota se
   ajusta para que el saldo quede en cero.
+
+- **`tasaImplicita(monto, plazo, cuota)`** · _función_
+  Tasa mensual (en fraccion) que da una cuota fija: la que hace que `plazo`
+  cuotas de `cuota` paguen `monto` (sistema frances). Se usa para separar
+  capital e interes de un credito con la cuota que cobra el banco, sin tener
+  que escribir la tasa (que cambia mes a mes). Si la cuota no alcanza a pagar
+  el monto, error; si lo paga justo sin interes, 0.
+
+- **`gmfDe(centavos, porMil)`** · _función_
+  El 4 x 1000 (o lo que se ponga por mil) de un pago, en centavos redondeados al peso.
 
 ### `src/relacionesBomba.ts`
 
@@ -4614,7 +4627,7 @@ _976 funciones, componentes, métodos y rutas en 66 archivos._
   GET /api/gastos/creditos: creditos con su tabla de amortizacion y saldo.
 
 - **`POST /creditos`** · _ruta HTTP_
-  POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, tasaMensual, plazo, primeraCuota, cuotaFija?, prorratea, destinos, nota? }).
+  POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, plazo, primeraCuota, cuotaFija, gmfPorMil?, prorratea, destinos, nota? }).
 
 - **`PUT /creditos/:id`** · _ruta HTTP_
   PUT /api/gastos/creditos/:id: cambia el credito (rehace la tabla si aun no tiene cuotas pagadas).
@@ -4623,7 +4636,7 @@ _976 funciones, componentes, métodos y rutas en 66 archivos._
   DELETE /api/gastos/creditos/:id: borra un credito sin cuotas pagadas.
 
 - **`POST /creditos/:id/cuotas/:numero/pago`** · _ruta HTTP_
-  POST /api/gastos/creditos/:id/cuotas/:numero/pago: registra el pago de la cuota y crea su gasto ({ fechaPago, soporteUrl? }).
+  POST /api/gastos/creditos/:id/cuotas/:numero/pago: registra el pago de la cuota y crea su gasto con su 4 x 1000 ({ fechaPago, valor?, soporteUrl? }).
 
 - **`DELETE /creditos/:id/cuotas/:numero/pago`** · _ruta HTTP_
   DELETE /api/gastos/creditos/:id/cuotas/:numero/pago: quita el pago de la cuota y borra su gasto.

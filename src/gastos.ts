@@ -15,8 +15,11 @@
  * - Lo que una empresa le debe a la otra no es una cuenta entre empresas: es
  *   un gasto en una y un ingreso en la otra, cada uno con su reparto.
  * - Montos en DECIMAL; las cuentas se hacen en centavos (ver prorrateo.ts).
- * - Creditos: tabla de amortizacion (capital, interes, saldo); al registrar
- *   el pago de una cuota se crea su gasto con el reparto del credito.
+ * - Creditos: se crean con la cuota que cobra el banco (la tasa, que cambia
+ *   mes a mes, se deduce de monto, plazo y cuota) y el 4 x 1000 que se
+ *   descuenta a cada cuota. Tabla de amortizacion (capital, interes, saldo);
+ *   al registrar el pago de una cuota (con el valor que de verdad se pago) se
+ *   crea su gasto con el reparto del credito, sumando su 4 x 1000.
  * - Nomina (fase 2): al aprobarla se crea un gasto por empleado, causado por
  *   dias entre los meses que cubre (causaHasta). Esos gastos se cambian
  *   desde la nomina, no desde el libro.
@@ -24,7 +27,7 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
-import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, ErrorReparto, repartirGasto } from "./prorrateo";
+import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, ErrorReparto, gmfDe, repartirGasto, tasaImplicita } from "./prorrateo";
 import type { Destino } from "./prorrateo";
 import type { EmpresaVehiculo } from "./roles";
 
@@ -79,8 +82,10 @@ export interface Credito {
   entidad: string | null;
   obligacion: string | null;
   monto: number;
-  /** Tasa mensual en porcentaje (1.6725). */
+  /** Tasa mensual en porcentaje (1.6725), deducida de la cuota del banco. */
   tasaMensual: number;
+  /** 4 x 1000 que se descuenta a cada cuota (por mil). */
+  gmfPorMil: number;
   plazo: number;
   primeraCuota: string;
   cuotaFija: number | null;
@@ -96,6 +101,8 @@ export interface Credito {
     interes: number;
     saldo: number;
     fechaPago: string | null;
+    /** Lo que de verdad se pago (si fue distinto de la cuota de la tabla). */
+    valorPagado: number | null;
     gastoId: number | null;
   }>;
   /** Capital que falta por pagar (saldo despues de la ultima cuota pagada). */
@@ -396,10 +403,7 @@ export const gastos = {
     if (actual.anulado) throw new ErrorCuadro("Ese gasto esta anulado.");
     exigirManual(actual);
     const g = await validarGasto(d);
-    await exigirAbierto([
-      ...actual.causaciones.map((c) => c.fecha),
-      ...causacionesDe(g).map((c) => c.fecha),
-    ]);
+    await exigirAbierto([...actual.causaciones.map((c) => c.fecha), ...causacionesDe(g).map((c) => c.fecha)]);
     await enTransaccion(async (con) => {
       await con.query(
         `UPDATE gastos SET empresa = ?, tipo = ?, categoria = ?, descripcion = ?, monto = ?, fechaPago = ?, soporteUrl = ?,
@@ -456,10 +460,9 @@ export const gastos = {
 
   /** Borra los gastos que genero una nomina (al reabrirla). Sus meses deben estar abiertos. */
   async borrarDeNomina(nominaId: number): Promise<void> {
-    const [caus] = await pool.query<RowDataPacket[]>(
-      "SELECT c.fecha FROM gastos_causaciones c JOIN gastos g ON g.id = c.gastoId WHERE g.nominaId = ?",
-      [nominaId],
-    );
+    const [caus] = await pool.query<RowDataPacket[]>("SELECT c.fecha FROM gastos_causaciones c JOIN gastos g ON g.id = c.gastoId WHERE g.nominaId = ?", [
+      nominaId,
+    ]);
     await exigirAbierto(caus.map((c) => dia(c.fecha)!));
     await pool.query("DELETE FROM gastos WHERE nominaId = ?", [nominaId]);
   },
@@ -472,8 +475,7 @@ export const gastos = {
       const [[aprobado]] = await pool.query<RowDataPacket[]>("SELECT 1 AS si FROM repartos_utilidades WHERE mes = ?", [m]);
       if (aprobado) throw new ErrorCuadro(`El reparto de utilidades de ${m} esta aprobado: anula la aprobacion en Utilidades para abrir el mes.`);
       await pool.query("DELETE FROM periodos_cierre WHERE mes = ?", [m]);
-    }
-    else await pool.query("INSERT IGNORE INTO periodos_cierre (mes, cerradoPorId) VALUES (?, ?)", [m, usuarioId]);
+    } else await pool.query("INSERT IGNORE INTO periodos_cierre (mes, cerradoPorId) VALUES (?, ?)", [m, usuarioId]);
     return [...(await limites()).cerrados].sort();
   },
 
@@ -515,6 +517,7 @@ export const gastos = {
           interes: Number(c.interes),
           saldo: Number(c.saldo),
           fechaPago: dia(c.fechaPago),
+          valorPagado: c.valorPagado === null || c.valorPagado === undefined ? null : Number(c.valorPagado),
           gastoId: c.gastoId ?? null,
         }));
       const pagadas = propias.filter((c) => c.fechaPago);
@@ -526,6 +529,7 @@ export const gastos = {
         obligacion: f.obligacion ?? null,
         monto: Number(f.monto),
         tasaMensual: Number(f.tasaMensual),
+        gmfPorMil: f.gmfPorMil === null || f.gmfPorMil === undefined ? 4 : Number(f.gmfPorMil),
         plazo: f.plazo,
         primeraCuota: dia(f.primeraCuota)!,
         cuotaFija: f.cuotaFija === null ? null : Number(f.cuotaFija),
@@ -550,17 +554,20 @@ export const gastos = {
     const nombre = texto(d.nombre, 150);
     if (!nombre) throw new ErrorCuadro("Escribe el nombre del credito.");
     const monto = Number(d.monto);
-    const tasa = Number(d.tasaMensual);
     const plazo = Number(d.plazo);
     if (!Number.isFinite(monto) || monto <= 0) throw new ErrorCuadro("Escribe el monto del credito.");
-    if (!Number.isFinite(tasa) || tasa < 0 || tasa >= 100) throw new ErrorCuadro("Escribe la tasa mensual en porcentaje (por ejemplo 1,67).");
+    if (!Number.isInteger(plazo) || plazo < 1) throw new ErrorCuadro("Escribe el plazo (numero de cuotas).");
     const primeraCuota = fechaDe(d.primeraCuota, "la fecha de la primera cuota");
-    const cuotaFija = d.cuotaFija === null || d.cuotaFija === undefined || d.cuotaFija === "" ? null : Number(d.cuotaFija);
-    if (cuotaFija !== null && (!Number.isFinite(cuotaFija) || cuotaFija <= 0)) throw new ErrorCuadro("La cuota fija no es valida.");
+    const cuotaFija = Number(d.cuotaFija);
+    if (!Number.isFinite(cuotaFija) || cuotaFija <= 0) throw new ErrorCuadro("Escribe la cuota que cobra el banco.");
+    const gmfPorMil = d.gmfPorMil === null || d.gmfPorMil === undefined || d.gmfPorMil === "" ? 4 : Number(d.gmfPorMil);
+    if (!Number.isFinite(gmfPorMil) || gmfPorMil < 0 || gmfPorMil > 100) throw new ErrorCuadro("Revisa el 4 x 1000 (por mil).");
+    // La tasa (que cambia mes a mes) no se escribe: se deduce de la cuota del banco para separar capital e interes.
+    const tasa = conErrores(() => tasaImplicita(monto, plazo, cuotaFija)) * 100;
     const prorratea = d.prorratea === "INTERES" ? "INTERES" : "CAPITAL_E_INTERES";
     const destinos = await leerDestinos(d.destinos);
-    const tabla = conErrores(() => amortizar(aCentavos(monto), tasa / 100, plazo, primeraCuota, cuotaFija === null ? null : aCentavos(cuotaFija)));
-    const comunes = [empresa, nombre, texto(d.entidad, 100), texto(d.obligacion, 60), prorratea, JSON.stringify(destinos), texto(d.nota, 300)];
+    const tabla = conErrores(() => amortizar(aCentavos(monto), tasa / 100, plazo, primeraCuota, aCentavos(cuotaFija)));
+    const comunes = [empresa, nombre, texto(d.entidad, 100), texto(d.obligacion, 60), prorratea, JSON.stringify(destinos), texto(d.nota, 300), gmfPorMil];
 
     return enTransaccion(async (con) => {
       let creditoId = id;
@@ -568,26 +575,26 @@ export const gastos = {
       if (id) {
         const [[pagadas]] = await con.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM creditos_cuotas WHERE creditoId = ? AND fechaPago IS NOT NULL", [id]);
         rehacer = Number(pagadas.n) === 0;
-        await con.query("UPDATE creditos SET empresa = ?, nombre = ?, entidad = ?, obligacion = ?, prorratea = ?, destinos = ?, nota = ? WHERE id = ?", [
-          ...comunes,
-          id,
-        ]);
+        await con.query(
+          "UPDATE creditos SET empresa = ?, nombre = ?, entidad = ?, obligacion = ?, prorratea = ?, destinos = ?, nota = ?, gmfPorMil = ? WHERE id = ?",
+          [...comunes, id],
+        );
         if (rehacer) {
           await con.query("UPDATE creditos SET monto = ?, tasaMensual = ?, plazo = ?, primeraCuota = ?, cuotaFija = ? WHERE id = ?", [
             decimal(aCentavos(monto)),
             tasa,
             plazo,
             primeraCuota,
-            cuotaFija === null ? null : decimal(aCentavos(cuotaFija)),
+            decimal(aCentavos(cuotaFija)),
             id,
           ]);
           await con.query("DELETE FROM creditos_cuotas WHERE creditoId = ?", [id]);
         }
       } else {
         const [res] = await con.query<ResultSetHeader>(
-          `INSERT INTO creditos (empresa, nombre, entidad, obligacion, prorratea, destinos, nota, monto, tasaMensual, plazo, primeraCuota, cuotaFija, creadoPorId)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [...comunes, decimal(aCentavos(monto)), tasa, plazo, primeraCuota, cuotaFija === null ? null : decimal(aCentavos(cuotaFija)), usuarioId],
+          `INSERT INTO creditos (empresa, nombre, entidad, obligacion, prorratea, destinos, nota, gmfPorMil, monto, tasaMensual, plazo, primeraCuota, cuotaFija, creadoPorId)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [...comunes, decimal(aCentavos(monto)), tasa, plazo, primeraCuota, decimal(aCentavos(cuotaFija)), usuarioId],
         );
         creditoId = res.insertId;
       }
@@ -619,6 +626,12 @@ export const gastos = {
     if (!credito || !cuota) throw new ErrorCuadro("Esa cuota no existe.");
     if (cuota.fechaPago) throw new ErrorCuadro("Esa cuota ya esta pagada.");
     const fechaPago = fechaDe(d.fechaPago ?? hoyColombia(), "la fecha de pago");
+    // Lo que de verdad se pago (la tasa cambia mes a mes); si no se dice, la cuota de la tabla.
+    const valor = d.valor === null || d.valor === undefined || d.valor === "" ? cuota.cuota : Number(d.valor);
+    if (!Number.isFinite(valor) || valor <= 0) throw new ErrorCuadro("Escribe el valor que se pago.");
+    // Al gasto va la cuota (o solo el interes: lo pagado menos el capital de la tabla) mas su 4 x 1000.
+    const base = credito.prorratea === "INTERES" ? Math.max(0, aCentavos(valor) - aCentavos(cuota.capital)) : aCentavos(valor);
+    const gmf = gmfDe(aCentavos(valor), credito.gmfPorMil);
     const { corte } = await limites();
     let gastoId: number | null = null;
     if (cuota.fecha >= corte) {
@@ -627,8 +640,8 @@ export const gastos = {
           empresa: credito.empresa,
           tipo: "GASTO",
           categoria: "CREDITO",
-          descripcion: `${credito.nombre}: cuota ${numero} de ${credito.plazo}${credito.prorratea === "INTERES" ? " (interes)" : ""}`,
-          monto: credito.prorratea === "INTERES" ? cuota.interes : cuota.cuota,
+          descripcion: `${credito.nombre}: cuota ${numero} de ${credito.plazo}${credito.prorratea === "INTERES" ? " (interes)" : ""}${gmf ? ` + ${credito.gmfPorMil} x 1000 (${aPesos(gmf).toLocaleString("es-CO")})` : ""}`,
+          monto: aPesos(base + gmf),
           fechaPago,
           soporteUrl: d.soporteUrl ?? null,
           causaDesde: cuota.fecha,
@@ -639,7 +652,13 @@ export const gastos = {
         { origen: "CREDITO", creditoId },
       );
     }
-    await pool.query("UPDATE creditos_cuotas SET fechaPago = ?, gastoId = ? WHERE creditoId = ? AND numero = ?", [fechaPago, gastoId, creditoId, numero]);
+    await pool.query("UPDATE creditos_cuotas SET fechaPago = ?, valorPagado = ?, gastoId = ? WHERE creditoId = ? AND numero = ?", [
+      fechaPago,
+      valor === cuota.cuota ? null : decimal(aCentavos(valor)),
+      gastoId,
+      creditoId,
+      numero,
+    ]);
   },
 
   /** Quita el pago de una cuota y borra su gasto (si el mes esta abierto). */
@@ -648,7 +667,10 @@ export const gastos = {
     if (!cuota) throw new ErrorCuadro("Esa cuota no existe.");
     if (cuota.gastoId) await exigirAbierto([dia(cuota.fecha)!]);
     await enTransaccion(async (con) => {
-      await con.query("UPDATE creditos_cuotas SET fechaPago = NULL, gastoId = NULL WHERE creditoId = ? AND numero = ?", [creditoId, numero]);
+      await con.query("UPDATE creditos_cuotas SET fechaPago = NULL, valorPagado = NULL, gastoId = NULL WHERE creditoId = ? AND numero = ?", [
+        creditoId,
+        numero,
+      ]);
       if (cuota.gastoId) await con.query("DELETE FROM gastos WHERE id = ?", [cuota.gastoId]);
     });
   },

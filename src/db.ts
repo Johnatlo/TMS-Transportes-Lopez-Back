@@ -1122,6 +1122,9 @@ export async function initSchema(): Promise<void> {
     // Lo que el socio debia (o se le debia) antes del sistema, y el 4 x 1000 que se descuenta al repartir.
     ["socios", "saldoInicial", "DECIMAL(15,2) NOT NULL DEFAULT 0"],
     ["parametros_empresa", "gmfPorMil", "DECIMAL(7,3) NOT NULL DEFAULT 4"],
+    // Creditos: 4 x 1000 de cada cuota y lo que de verdad se pago (la tasa cambia mes a mes).
+    ["creditos", "gmfPorMil", "DECIMAL(7,3) NOT NULL DEFAULT 4"],
+    ["creditos_cuotas", "valorPagado", "DECIMAL(15,2)"],
     // Empresa que liquida el vehiculo (LOPEZ o MYC; NULL = tercero) y si lo ven todos los roles.
     ["vehiculos", "empresa", "VARCHAR(10)"],
     ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],

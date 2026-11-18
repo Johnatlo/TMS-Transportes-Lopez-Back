@@ -114,7 +114,7 @@ gastosRouter.get("/creditos", async (req, res) => {
   res.json(await gastos.creditos());
 });
 
-/** POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, tasaMensual, plazo, primeraCuota, cuotaFija?, prorratea, destinos, nota? }). */
+/** POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, plazo, primeraCuota, cuotaFija, gmfPorMil?, prorratea, destinos, nota? }). */
 gastosRouter.post("/creditos", async (req, res) => {
   await responder(res, async () => {
     exigirEmpresa(req, req.body?.empresa);
@@ -144,7 +144,7 @@ gastosRouter.delete("/creditos/:id", async (req, res) => {
   });
 });
 
-/** POST /api/gastos/creditos/:id/cuotas/:numero/pago: registra el pago de la cuota y crea su gasto ({ fechaPago, soporteUrl? }). */
+/** POST /api/gastos/creditos/:id/cuotas/:numero/pago: registra el pago de la cuota y crea su gasto con su 4 x 1000 ({ fechaPago, valor?, soporteUrl? }). */
 gastosRouter.post("/creditos/:id/cuotas/:numero/pago", async (req, res) => {
   await responder(res, async () => {
     const id = Number(req.params.id);

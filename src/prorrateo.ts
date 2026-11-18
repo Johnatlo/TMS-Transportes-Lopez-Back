@@ -173,3 +173,29 @@ export function amortizar(monto: number, tasaMensual: number, plazo: number, pri
   }
   return tabla;
 }
+
+/**
+ * Tasa mensual (en fraccion) que da una cuota fija: la que hace que `plazo`
+ * cuotas de `cuota` paguen `monto` (sistema frances). Se usa para separar
+ * capital e interes de un credito con la cuota que cobra el banco, sin tener
+ * que escribir la tasa (que cambia mes a mes). Si la cuota no alcanza a pagar
+ * el monto, error; si lo paga justo sin interes, 0.
+ */
+export function tasaImplicita(monto: number, plazo: number, cuota: number): number {
+  if (!(monto > 0) || !(cuota > 0) || !Number.isInteger(plazo) || plazo < 1) throw new ErrorReparto("Revisa el monto, el plazo y la cuota del credito.");
+  if (cuota * plazo < monto - 1) throw new ErrorReparto("Con esa cuota y ese plazo no se alcanza a pagar el monto.");
+  if (cuota * plazo <= monto + 1) return 0;
+  const valor = (t: number) => (monto * t) / (1 - Math.pow(1 + t, -plazo));
+  let bajo = 0;
+  let alto = 1;
+  for (let i = 0; i < 200; i++) {
+    const medio = (bajo + alto) / 2;
+    if (valor(medio) > cuota) alto = medio;
+    else bajo = medio;
+  }
+  // Como la expresan los bancos: 4 decimales del porcentaje (0,016725 = 1,6725 %).
+  return Math.round(((bajo + alto) / 2) * 1e6) / 1e6;
+}
+
+/** El 4 x 1000 (o lo que se ponga por mil) de un pago, en centavos redondeados al peso. */
+export const gmfDe = (centavos: number, porMil: number): number => Math.round((centavos * porMil) / 1000 / 100) * 100;

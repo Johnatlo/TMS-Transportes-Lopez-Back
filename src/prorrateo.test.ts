@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, ErrorReparto, repartir, repartirGasto, sumarMeses } from "./prorrateo";
+import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, gmfDe, tasaImplicita, ErrorReparto, repartir, repartirGasto, sumarMeses } from "./prorrateo";
 import type { Destino } from "./prorrateo";
 
 /** N vehiculos marcados (una parte cada uno), con ids desde `desde`. */
@@ -149,5 +149,21 @@ describe("costo de un conductor entre sus vehiculos segun su producido", () => {
     // Proporcional al producido (78,97 % y 21,03 %). El Excel da 577.400 y 148.758 porque reparte cada concepto con otra proporcion.
     expect(partes.map((x) => Math.round(aPesos(x.monto)))).toEqual([573_483, 152_675]);
     expect(partes.reduce((s, x) => s + x.monto, 0)).toBe(aCentavos(726_158));
+  });
+});
+
+describe("tasa que da la cuota del banco y 4 x 1000 de la cuota", () => {
+  test("credito 80M a 60 cuotas de 2.122.647: 1,6725 % mensual (la tabla queda igual que con la tasa escrita)", () => {
+    const t = tasaImplicita(80_000_000, 60, 2_122_647);
+    expect(Math.round(t * 1_000_000) / 10_000).toBe(1.6725);
+    const tabla = amortizar(aCentavos(80_000_000), t, 60, "2023-01-20", aCentavos(2_122_647));
+    expect([aPesos(tabla[0].interes), aPesos(tabla[0].capital), aPesos(tabla.at(-1)!.saldo)]).toEqual([1_338_000, 784_647, 0]);
+  });
+  test("sin interes y cuota que no alcanza", () => {
+    expect(tasaImplicita(1_200_000, 12, 100_000)).toBe(0);
+    expect(() => tasaImplicita(1_200_000, 12, 90_000)).toThrow();
+  });
+  test("4 x 1000 de la cuota de 2.122.647: 8.491", () => {
+    expect(aPesos(gmfDe(aCentavos(2_122_647), 4))).toBe(8_491);
   });
 });
