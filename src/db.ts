@@ -1127,6 +1127,14 @@ export async function initSchema(): Promise<void> {
     ["creditos_cuotas", "valorPagado", "DECIMAL(15,2)"],
     // Tiempos pactados de cada remesa si se cambian al despachar (vacios = los de la plantilla).
     ["viaje_remesas", "horasPactoCargue", "INT"],
+    // Gastos: forma (unico, diferido, recurrente), quincenal, proveedor y factura (numero y credito o debito), y el recurrente que lo genero.
+    ["gastos", "forma", "VARCHAR(10) NOT NULL DEFAULT 'UNICO'"],
+    ["gastos", "periodicidad", "VARCHAR(10) NOT NULL DEFAULT 'MENSUAL'"],
+    ["gastos", "proveedor", "VARCHAR(150)"],
+    ["gastos", "numeroFactura", "VARCHAR(40)"],
+    ["gastos", "tipoFactura", "VARCHAR(10)"],
+    ["gastos", "recurrenteId", "INT"],
+    ["gastos", "periodo", "DATE"],
     ["viaje_remesas", "minutosPactoCargue", "INT"],
     ["viaje_remesas", "horasPactoDescargue", "INT"],
     ["viaje_remesas", "minutosPactoDescargue", "INT"],
@@ -1315,6 +1323,36 @@ export async function initSchema(): Promise<void> {
       nota VARCHAR(300)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Gastos recurrentes (arriendo, honorarios, servicios) y el historial de su valor.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gastos_recurrentes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empresa VARCHAR(10) NOT NULL,
+      tipo VARCHAR(10) NOT NULL DEFAULT 'GASTO',
+      categoria VARCHAR(20) NOT NULL,
+      descripcion VARCHAR(300) NOT NULL,
+      proveedor VARCHAR(150),
+      tipoFactura VARCHAR(10),
+      destinos TEXT NOT NULL,
+      periodicidad VARCHAR(10) NOT NULL DEFAULT 'MENSUAL',
+      desde DATE NOT NULL,
+      hasta DATE,
+      activo TINYINT(1) NOT NULL DEFAULT 1,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gastos_recurrentes_valores (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      recurrenteId INT NOT NULL,
+      desde DATE NOT NULL,
+      monto DECIMAL(15,2) NOT NULL,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_valor_recurrente FOREIGN KEY (recurrenteId) REFERENCES gastos_recurrentes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Foto del reparto aprobado de cada mes.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS repartos_utilidades (
@@ -1467,6 +1505,12 @@ export async function initSchema(): Promise<void> {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'nomina_lineas' AND COLUMN_NAME = 'producidoManual'`
   );
   const producidoManualEsNuevo = (conProducidoManual as unknown[]).length === 0;
+  // ¿Ya existia la forma de los gastos? Si no, los que se causaban en varias cuotas quedan como diferidos (abajo).
+  const [conForma] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gastos' AND COLUMN_NAME = 'forma'`
+  );
+  const formaEsNueva = (conForma as unknown[]).length === 0;
 
   for (const [tabla, columna, definicion] of columnas) {
     const [filas] = await pool.query(
@@ -1479,6 +1523,10 @@ export async function initSchema(): Promise<void> {
     }
   }
 
+  // Una sola vez: los gastos que se causaban en varias cuotas quedan como diferidos.
+  if (formaEsNueva) {
+    await pool.query("UPDATE gastos SET forma = 'DIFERIDO' WHERE causaCuotas > 1 AND causaHasta IS NULL AND origen = 'MANUAL'");
+  }
   // Una sola vez: lo que ya se habia escrito como producido en la nomina se respeta (queda como manual).
   if (producidoManualEsNuevo) {
     await pool.query("UPDATE nomina_lineas SET producidoManual = 1 WHERE producido > 0");
@@ -1568,6 +1616,15 @@ export async function initSchema(): Promise<void> {
   );
   if ((valeViejo as unknown[]).length > 0) {
     await pool.query("ALTER TABLE bomba_relacion_vales ADD UNIQUE KEY uq_vale_tramo_tipo (cuadroAnticipoId, tipo), DROP INDEX uq_vale_tramo");
+  }
+
+  // Un recurrente crea un solo gasto por periodo (aunque dos personas abran el libro al tiempo).
+  const [indiceRecurrente] = await pool.query(
+    `SELECT 1 FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gastos' AND INDEX_NAME = 'uk_gasto_recurrente'`
+  );
+  if ((indiceRecurrente as unknown[]).length === 0) {
+    await pool.query("ALTER TABLE gastos ADD UNIQUE KEY uk_gasto_recurrente (recurrenteId, periodo)");
   }
 
   // Un solo reconocido de Cartones America por manifiesto y tipo.

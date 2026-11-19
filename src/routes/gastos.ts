@@ -50,7 +50,68 @@ gastosRouter.get("/opciones", async (_req, res) => {
 
 /** GET /api/gastos: el libro de gastos (M&C: solo los de su empresa). */
 gastosRouter.get("/", async (req, res) => {
+  // Antes de listar, los periodos de los gastos recurrentes que ya tocaron (quedan por pagar).
+  await gastos.generarRecurrentes(req.usuario?.id ?? null);
   res.json(await gastos.listar());
+});
+
+/** POST /api/gastos/duplicados: gastos ya guardados que pueden ser el mismo (misma factura, o mismo valor y fecha con descripcion parecida). */
+gastosRouter.post("/duplicados", async (req, res) => {
+  await responder(res, () => gastos.revisarDuplicados(req.body ?? {}));
+});
+
+/** GET /api/gastos/recurrentes: gastos recurrentes con el historial de su valor. */
+gastosRouter.get("/recurrentes", async (_req, res) => {
+  res.json(await gastos.recurrentes());
+});
+
+/** POST /api/gastos/recurrentes: crea un recurrente ({ empresa, tipo, categoria, descripcion, proveedor?, tipoFactura?, destinos, periodicidad, desde, hasta?, monto }). */
+gastosRouter.post("/recurrentes", async (req, res) => {
+  await responder(res, async () => {
+    exigirEmpresa(req, req.body?.empresa);
+    const id = await gastos.guardarRecurrente(req.body ?? {}, req.usuario?.id ?? null);
+    await gastos.generarRecurrentes(req.usuario?.id ?? null);
+    return (await gastos.recurrentes({ id }))[0];
+  });
+});
+
+/** M&C solo cambia los recurrentes de su empresa. */
+async function exigirRecurrente(req: Request, id: number): Promise<void> {
+  const limite = empresaDe(req);
+  if (!limite) return;
+  const [r] = await gastos.recurrentes({ id });
+  if (r && r.empresa !== limite) throw new ErrorCuadro("Ese recurrente es de la otra empresa.");
+}
+
+/** PUT /api/gastos/recurrentes/:id: cambia los datos del recurrente (el valor se cambia aparte, desde una fecha). */
+gastosRouter.put("/recurrentes/:id", async (req, res) => {
+  await responder(res, async () => {
+    const id = Number(req.params.id);
+    await exigirRecurrente(req, id);
+    exigirEmpresa(req, req.body?.empresa);
+    await gastos.guardarRecurrente(req.body ?? {}, req.usuario?.id ?? null, id);
+    return (await gastos.recurrentes({ id }))[0];
+  });
+});
+
+/** POST /api/gastos/recurrentes/:id/valores: el valor cambia desde una fecha ({ desde, monto }); el historico queda. */
+gastosRouter.post("/recurrentes/:id/valores", async (req, res) => {
+  await responder(res, async () => {
+    const id = Number(req.params.id);
+    await exigirRecurrente(req, id);
+    await gastos.cambiarValor(id, req.body ?? {}, req.usuario?.id ?? null);
+    return (await gastos.recurrentes({ id }))[0];
+  });
+});
+
+/** PUT /api/gastos/recurrentes/:id/estado: termina o reactiva el recurrente ({ activo, hasta? }). */
+gastosRouter.put("/recurrentes/:id/estado", async (req, res) => {
+  await responder(res, async () => {
+    const id = Number(req.params.id);
+    await exigirRecurrente(req, id);
+    await gastos.estadoRecurrente(id, req.body ?? {});
+    return (await gastos.recurrentes({ id }))[0];
+  });
 });
 
 /** POST /api/gastos: registra un gasto ({ empresa, tipo, categoria, descripcion, monto, fechaPago?, soporteUrl?, causaDesde, causaCuotas?, destinos }). */

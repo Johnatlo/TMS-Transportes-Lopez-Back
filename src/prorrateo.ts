@@ -106,14 +106,29 @@ export function sumarMeses(fecha: string, meses: number): string {
   return `${anio}-${String(mes).padStart(2, "0")}-${String(Math.min(d, ultimo)).padStart(2, "0")}`;
 }
 
+/** Cada cuanto se repite un gasto o se reparte en cuotas. */
+export type Periodicidad = "MENSUAL" | "QUINCENAL";
+
 /**
- * Causaciones de un gasto: `cuotas` meses seguidos desde `desde`, en partes
- * iguales (los centavos sobrantes van a las primeras). Una cuota = el gasto
- * completo en esa fecha.
+ * Fecha del periodo `i` (0 = el primero) desde `desde`: mensual, el mismo dia
+ * de cada mes; quincenal, cada 15 dias dentro del mes (el 5 y el 20; el 1 y
+ * el 16), siguiendo el mismo dia en los meses siguientes.
  */
-export function causaciones(total: number, desde: string, cuotas: number): Array<{ fecha: string; monto: number }> {
+export function fechaDePeriodo(desde: string, i: number, periodicidad: Periodicidad = "MENSUAL"): string {
+  if (periodicidad === "MENSUAL") return sumarMeses(desde, i);
+  const base = sumarMeses(desde, Math.floor(i / 2));
+  if (i % 2 === 0) return base;
+  return new Date(Date.parse(base) + 15 * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Causaciones de un gasto: `cuotas` periodos seguidos (meses o quincenas)
+ * desde `desde`, en partes iguales (los centavos sobrantes van a las
+ * primeras). Una cuota = el gasto completo en esa fecha.
+ */
+export function causaciones(total: number, desde: string, cuotas: number, periodicidad: Periodicidad = "MENSUAL"): Array<{ fecha: string; monto: number }> {
   if (!Number.isInteger(cuotas) || cuotas < 1 || cuotas > 120) throw new ErrorReparto("Las cuotas de causacion van de 1 a 120.");
-  return repartir(total, Array(cuotas).fill(1)).map((monto, i) => ({ fecha: sumarMeses(desde, i), monto }));
+  return repartir(total, Array(cuotas).fill(1)).map((monto, i) => ({ fecha: fechaDePeriodo(desde, i, periodicidad), monto }));
 }
 
 /**

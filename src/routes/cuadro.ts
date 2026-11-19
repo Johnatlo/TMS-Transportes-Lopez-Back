@@ -198,6 +198,18 @@ cuadroRouter.put("/anticipos/:anticipoId", async (req, res) => {
     return anticipos.cuadro();
   });
 });
+/**
+ * DELETE /api/cuadro/anticipos/:anticipoId: borra un tramo de anticipo desde
+ * el cuadro de anticipos (por ejemplo, uno mal creado). Como el Cuadro pagos
+ * y la Rentabilidad suman los anticipos de esta tabla, tambien sale de alli.
+ * Si es la ida, se va con ella la vuelta que aun no tiene viaje.
+ */
+cuadroRouter.delete("/anticipos/:anticipoId", async (req, res) => {
+  await responder(res, async () => {
+    await anticipos.borrarTramo(Number(req.params.anticipoId));
+    return anticipos.cuadro();
+  });
+});
 /** PUT /api/cuadro/tanqueos/:tanqueoId: factura de la bomba (numero, fecha) o la bomba del tanqueo. */
 cuadroRouter.put("/tanqueos/:tanqueoId", async (req, res) => {
   await responder(res, async () => {

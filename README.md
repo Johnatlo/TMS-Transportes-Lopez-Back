@@ -450,6 +450,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `PUT` | `/api/cuadro/abonos-socio/:abonoId/cruce` | Lo marca cruzado o por cruzar ({ cruzado, fecha }). Devuelve los abonos. |
 | `DELETE` | `/api/cuadro/abonos-socio/:abonoId` | Borra un abono. |
 | `PUT` | `/api/cuadro/anticipos/:anticipoId` | Fecha de pago, nota, viaje o datos del cruce (galones, precio y descuento: recalcula el combustible) de un tramo. |
+| `DELETE` | `/api/cuadro/anticipos/:anticipoId` | Borra un tramo de anticipo desde el cuadro de anticipos (por ejemplo, uno mal creado). Como el Cuadro pagos y la Rentabilidad suman los anticipos de esta tabla, tambien sale de alli. Si es la ida, se va con ella la vuelta que aun no tiene viaje. |
 | `PUT` | `/api/cuadro/tanqueos/:tanqueoId` | Factura de la bomba (numero, fecha) o la bomba del tanqueo. |
 | `GET` | `/api/cuadro/tarifas` | La matriz de fletes. |
 | `PUT` | `/api/cuadro/tarifas` | Reemplaza la matriz completa con la importada del Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }). |
@@ -536,7 +537,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_981 funciones, componentes, métodos y rutas en 66 archivos._
+_1002 funciones, componentes, métodos y rutas en 67 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -556,14 +557,15 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/facturacion.ts`](#srcfacturacionts) (11)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/flota.ts`](#srcflotats) (1)
-- [`src/gastos.ts`](#srcgastosts) (31)
+- [`src/gastos.ts`](#srcgastosts) (37)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
 - [`src/nomina.ts`](#srcnominats) (34)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
-- [`src/prorrateo.ts`](#srcprorrateots) (11)
+- [`src/prorrateo.ts`](#srcprorrateots) (12)
+- [`src/reglasGastos.ts`](#srcreglasgastosts) (6)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
 - [`src/repo.ts`](#srcrepots) (96)
@@ -582,9 +584,9 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/roles.ts`](#srcrolests) (7)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (50)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
-- [`src/routes/gastos.ts`](#srcroutesgastosts) (19)
+- [`src/routes/gastos.ts`](#srcroutesgastosts) (26)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (22)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
@@ -1747,8 +1749,18 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 > de utilidades.
 >
 > - Un gasto (o ingreso) tiene empresa, categoria, monto, fecha de pago (flujo
->   de caja) y una o varias causaciones mensuales (rentabilidad): un seguro
->   anual se paga una vez y se causa en 12 meses.
+>   de caja), proveedor y factura (numero y si es credito o debito, para el
+>   reporte de facturas credito de la contadora) y su forma:
+>   . UNICO (lo normal): se causa en la fecha de pago (o la del gasto, si
+>     aun no se paga).
+>   . DIFERIDO: se paga una vez y se causa en cuotas mensuales o quincenales
+>     (un seguro anual en 12 meses).
+>   . RECURRENTE: lo genera un gasto recurrente (arriendo, honorarios,
+>     servicios) cada mes o quincena, con el valor vigente en ese periodo;
+>     cuando el valor cambia se registra desde una fecha y el historico queda.
+> - Antes de guardar se buscan gastos repetidos (la factura que llega por
+>   correo y en fisico): la misma factura, o el mismo valor y fecha con una
+>   descripcion parecida. Si hay, se pregunta antes de guardar (reglasGastos.ts).
 > - Destinos: los vehiculos que se marquen (una parte por carro), partes
 >   directas a socios (valor fijo, porcentaje o partes) y/o la empresa (lo
 >   que no se le carga a ningun carro: baja la rentabilidad de la empresa).
@@ -1792,7 +1804,7 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
   Valida lo que llega del formulario del gasto.
 
 - **`causacionesDe(g)`** · _función_
-  Causaciones de un gasto: por dias si tiene causaHasta (nomina); si no, en cuotas mensuales.
+  Causaciones de un gasto: por dias si tiene causaHasta (nomina); si no, en cuotas mensuales o quincenales.
 
 - **`limites()`** · _función_
   Fecha desde la que se registran gastos y meses cerrados.
@@ -1803,7 +1815,7 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 - **`escribirReparto(con, gastoId, g)`** · _función_
   Escribe las causaciones y el reparto de un gasto (borra los que tuviera).
 
-- **`exigirManual(g)`** · _función_
+- **`exigirManual(g, accion)`** · _función_
   Los gastos de un credito o de la nomina se cambian desde alla.
 
 - **`enTransaccion(fn)`** · _función_
@@ -1832,6 +1844,34 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 
   - **`gastos.anular(id)`** · _método_
     Anula un gasto: deja de contar (se borra su reparto) pero queda en el libro.
+
+  - **`gastos.revisarDuplicados(d)`** · _método_
+    Gastos ya guardados que pueden ser el mismo que este (la misma factura, o
+    el mismo valor y fecha con una descripcion parecida). Se usa antes de
+    guardar para preguntar.
+
+  - **`gastos.recurrentes(filtro)`** · _método_
+    Gastos recurrentes con el historial de sus valores.
+
+  - **`gastos.guardarRecurrente(d, usuarioId, id)`** · _método_
+    Crea o cambia un gasto recurrente ({ empresa, tipo, categoria, descripcion,
+    proveedor?, tipoFactura?, destinos, periodicidad, desde, hasta?, monto }).
+    Al crearlo, el monto es su valor desde `desde`; despues el valor se cambia
+    con cambiarValor (para no perder el historico).
+
+  - **`gastos.cambiarValor(id, d, usuarioId)`** · _método_
+    Cambia el valor de un recurrente desde una fecha ({ desde, monto }). Los
+    periodos anteriores conservan el valor de su momento; los ya generados
+    desde esa fecha que no se han pagado (y en meses abiertos) toman el nuevo.
+
+  - **`gastos.estadoRecurrente(id, d)`** · _método_
+    Termina un recurrente (no genera mas desde el dia siguiente a `hasta`) o lo vuelve a activar ({ activo, hasta? }).
+
+  - **`gastos.generarRecurrentes(usuarioId)`** · _método_
+    Genera los gastos de los recurrentes activos para los periodos que ya
+    tocaron (hasta hoy), desde la fecha de inicio de los gastos y en meses
+    abiertos. Cada uno queda por pagar con el valor vigente en su periodo.
+    No repite: un periodo ya generado (o anulado) no se vuelve a crear.
 
   - **`gastos.revisarCausaciones(g)`** · _método_
     Revisa que se puedan crear gastos con estas causaciones (desde la fecha de inicio y en meses abiertos).
@@ -2256,10 +2296,15 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 - **`sumarMeses(fecha, meses)`** · _función_
   Suma `meses` a una fecha "AAAA-MM-DD"; si el dia no existe en ese mes (31 en febrero), el ultimo del mes.
 
-- **`causaciones(total, desde, cuotas)`** · _función_
-  Causaciones de un gasto: `cuotas` meses seguidos desde `desde`, en partes
-  iguales (los centavos sobrantes van a las primeras). Una cuota = el gasto
-  completo en esa fecha.
+- **`fechaDePeriodo(desde, i, periodicidad)`** · _función_
+  Fecha del periodo `i` (0 = el primero) desde `desde`: mensual, el mismo dia
+  de cada mes; quincenal, cada 15 dias dentro del mes (el 5 y el 20; el 1 y
+  el 16), siguiendo el mismo dia en los meses siguientes.
+
+- **`causaciones(total, desde, cuotas, periodicidad)`** · _función_
+  Causaciones de un gasto: `cuotas` periodos seguidos (meses o quincenas)
+  desde `desde`, en partes iguales (los centavos sobrantes van a las
+  primeras). Una cuota = el gasto completo en esa fecha.
 
 - **`causacionesPorDias(total, desde, hasta)`** · _función_
   Causaciones por dias: reparte `total` entre los meses calendario que cubre
@@ -2283,6 +2328,39 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 
 - **`gmfDe(centavos, porMil)`** · _función_
   El 4 x 1000 (o lo que se ponga por mil) de un pago, en centavos redondeados al peso.
+
+### `src/reglasGastos.ts`
+
+> Reglas del libro de gastos sin base de datos (se prueban en
+> reglasGastos.test.ts):
+>
+> - Gastos recurrentes (arriendo, honorarios, servicios): los periodos que ya
+>   tocaron (mensual o quincenal) y el valor vigente en cada uno. Cuando el
+>   valor cambia se registra desde una fecha: los periodos anteriores
+>   conservan el valor de su momento (el historico no se pierde).
+> - Gastos que pueden estar repetidos: la misma factura que llega por correo
+>   y en fisico (en las cuentas de los carros). Se buscan por el numero de
+>   factura, o por el mismo valor y fecha con una descripcion parecida.
+
+- **`periodosRecurrente(desde, hasta, hoy, periodicidad)`** · _función_
+  Fechas de los periodos de un recurrente desde `desde` hasta `hasta` (o hoy), los dos incluidos.
+
+- **`valorEn(valores, fecha)`** · _función_
+  El valor vigente en una fecha: el ultimo que empezo antes o ese dia (null si ninguno).
+
+- **`textoComparable(t)`** · _función_
+  Texto para comparar: sin tildes ni signos, en mayuscula y sin espacios de mas.
+
+- **`facturaComparable(f)`** · _función_
+  Numero de factura comparable: solo letras y numeros, sin ceros a la izquierda ("FE-00123" = "FE123").
+
+- **`descripcionesParecidas(a, b)`** · _función_
+  Las descripciones se parecen: una contiene a la otra, o comparten la mitad de sus palabras (de 3 letras o mas).
+
+- **`posiblesDuplicados(nuevo, existentes)`** · _función_
+  Gastos ya guardados que pueden ser el mismo que el nuevo: la misma factura
+  (mismo numero en la misma empresa), o el mismo valor y la misma fecha con
+  una descripcion parecida.
 
 ### `src/relacionesBomba.ts`
 
@@ -4192,6 +4270,12 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 - **`PUT /anticipos/:anticipoId`** · _ruta HTTP_
   PUT /api/cuadro/anticipos/:anticipoId: fecha de pago, nota, viaje o datos del cruce (galones, precio y descuento: recalcula el combustible) de un tramo.
 
+- **`DELETE /anticipos/:anticipoId`** · _ruta HTTP_
+  DELETE /api/cuadro/anticipos/:anticipoId: borra un tramo de anticipo desde
+  el cuadro de anticipos (por ejemplo, uno mal creado). Como el Cuadro pagos
+  y la Rentabilidad suman los anticipos de esta tabla, tambien sale de alli.
+  Si es la ida, se va con ella la vuelta que aun no tiene viaje.
+
 - **`PUT /tanqueos/:tanqueoId`** · _ruta HTTP_
   PUT /api/cuadro/tanqueos/:tanqueoId: factura de la bomba (numero, fecha) o la bomba del tanqueo.
 
@@ -4615,6 +4699,27 @@ _981 funciones, componentes, métodos y rutas en 66 archivos._
 
 - **`GET /`** · _ruta HTTP_
   GET /api/gastos: el libro de gastos (M&C: solo los de su empresa).
+
+- **`POST /duplicados`** · _ruta HTTP_
+  POST /api/gastos/duplicados: gastos ya guardados que pueden ser el mismo (misma factura, o mismo valor y fecha con descripcion parecida).
+
+- **`GET /recurrentes`** · _ruta HTTP_
+  GET /api/gastos/recurrentes: gastos recurrentes con el historial de su valor.
+
+- **`POST /recurrentes`** · _ruta HTTP_
+  POST /api/gastos/recurrentes: crea un recurrente ({ empresa, tipo, categoria, descripcion, proveedor?, tipoFactura?, destinos, periodicidad, desde, hasta?, monto }).
+
+- **`exigirRecurrente(req, id)`** · _función_
+  M&C solo cambia los recurrentes de su empresa.
+
+- **`PUT /recurrentes/:id`** · _ruta HTTP_
+  PUT /api/gastos/recurrentes/:id: cambia los datos del recurrente (el valor se cambia aparte, desde una fecha).
+
+- **`POST /recurrentes/:id/valores`** · _ruta HTTP_
+  POST /api/gastos/recurrentes/:id/valores: el valor cambia desde una fecha ({ desde, monto }); el historico queda.
+
+- **`PUT /recurrentes/:id/estado`** · _ruta HTTP_
+  PUT /api/gastos/recurrentes/:id/estado: termina o reactiva el recurrente ({ activo, hasta? }).
 
 - **`POST /`** · _ruta HTTP_
   POST /api/gastos: registra un gasto ({ empresa, tipo, categoria, descripcion, monto, fechaPago?, soporteUrl?, causaDesde, causaCuotas?, destinos }).

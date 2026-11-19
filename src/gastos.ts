@@ -4,8 +4,18 @@
  * de utilidades.
  *
  * - Un gasto (o ingreso) tiene empresa, categoria, monto, fecha de pago (flujo
- *   de caja) y una o varias causaciones mensuales (rentabilidad): un seguro
- *   anual se paga una vez y se causa en 12 meses.
+ *   de caja), proveedor y factura (numero y si es credito o debito, para el
+ *   reporte de facturas credito de la contadora) y su forma:
+ *   . UNICO (lo normal): se causa en la fecha de pago (o la del gasto, si
+ *     aun no se paga).
+ *   . DIFERIDO: se paga una vez y se causa en cuotas mensuales o quincenales
+ *     (un seguro anual en 12 meses).
+ *   . RECURRENTE: lo genera un gasto recurrente (arriendo, honorarios,
+ *     servicios) cada mes o quincena, con el valor vigente en ese periodo;
+ *     cuando el valor cambia se registra desde una fecha y el historico queda.
+ * - Antes de guardar se buscan gastos repetidos (la factura que llega por
+ *   correo y en fisico): la misma factura, o el mismo valor y fecha con una
+ *   descripcion parecida. Si hay, se pregunta antes de guardar (reglasGastos.ts).
  * - Destinos: los vehiculos que se marquen (una parte por carro), partes
  *   directas a socios (valor fijo, porcentaje o partes) y/o la empresa (lo
  *   que no se le carga a ningun carro: baja la rentabilidad de la empresa).
@@ -28,13 +38,19 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/prom
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
 import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, ErrorReparto, gmfDe, repartirGasto, tasaImplicita } from "./prorrateo";
-import type { Destino } from "./prorrateo";
+import type { Destino, Periodicidad } from "./prorrateo";
+import { periodosRecurrente, posiblesDuplicados, valorEn } from "./reglasGastos";
+import type { GastoComparable } from "./reglasGastos";
 import type { EmpresaVehiculo } from "./roles";
 
 export const EMPRESAS: EmpresaVehiculo[] = ["LOPEZ", "MYC"];
 /** Categorias del libro de gastos. */
 export const CATEGORIAS = ["NOMINA", "OFICINA", "SERVICIOS", "CREDITO", "VEHICULO", "SEGUROS", "IMPUESTOS", "SOCIO", "OTROS"] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
+/** Forma de un gasto: pago unico, diferido en cuotas o generado por un recurrente. */
+export type FormaGasto = "UNICO" | "DIFERIDO" | "RECURRENTE";
+/** Tipo de la factura: credito (se paga despues; va al reporte de la contadora) o debito (contado). */
+export type TipoFactura = "CREDITO" | "DEBITO";
 
 /** Lo que le toco a un vehiculo o socio en una causacion. */
 export interface RepartoGasto {
@@ -72,6 +88,36 @@ export interface Gasto {
   creadoEn: string;
   causaciones: Array<{ fecha: string; monto: number }>;
   reparto: RepartoGasto[];
+  forma: FormaGasto;
+  /** Cada cuanto se causan sus cuotas (diferido) o se repite (recurrente). */
+  periodicidad: Periodicidad;
+  proveedor: string | null;
+  numeroFactura: string | null;
+  tipoFactura: TipoFactura | null;
+  /** El recurrente que lo genero y su periodo. */
+  recurrenteId: number | null;
+  periodo: string | null;
+}
+
+/** Un gasto recurrente (arriendo, honorarios, servicios) con el historial de su valor. */
+export interface GastoRecurrente {
+  id: number;
+  empresa: EmpresaVehiculo;
+  tipo: "GASTO" | "INGRESO";
+  categoria: Categoria;
+  descripcion: string;
+  proveedor: string | null;
+  tipoFactura: TipoFactura | null;
+  destinos: Destino[];
+  periodicidad: Periodicidad;
+  desde: string;
+  hasta: string | null;
+  activo: boolean;
+  /** Valor desde cada fecha (el ultimo es el vigente). */
+  valores: Array<{ desde: string; monto: number }>;
+  valorActual: number | null;
+  generados: number;
+  porPagar: number;
 }
 
 /** Un credito con su tabla de amortizacion. */
@@ -176,6 +222,11 @@ interface DatosGasto {
   causaCuotas: number;
   causaHasta: string | null;
   destinos: Destino[];
+  forma: FormaGasto;
+  periodicidad: Periodicidad;
+  proveedor: string | null;
+  numeroFactura: string | null;
+  tipoFactura: TipoFactura | null;
 }
 
 /** Valida lo que llega del formulario del gasto. */
@@ -188,26 +239,42 @@ async function validarGasto(d: Record<string, unknown>): Promise<DatosGasto> {
   if (!descripcion) throw new ErrorCuadro("Escribe la descripcion.");
   const monto = Number(d.monto);
   if (!Number.isFinite(monto) || monto <= 0) throw new ErrorCuadro("Escribe el valor (mayor que cero).");
-  const causaDesde = fechaDe(d.causaDesde, "la fecha de causacion (a que periodo corresponde)");
-  const causaCuotas = d.causaCuotas === undefined || d.causaCuotas === null || d.causaCuotas === "" ? 1 : Number(d.causaCuotas);
+  const fechaPago = d.fechaPago ? fechaDe(d.fechaPago, "la fecha de pago") : null;
+  const cuotasDadas = d.causaCuotas === undefined || d.causaCuotas === null || d.causaCuotas === "" ? 1 : Number(d.causaCuotas);
+  // Pago unico (lo normal): se causa en la fecha del gasto; si no viene, el dia que se paga.
+  const forma: FormaGasto =
+    d.forma === "RECURRENTE" ? "RECURRENTE" : d.forma === "DIFERIDO" || (d.forma === undefined && cuotasDadas > 1) ? "DIFERIDO" : "UNICO";
+  const causaDesde =
+    forma === "UNICO" && !d.causaDesde
+      ? (fechaPago ?? fechaDe(d.causaDesde, "la fecha del gasto o la de pago"))
+      : fechaDe(d.causaDesde, "la fecha de causacion (a que periodo corresponde)");
+  const causaCuotas = forma === "DIFERIDO" ? cuotasDadas : 1;
+  const tipoFactura = d.tipoFactura === "CREDITO" || d.tipoFactura === "DEBITO" ? d.tipoFactura : null;
   return {
     empresa,
     tipo: d.tipo === "INGRESO" ? "INGRESO" : "GASTO",
     categoria,
     descripcion,
     monto: aCentavos(monto),
-    fechaPago: d.fechaPago ? fechaDe(d.fechaPago, "la fecha de pago") : null,
+    fechaPago,
     soporteUrl: linkDe(d.soporteUrl),
     causaDesde,
     causaCuotas,
+    forma,
+    periodicidad: d.periodicidad === "QUINCENAL" ? "QUINCENAL" : "MENSUAL",
+    proveedor: texto(d.proveedor, 150),
+    numeroFactura: texto(d.numeroFactura, 40),
+    tipoFactura,
     causaHasta: d.causaHasta ? fechaDe(d.causaHasta, "el fin del periodo") : null,
     destinos: await leerDestinos(d.destinos),
   };
 }
 
-/** Causaciones de un gasto: por dias si tiene causaHasta (nomina); si no, en cuotas mensuales. */
-const causacionesDe = (g: Pick<DatosGasto, "monto" | "causaDesde" | "causaCuotas" | "causaHasta">) =>
-  conErrores(() => (g.causaHasta ? causacionesPorDias(g.monto, g.causaDesde, g.causaHasta) : causaciones(g.monto, g.causaDesde, g.causaCuotas)));
+/** Causaciones de un gasto: por dias si tiene causaHasta (nomina); si no, en cuotas mensuales o quincenales. */
+const causacionesDe = (g: Pick<DatosGasto, "monto" | "causaDesde" | "causaCuotas" | "causaHasta"> & { periodicidad?: Periodicidad }) =>
+  conErrores(() =>
+    g.causaHasta ? causacionesPorDias(g.monto, g.causaDesde, g.causaHasta) : causaciones(g.monto, g.causaDesde, g.causaCuotas, g.periodicidad ?? "MENSUAL"),
+  );
 
 /** Fecha desde la que se registran gastos y meses cerrados. */
 async function limites(): Promise<{ corte: string; cerrados: Set<string> }> {
@@ -232,7 +299,7 @@ async function exigirAbierto(fechas: string[]): Promise<void> {
 async function escribirReparto(
   con: PoolConnection,
   gastoId: number,
-  g: Pick<DatosGasto, "monto" | "causaDesde" | "causaCuotas" | "causaHasta" | "destinos">,
+  g: Pick<DatosGasto, "monto" | "causaDesde" | "causaCuotas" | "causaHasta" | "destinos"> & { periodicidad?: Periodicidad },
 ): Promise<void> {
   const cuotas = causacionesDe(g);
   await con.query("DELETE FROM gastos_reparto WHERE gastoId = ?", [gastoId]);
@@ -253,9 +320,12 @@ async function escribirReparto(
 }
 
 /** Los gastos de un credito o de la nomina se cambian desde alla. */
-function exigirManual(g: Gasto): void {
+function exigirManual(g: Gasto, accion: "cambiar" | "anular" = "cambiar"): void {
   if (g.origen === "CREDITO") throw new ErrorCuadro("Este gasto sale de un credito: se cambia desde el credito (pago de la cuota).");
   if (g.origen === "NOMINA") throw new ErrorCuadro("Este gasto sale de la nomina: reabre la nomina para cambiarlo.");
+  // Un periodo de un recurrente se puede anular (ese mes no se pago), pero su valor se cambia en el recurrente.
+  if (g.origen === "RECURRENTE" && accion === "cambiar")
+    throw new ErrorCuadro("Este gasto sale de un recurrente: cambia su valor desde una fecha en Recurrentes.");
 }
 
 /** Ejecuta en una transaccion. */
@@ -346,6 +416,13 @@ export const gastos = {
       anulado: !!f.anulado,
       creadoPor: f.creadoPor ?? null,
       creadoEn: f.creadoEn instanceof Date ? f.creadoEn.toISOString() : String(f.creadoEn),
+      forma: (f.forma ?? "UNICO") as FormaGasto,
+      periodicidad: (f.periodicidad ?? "MENSUAL") as Periodicidad,
+      proveedor: f.proveedor ?? null,
+      numeroFactura: f.numeroFactura ?? null,
+      tipoFactura: f.tipoFactura ?? null,
+      recurrenteId: f.recurrenteId ?? null,
+      periodo: dia(f.periodo),
       causaciones: caus.filter((c) => c.gastoId === f.id).map((c) => ({ fecha: dia(c.fecha)!, monto: Number(c.monto) })),
       reparto: rep
         .filter((r) => r.gastoId === f.id)
@@ -364,15 +441,26 @@ export const gastos = {
   async crear(
     d: Record<string, unknown>,
     usuarioId: number | null,
-    origen: { origen: string; creditoId: number | null; nominaId?: number | null } = { origen: "MANUAL", creditoId: null },
+    origen: { origen: string; creditoId: number | null; nominaId?: number | null; recurrenteId?: number | null; periodo?: string | null } = {
+      origen: "MANUAL",
+      creditoId: null,
+    },
   ): Promise<number> {
     const g = await validarGasto(d);
     await exigirAbierto(causacionesDe(g).map((c) => c.fecha));
+    // Gastos repetidos (la factura que llega por correo y en fisico): se pregunta antes de guardarlo otra vez.
+    if (origen.origen === "MANUAL" && !d.confirmarDuplicado) {
+      const repetidos = await this.revisarDuplicados(d);
+      if (repetidos.length)
+        throw new ErrorCuadro(
+          `Este gasto parece ya registrado (${repetidos.map((r) => `${r.descripcion}, ${r.motivo}`).join("; ")}). Si es otro, confirma que lo quieres guardar.`,
+        );
+    }
     return enTransaccion(async (con) => {
       const [res] = await con.query<ResultSetHeader>(
         `INSERT INTO gastos (empresa, tipo, categoria, descripcion, monto, fechaPago, soporteUrl, causaDesde, causaCuotas, causaHasta, destinos, origen,
-                             creditoId, nominaId, creadoPorId)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                             creditoId, nominaId, creadoPorId, forma, periodicidad, proveedor, numeroFactura, tipoFactura, recurrenteId, periodo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           g.empresa,
           g.tipo,
@@ -389,6 +477,13 @@ export const gastos = {
           origen.creditoId,
           origen.nominaId ?? null,
           usuarioId,
+          origen.origen === "RECURRENTE" ? "RECURRENTE" : g.forma,
+          g.periodicidad,
+          g.proveedor,
+          g.numeroFactura,
+          g.tipoFactura,
+          origen.recurrenteId ?? null,
+          origen.periodo ?? null,
         ],
       );
       await escribirReparto(con, res.insertId, g);
@@ -407,7 +502,7 @@ export const gastos = {
     await enTransaccion(async (con) => {
       await con.query(
         `UPDATE gastos SET empresa = ?, tipo = ?, categoria = ?, descripcion = ?, monto = ?, fechaPago = ?, soporteUrl = ?,
-                causaDesde = ?, causaCuotas = ?, destinos = ? WHERE id = ?`,
+                causaDesde = ?, causaCuotas = ?, destinos = ?, forma = ?, periodicidad = ?, proveedor = ?, numeroFactura = ?, tipoFactura = ? WHERE id = ?`,
         [
           g.empresa,
           g.tipo,
@@ -419,6 +514,11 @@ export const gastos = {
           g.causaDesde,
           g.causaCuotas,
           JSON.stringify(g.destinos),
+          g.forma,
+          g.periodicidad,
+          g.proveedor,
+          g.numeroFactura,
+          g.tipoFactura,
           id,
         ],
       );
@@ -445,12 +545,231 @@ export const gastos = {
   async anular(id: number): Promise<void> {
     const [actual] = await this.listar({ id });
     if (!actual || actual.anulado) return;
-    exigirManual(actual);
+    exigirManual(actual, "anular");
     await exigirAbierto(actual.causaciones.map((c) => c.fecha));
     await enTransaccion(async (con) => {
       await con.query("DELETE FROM gastos_reparto WHERE gastoId = ?", [id]);
       await con.query("UPDATE gastos SET anulado = 1 WHERE id = ?", [id]);
     });
+  },
+
+  /**
+   * Gastos ya guardados que pueden ser el mismo que este (la misma factura, o
+   * el mismo valor y fecha con una descripcion parecida). Se usa antes de
+   * guardar para preguntar.
+   */
+  async revisarDuplicados(
+    d: Record<string, unknown>,
+  ): Promise<Array<{ id: number; descripcion: string; fecha: string; monto: number; numeroFactura: string | null; motivo: string }>> {
+    const empresa = String(d.empresa ?? "");
+    const monto = Number(d.monto);
+    const fecha = String(d.fechaPago || d.causaDesde || "").slice(0, 10);
+    if (!empresa || !fecha) return [];
+    const [filas] = await pool.query<RowDataPacket[]>(
+      `SELECT id, empresa, descripcion, numeroFactura, fechaPago, causaDesde, monto FROM gastos
+        WHERE anulado = 0 AND empresa = ? AND (numeroFactura IS NOT NULL OR COALESCE(fechaPago, causaDesde) = ?)`,
+      [empresa, fecha],
+    );
+    const existentes = filas.map((f) => ({
+      id: f.id as number,
+      empresa: f.empresa as string,
+      descripcion: f.descripcion as string,
+      numeroFactura: (f.numeroFactura as string) ?? null,
+      fecha: dia(f.fechaPago) ?? dia(f.causaDesde)!,
+      monto: Number(f.monto),
+    }));
+    const nuevo: GastoComparable = {
+      id: d.id ? Number(d.id) : undefined,
+      empresa,
+      descripcion: String(d.descripcion ?? ""),
+      numeroFactura: d.numeroFactura ? String(d.numeroFactura) : null,
+      fecha,
+      monto,
+    };
+    return posiblesDuplicados(nuevo, existentes).map((r) => ({ ...r.gasto, motivo: r.motivo }));
+  },
+
+  /** Gastos recurrentes con el historial de sus valores. */
+  async recurrentes(filtro: { id?: number } = {}): Promise<GastoRecurrente[]> {
+    const [filas] = await pool.query<RowDataPacket[]>(
+      `SELECT * FROM gastos_recurrentes ${filtro.id ? "WHERE id = ?" : ""} ORDER BY activo DESC, descripcion`,
+      filtro.id ? [filtro.id] : [],
+    );
+    if (!filas.length) return [];
+    const ids = filas.map((f) => f.id);
+    const [valores] = await pool.query<RowDataPacket[]>(
+      "SELECT recurrenteId, desde, monto FROM gastos_recurrentes_valores WHERE recurrenteId IN (?) ORDER BY desde",
+      [ids],
+    );
+    const [generados] = await pool.query<RowDataPacket[]>(
+      "SELECT recurrenteId, COUNT(*) AS n, SUM(fechaPago IS NULL) AS porPagar FROM gastos WHERE recurrenteId IN (?) AND anulado = 0 GROUP BY recurrenteId",
+      [ids],
+    );
+    const hoy = hoyColombia();
+    return filas.map((f) => {
+      const suyos = valores.filter((v) => v.recurrenteId === f.id).map((v) => ({ desde: dia(v.desde)!, monto: Number(v.monto) }));
+      const g = generados.find((x) => x.recurrenteId === f.id);
+      return {
+        id: f.id,
+        empresa: f.empresa,
+        tipo: f.tipo,
+        categoria: f.categoria,
+        descripcion: f.descripcion,
+        proveedor: f.proveedor ?? null,
+        tipoFactura: f.tipoFactura ?? null,
+        destinos: destinosDe(f.destinos),
+        periodicidad: f.periodicidad,
+        desde: dia(f.desde)!,
+        hasta: dia(f.hasta),
+        activo: !!f.activo,
+        valores: suyos,
+        valorActual: valorEn(suyos, hoy) ?? suyos[0]?.monto ?? null,
+        generados: Number(g?.n ?? 0),
+        porPagar: Number(g?.porPagar ?? 0),
+      };
+    });
+  },
+
+  /**
+   * Crea o cambia un gasto recurrente ({ empresa, tipo, categoria, descripcion,
+   * proveedor?, tipoFactura?, destinos, periodicidad, desde, hasta?, monto }).
+   * Al crearlo, el monto es su valor desde `desde`; despues el valor se cambia
+   * con cambiarValor (para no perder el historico).
+   */
+  async guardarRecurrente(d: Record<string, unknown>, usuarioId: number | null, id?: number): Promise<number> {
+    const empresa = String(d.empresa ?? "") as EmpresaVehiculo;
+    if (!EMPRESAS.includes(empresa)) throw new ErrorCuadro("Elige la empresa.");
+    const categoria = String(d.categoria ?? "") as Categoria;
+    if (!CATEGORIAS.includes(categoria)) throw new ErrorCuadro("Elige la categoria.");
+    const descripcion = texto(d.descripcion, 300);
+    if (!descripcion) throw new ErrorCuadro("Escribe la descripcion.");
+    const desde = fechaDe(d.desde, "la fecha del primer pago");
+    const hasta = d.hasta ? fechaDe(d.hasta, "la fecha final") : null;
+    if (hasta && hasta < desde) throw new ErrorCuadro("La fecha final es antes del primer pago.");
+    const destinos = await leerDestinos(d.destinos);
+    conErrores(() => repartirGasto(100_00, destinos));
+    const valores = [
+      empresa,
+      d.tipo === "INGRESO" ? "INGRESO" : "GASTO",
+      categoria,
+      descripcion,
+      texto(d.proveedor, 150),
+      d.tipoFactura === "CREDITO" || d.tipoFactura === "DEBITO" ? d.tipoFactura : null,
+      JSON.stringify(destinos),
+      d.periodicidad === "QUINCENAL" ? "QUINCENAL" : "MENSUAL",
+      desde,
+      hasta,
+    ];
+    if (id) {
+      await pool.query(
+        "UPDATE gastos_recurrentes SET empresa = ?, tipo = ?, categoria = ?, descripcion = ?, proveedor = ?, tipoFactura = ?, destinos = ?, periodicidad = ?, desde = ?, hasta = ? WHERE id = ?",
+        [...valores, id],
+      );
+      return id;
+    }
+    const monto = Number(d.monto);
+    if (!Number.isFinite(monto) || monto <= 0) throw new ErrorCuadro("Escribe el valor (mayor que cero).");
+    const [res] = await pool.query<ResultSetHeader>(
+      `INSERT INTO gastos_recurrentes (empresa, tipo, categoria, descripcion, proveedor, tipoFactura, destinos, periodicidad, desde, hasta, creadoPorId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [...valores, usuarioId],
+    );
+    await pool.query("INSERT INTO gastos_recurrentes_valores (recurrenteId, desde, monto, creadoPorId) VALUES (?, ?, ?, ?)", [
+      res.insertId,
+      desde,
+      decimal(aCentavos(monto)),
+      usuarioId,
+    ]);
+    return res.insertId;
+  },
+
+  /**
+   * Cambia el valor de un recurrente desde una fecha ({ desde, monto }). Los
+   * periodos anteriores conservan el valor de su momento; los ya generados
+   * desde esa fecha que no se han pagado (y en meses abiertos) toman el nuevo.
+   */
+  async cambiarValor(id: number, d: Record<string, unknown>, usuarioId: number | null): Promise<void> {
+    const [r] = await this.recurrentes({ id });
+    if (!r) throw new ErrorCuadro("Ese recurrente no existe.");
+    const desde = fechaDe(d.desde, "desde cuando aplica el nuevo valor");
+    const monto = Number(d.monto);
+    if (!Number.isFinite(monto) || monto <= 0) throw new ErrorCuadro("Escribe el nuevo valor (mayor que cero).");
+    await pool.query("DELETE FROM gastos_recurrentes_valores WHERE recurrenteId = ? AND desde = ?", [id, desde]);
+    await pool.query("INSERT INTO gastos_recurrentes_valores (recurrenteId, desde, monto, creadoPorId) VALUES (?, ?, ?, ?)", [
+      id,
+      desde,
+      decimal(aCentavos(monto)),
+      usuarioId,
+    ]);
+    const { cerrados } = await limites();
+    const [porActualizar] = await pool.query<RowDataPacket[]>(
+      "SELECT id, periodo FROM gastos WHERE recurrenteId = ? AND anulado = 0 AND fechaPago IS NULL AND periodo >= ?",
+      [id, desde],
+    );
+    const valores = [...r.valores.filter((v) => v.desde !== desde), { desde, monto }];
+    for (const g of porActualizar) {
+      const periodo = dia(g.periodo)!;
+      if (cerrados.has(mes(periodo))) continue;
+      const nuevo = valorEn(valores, periodo);
+      if (nuevo === null) continue;
+      await enTransaccion(async (con) => {
+        await con.query("UPDATE gastos SET monto = ? WHERE id = ?", [decimal(aCentavos(nuevo)), g.id]);
+        await escribirReparto(con, g.id, { monto: aCentavos(nuevo), causaDesde: periodo, causaCuotas: 1, causaHasta: null, destinos: r.destinos });
+      });
+    }
+  },
+
+  /** Termina un recurrente (no genera mas desde el dia siguiente a `hasta`) o lo vuelve a activar ({ activo, hasta? }). */
+  async estadoRecurrente(id: number, d: Record<string, unknown>): Promise<void> {
+    const activo = d.activo !== false;
+    const hasta = d.hasta ? fechaDe(d.hasta, "la fecha final") : null;
+    await pool.query("UPDATE gastos_recurrentes SET activo = ?, hasta = ? WHERE id = ?", [activo ? 1 : 0, activo ? hasta : (hasta ?? hoyColombia()), id]);
+  },
+
+  /**
+   * Genera los gastos de los recurrentes activos para los periodos que ya
+   * tocaron (hasta hoy), desde la fecha de inicio de los gastos y en meses
+   * abiertos. Cada uno queda por pagar con el valor vigente en su periodo.
+   * No repite: un periodo ya generado (o anulado) no se vuelve a crear.
+   */
+  async generarRecurrentes(usuarioId: number | null): Promise<number> {
+    const { corte, cerrados } = await limites();
+    const hoy = hoyColombia();
+    let creados = 0;
+    for (const r of await this.recurrentes()) {
+      if (!r.activo || !r.valores.length) continue;
+      const [ya] = await pool.query<RowDataPacket[]>("SELECT periodo FROM gastos WHERE recurrenteId = ?", [r.id]);
+      const hechos = new Set(ya.map((x) => dia(x.periodo)));
+      for (const periodo of periodosRecurrente(r.desde, r.hasta, hoy, r.periodicidad)) {
+        if (periodo < corte || cerrados.has(mes(periodo)) || hechos.has(periodo)) continue;
+        const monto = valorEn(r.valores, periodo);
+        if (monto === null) continue;
+        // Un recurrente con un problema (un vehiculo que ya no existe, otro que abrio el libro al tiempo) no tumba el libro.
+        try {
+          await this.crear(
+            {
+              empresa: r.empresa,
+              tipo: r.tipo,
+              categoria: r.categoria,
+              descripcion: r.descripcion,
+              proveedor: r.proveedor,
+              tipoFactura: r.tipoFactura,
+              monto,
+              forma: "UNICO",
+              causaDesde: periodo,
+              periodicidad: r.periodicidad,
+              destinos: r.destinos,
+            },
+            usuarioId,
+            { origen: "RECURRENTE", creditoId: null, recurrenteId: r.id, periodo },
+          );
+          creados++;
+        } catch (exc) {
+          if ((exc as { code?: string }).code !== "ER_DUP_ENTRY") console.error(`Gasto recurrente ${r.id} (${periodo}): ${(exc as Error).message}`);
+        }
+      }
+    }
+    return creados;
   },
 
   /** Revisa que se puedan crear gastos con estas causaciones (desde la fecha de inicio y en meses abiertos). */
