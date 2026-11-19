@@ -834,7 +834,8 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
     a mano (cruzadoManual: fecha, true = hoy, null = quitarlo), a que
     viaje se suma (para corregir una vuelta asignada al viaje equivocado), el
     efectivo o el combustible a mano (para corregir lo que no coincide con la
-    bomba; el valor total se recalcula), aceptar lo que cobro la bomba
+    bomba; el valor total se recalcula; con reemplazar: true el valor nuevo queda
+    como el registrado, sin diferencia), aceptar lo que cobro la bomba
     (aceptarBomba: la diferencia queda resuelta) o
     los datos del cruce: galones, precio por galon y descuento. Con galones,
     el combustible del tramo se recalcula con la formula de la bomba (precio

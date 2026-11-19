@@ -688,7 +688,8 @@ export const anticipos = {
    * a mano (cruzadoManual: fecha, true = hoy, null = quitarlo), a que
    * viaje se suma (para corregir una vuelta asignada al viaje equivocado), el
    * efectivo o el combustible a mano (para corregir lo que no coincide con la
-   * bomba; el valor total se recalcula), aceptar lo que cobro la bomba
+   * bomba; el valor total se recalcula; con reemplazar: true el valor nuevo queda
+   * como el registrado, sin diferencia), aceptar lo que cobro la bomba
    * (aceptarBomba: la diferencia queda resuelta) o
    * los datos del cruce: galones, precio por galon y descuento. Con galones,
    * el combustible del tramo se recalcula con la formula de la bomba (precio
@@ -727,6 +728,14 @@ export const anticipos = {
       valores.push(pesos(d[campo], campo === "efectivo" ? "Efectivo" : "Combustible"));
     }
     if (sets.length) await pool.query(`UPDATE cuadro_anticipos SET ${sets.join(", ")} WHERE id = ?`, [...valores, id]);
+    // Reemplazar (desde el Cuadro pagos o el cuadro de anticipos, cuando el vale llega con otro valor): el valor
+    // nuevo queda como el registrado, sin diferencia de cruce; si el combustible tenia galones, ya no cuadran y se quitan.
+    if (d.reemplazar === true) {
+      if ("efectivo" in d) await pool.query("UPDATE cuadro_anticipos SET efectivoEntregado = NULL WHERE id = ?", [id]);
+      if ("combustible" in d) {
+        await pool.query("UPDATE cuadro_anticipos SET combustibleEntregado = NULL, galones = NULL, precioGalon = NULL, descuento = NULL WHERE id = ?", [id]);
+      }
+    }
     if ("efectivo" in d || "combustible" in d) {
       await pool.query("UPDATE cuadro_anticipos SET valor = COALESCE(efectivo, 0) + COALESCE(combustible, 0) WHERE id = ?", [id]);
     }

@@ -318,39 +318,74 @@ en uso no se toca todavía. Pide la contraseña.
 
 En el servidor (`ssh root@100.99.218.10`):
 
+**1. Revisar que la subida llegó completa.**
+
 ```bash
 cd /opt/frontend-react
 ls dist-nuevo
 ```
-Debe mostrar `assets  favicon.png  index.html`: la subida llegó completa.
+Debe mostrar `assets  favicon.png  index.html`.
+- Si muestra **solo una carpeta `dist`** (pasa cuando `dist-nuevo` ya existía),
+  arreglarlo antes de seguir:
+  ```bash
+  mv dist-nuevo/dist dist-nuevo-ok && rm -rf dist-nuevo && mv dist-nuevo-ok dist-nuevo && ls dist-nuevo
+  ```
+- Si está vacía o no existe: **no seguir**. Volver a correr `npm run build` y el `scp`.
+
+**2. Respaldar la versión actual, solo si `dist` tiene archivos.**
 
 ```bash
-rm -rf dist-anterior && cp -r dist dist-anterior
+ls dist
 ```
-Borra el respaldo anterior y guarda la versión **actual** como `dist-anterior`,
-por si hay que volver atrás.
+- Si muestra `assets  favicon.png  index.html`, guardar el respaldo:
+  ```bash
+  rm -rf dist-anterior && cp -r dist dist-anterior && ls dist-anterior
+  ```
+- Si `dist` está **vacía**, **no** hacer el respaldo: borraría el último
+  respaldo bueno y lo cambiaría por una carpeta vacía (así se cayó la
+  aplicación el 19/11/2026).
+
+**3. Copiar la versión nueva dentro de `dist`.**
 
 ```bash
-rm -rf dist/* && cp -r dist-nuevo/. dist/
+cp -r dist-nuevo/. dist/ && ls dist
 ```
-Vacía `dist` y copia **adentro** la versión nueva. Se hace así, y no
-renombrando carpetas, porque Caddy está pegado a esa carpeta exacta: una carpeta
-renombrada lo dejaría mostrando la versión vieja.
+Debe mostrar `assets  favicon.png  index.html`. **No** borrar ni renombrar la
+carpeta `dist` (nada de `rm -rf dist` ni `mv dist ...`): Caddy está pegado
+a esa carpeta exacta y, si se recrea, sigue viendo la vieja vacía y la página
+da 404. Los archivos viejos de `assets` que quedan no estorban (cada versión
+tiene nombres nuevos).
+
+**4. Reiniciar Caddy** (no borra nada; asegura que tome la carpeta):
 
 ```bash
-rm -rf dist-nuevo
+cd /opt/tms && docker compose --env-file .env.production restart caddy
 ```
-Borra la copia temporal.
+
+**5. Borrar la copia temporal.**
+
+```bash
+rm -rf /opt/frontend-react/dist-nuevo
+```
 
 Comprobar: abrir **https://ubuntu-4gb-hel1-2.tail841fce.ts.net** con **Ctrl+F5**,
-que recarga sin caché. Caddy toma el frontend nuevo de inmediato, y
-`index.html` va sin caché.
+que recarga sin caché. Debe salir la pantalla de ingreso o la aplicación. Si
+sale una página en blanco o un error 404, ver "Si la página da 404" abajo.
 
-Si algo se ve mal, volver a la versión anterior:
+Si algo se ve mal, volver a la versión anterior (solo si `ls dist-anterior`
+muestra archivos):
 
 ```bash
-cd /opt/frontend-react && rm -rf dist/* && cp -r dist-anterior/. dist/
+cd /opt/frontend-react && ls dist-anterior && cp -r dist-anterior/. dist/ && cd /opt/tms && docker compose --env-file .env.production restart caddy
 ```
+
+**Si la página da 404** (la página no carga, pero `/api` responde): Caddy no
+encuentra los archivos del frontend.
+1. `ls /opt/frontend-react/dist`: si está vacía, llenarla con `dist-anterior`
+   (si tiene archivos) o subiendo de nuevo desde el computador (`npm run build`
+   y el `scp` de arriba), y copiar con el paso 3.
+2. Reiniciar Caddy (paso 4) aunque `dist` tenga archivos: si la carpeta se
+   borró y se volvió a crear, solo así la vuelve a ver.
 
 ### 9.4 Resumen
 
@@ -358,7 +393,7 @@ cd /opt/frontend-react && rm -rf dist/* && cp -r dist-anterior/. dist/
 |---|---|---|
 | Guardar cambios | Computador, en cada repo | `git status` → `git add ...` → `git commit -m "..."` → `git push origin feature/ruta-explicita` → `git push origin feature/ruta-explicita:main` |
 | Actualizar backend | Servidor | `cd /opt/tms` → `git pull` → `docker compose --env-file .env.production up -d --build backend` |
-| Actualizar frontend | Computador y servidor | `npm run build` → `scp -r dist ...:/opt/frontend-react/dist-nuevo` → en el servidor: respaldo y copia dentro de `dist` |
+| Actualizar frontend | Computador y servidor | `npm run build` → `scp -r dist ...:/opt/frontend-react/dist-nuevo` → en el servidor: revisar `dist-nuevo`, respaldo solo si `dist` tiene archivos, copia dentro de `dist` (sin borrar la carpeta) y `restart caddy` |
 
 Reglas:
 - Leer siempre `git status` antes de `git add`.
