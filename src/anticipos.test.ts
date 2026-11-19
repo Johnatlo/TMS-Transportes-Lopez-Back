@@ -42,6 +42,19 @@ describe("anticipo que se registra en un viaje", () => {
     expect(() => validarAnticipo({ efectivo: 1000 })).toThrow(/fecha/);
   });
 
+  test("con galones: el combustible sale de la formula de la bomba si no se escribio", () => {
+    // 100,182 galones x 11.230 - 25.044 = 1.100.000 (el ejemplo del Excel).
+    const a = validarAnticipo({ fecha: "2026-10-14", bombaId: 3, efectivo: 0, combustible: "", galones: "100.182", precioGalon: 11230, descuento: 25044 });
+    expect(a.combustible).toBe(1100000);
+    expect(a.galonesIda).toEqual({ galones: 100.182, precioGalon: 11230, descuento: 25044 });
+    // Si se escribio el combustible, manda ese.
+    expect(validarAnticipo({ fecha: "2026-10-14", bombaId: 3, combustible: 1000000, galones: 100, precioGalon: 11230 }).combustible).toBe(1000000);
+    // Galones sin precio: no se acepta.
+    expect(() => validarAnticipo({ fecha: "2026-10-14", bombaId: 3, combustible: "", galones: 100 })).toThrow(/precio/);
+    // Sin galones, nada cambia.
+    expect(validarAnticipo({ fecha: "2026-10-14", efectivo: 900000 }).galonesIda).toBeNull();
+  });
+
   test("compatibilidad: 'valor' sin desglose se toma como combustible", () => {
     expect(validarAnticipo({ fecha: "2026-10-14", bombaId: 3, valor: 500000 })).toMatchObject({ efectivo: 0, combustible: 500000 });
   });

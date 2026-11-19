@@ -240,6 +240,9 @@ export const utilidades = {
         poliza: f.poliza,
         otrosDescuentos: f.otrosDescuentos,
         anticipo: f.anticipo,
+        combustible: f.combustible,
+        efectivo: f.efectivo,
+        transferencia: f.transferencia,
         saldoBeneficiario: f.saldoBeneficiario,
       }));
     // Lo que se le pago al dueno por los viajes en el mes (por la fecha de pago, sea cual sea la del viaje).

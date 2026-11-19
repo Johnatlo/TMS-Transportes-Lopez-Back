@@ -537,11 +537,11 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1002 funciones, componentes, métodos y rutas en 67 archivos._
+_1003 funciones, componentes, métodos y rutas en 67 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
-- [`src/anticipos.ts`](#srcanticiposts) (37)
+- [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (36)
 - [`src/calculoNomina.ts`](#srccalculonominats) (9)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (9)
@@ -719,12 +719,19 @@ _1002 funciones, componentes, métodos y rutas en 67 archivos._
 - **`fecha(v, campo)`** · _función_
   Fecha "AAAA-MM-DD" valida o ErrorCuadro.
 
+- **`galonesDe(d, sufijo)`** · _función_
+  Galones de un tramo del formulario (sufijo "" para la ida, "Vuelta" para la
+  vuelta). Sin galones: null. Con galones, el precio es obligatorio y el
+  descuento vacio es 0.
+
 - **`validarAnticipo(d)`** · _función_
   Valida el anticipo del formulario. Reglas:
   - Fecha obligatoria; al menos un valor (efectivo o combustible) en la ida.
   - Si hay combustible (ida o vuelta), la bomba es obligatoria.
   - Ida y vuelta: la vuelta debe tener algun valor.
   - Compatibilidad: "valor" sin desglose se toma como combustible.
+  - Galones (opcionales, por tramo): si no se escribio el combustible, se
+    calcula con la formula de la bomba (galones x precio - descuento).
 
 - **`avisosRepetido(valores, existentes)`** · _función_
   Avisos antes de registrar un anticipo, contra los ya registrados de la misma

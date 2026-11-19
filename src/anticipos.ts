@@ -69,6 +69,32 @@ export interface NuevoAnticipo {
   combustibleVuelta: number;
   facturaBomba: string | null;
   nota: string | null;
+  /** Galones, precio por galon y descuento (en pesos) de cada tramo, si se escribieron al registrarlo. */
+  galonesIda: GalonesTramo | null;
+  galonesVuelta: GalonesTramo | null;
+}
+
+/** Galones de un tramo con el precio y el descuento con que se calcula su combustible. */
+export interface GalonesTramo {
+  galones: number;
+  precioGalon: number;
+  descuento: number;
+}
+
+/**
+ * Galones de un tramo del formulario (sufijo "" para la ida, "Vuelta" para la
+ * vuelta). Sin galones: null. Con galones, el precio es obligatorio y el
+ * descuento vacio es 0.
+ */
+function galonesDe(d: Record<string, unknown>, sufijo: "" | "Vuelta"): GalonesTramo | null {
+  const vacio = (v: unknown) => v === null || v === undefined || String(v).trim() === "";
+  const g = d[`galones${sufijo}`];
+  if (vacio(g)) return null;
+  const galones = Number(g);
+  if (!Number.isFinite(galones) || galones <= 0) throw new ErrorCuadro("Los galones deben ser un numero mayor que cero.");
+  const precio = Number(d[`precioGalon${sufijo}`]);
+  if (vacio(d[`precioGalon${sufijo}`]) || !Number.isFinite(precio) || precio <= 0) throw new ErrorCuadro("Escribe el precio por galon.");
+  return { galones, precioGalon: precio, descuento: pesos(d[`descuento${sufijo}`], "Descuento") };
 }
 
 /**
@@ -77,13 +103,19 @@ export interface NuevoAnticipo {
  * - Si hay combustible (ida o vuelta), la bomba es obligatoria.
  * - Ida y vuelta: la vuelta debe tener algun valor.
  * - Compatibilidad: "valor" sin desglose se toma como combustible.
+ * - Galones (opcionales, por tramo): si no se escribio el combustible, se
+ *   calcula con la formula de la bomba (galones x precio - descuento).
  */
 export function validarAnticipo(d: Record<string, unknown>): NuevoAnticipo {
   const idaYVuelta = d.idaYVuelta === true || d.idaYVuelta === "true" || d.idaYVuelta === 1;
   const efectivo = pesos(d.efectivo, "Efectivo");
-  const combustible = "combustible" in d || "efectivo" in d ? pesos(d.combustible, "Combustible") : pesos(d.valor, "Valor");
+  const galonesIda = galonesDe(d, "");
+  const galonesVuelta = idaYVuelta ? galonesDe(d, "Vuelta") : null;
+  const segunGalones = (g: GalonesTramo | null) => (g ? combustibleSegunFormula(g.galones, g.precioGalon, g.descuento) : 0);
+  const combustibleDado = "combustible" in d || "efectivo" in d ? pesos(d.combustible, "Combustible") : pesos(d.valor, "Valor");
+  const combustible = combustibleDado || segunGalones(galonesIda);
   const efectivoVuelta = idaYVuelta ? pesos(d.efectivoVuelta, "Efectivo de vuelta") : 0;
-  const combustibleVuelta = idaYVuelta ? pesos(d.combustibleVuelta, "Combustible de vuelta") : 0;
+  const combustibleVuelta = idaYVuelta ? pesos(d.combustibleVuelta, "Combustible de vuelta") || segunGalones(galonesVuelta) : 0;
   const bombaId = d.bombaId ? Number(d.bombaId) : null;
   if (efectivo + combustible === 0) throw new ErrorCuadro("Escribe el valor del anticipo (efectivo o combustible).");
   if (idaYVuelta && efectivoVuelta + combustibleVuelta === 0) {
@@ -101,6 +133,8 @@ export function validarAnticipo(d: Record<string, unknown>): NuevoAnticipo {
     combustibleVuelta,
     facturaBomba: texto(d.facturaBomba, 40),
     nota: texto(d.nota, 200),
+    galonesIda,
+    galonesVuelta,
   };
 }
 
@@ -426,15 +460,31 @@ export const anticipos = {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [placa, a.fecha, a.bombaId, a.idaYVuelta ? 1 : 0, a.facturaBomba, a.nota, usuarioId]
       );
-      const tramo = (viaje: number | null, tipo: Tramo, efectivo: number, combustible: number) =>
+      // Los galones (si se escribieron) quedan en el tramo; no lo dan por cruzado con la bomba (eso lo hacen sus vales).
+      const tramo = (viaje: number | null, tipo: Tramo, efectivo: number, combustible: number, g: GalonesTramo | null) =>
         conexion.query(
           `INSERT INTO cuadro_anticipos
-             (cuadroViajeId, tanqueoId, tramo, placa, bombaId, efectivo, combustible, valor, fecha, nota, creadoPorId)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [viaje, t.insertId, tipo, placa, a.bombaId, efectivo, combustible, efectivo + combustible, a.fecha, a.nota, usuarioId]
+             (cuadroViajeId, tanqueoId, tramo, placa, bombaId, efectivo, combustible, valor, fecha, nota, creadoPorId, galones, precioGalon, descuento)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            viaje,
+            t.insertId,
+            tipo,
+            placa,
+            a.bombaId,
+            efectivo,
+            combustible,
+            efectivo + combustible,
+            a.fecha,
+            a.nota,
+            usuarioId,
+            g?.galones ?? null,
+            g?.precioGalon ?? null,
+            g?.descuento ?? null,
+          ]
         );
-      await tramo(cuadroViajeId, "IDA", a.efectivo, a.combustible);
-      if (a.idaYVuelta) await tramo(null, "VUELTA", a.efectivoVuelta, a.combustibleVuelta);
+      await tramo(cuadroViajeId, "IDA", a.efectivo, a.combustible, a.galonesIda);
+      if (a.idaYVuelta) await tramo(null, "VUELTA", a.efectivoVuelta, a.combustibleVuelta, a.galonesVuelta);
       await conexion.commit();
     } catch (exc) {
       await conexion.rollback();

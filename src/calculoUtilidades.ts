@@ -62,6 +62,10 @@ export interface ViajeCascada {
   otrosDescuentos: number;
   /** Anticipos del viaje: combustible + efectivo + transferencia. */
   anticipo: number;
+  /** El anticipo por partes (para mostrarlo; la cascada usa el total). */
+  combustible?: number;
+  efectivo?: number;
+  transferencia?: number;
   /** Lo que se le liquida al dueno por el viaje. */
   saldoBeneficiario: number;
 }
