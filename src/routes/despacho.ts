@@ -30,6 +30,9 @@ import {
   empresasMonitoreo,
   consecutivos,
   parametros,
+  pactoDeEntrada,
+  pactoDeRemesa,
+  PactoRemesa,
 } from "../repo";
 import { config } from "../config";
 import {
@@ -293,6 +296,14 @@ async function armarDatosRndc(
   };
 }
 
+/** Horas pactadas totales (cargue + descargue) de unos tiempos pactados. */
+function horasPactadasDe(p: PactoRemesa): number {
+  return horasPactadasTotales([
+    { horas: p.horasPactoCargue, minutos: p.minutosPactoCargue },
+    { horas: p.horasPactoDescargue, minutos: p.minutosPactoDescargue },
+  ]);
+}
+
 /** Mensajes de los problemas de validacion de una gravedad (ERROR o AVISO). */
 function mensajesDe(problemas: ProblemaValidacion[], gravedad: "ERROR" | "AVISO"): string[] {
   return problemas.filter((p) => p.gravedad === gravedad).map((p) => p.mensaje);
@@ -333,10 +344,8 @@ function aDatosRemesa(
     // tipoMercancia es el texto libre que va como DESCRIPCIONCORTAPRODUCTO.
     descripcionCortaProducto: plantilla.tipoMercancia,
     unidadMedidaProducto: plantilla.unidadMedidaProducto as UnidadMedidaProducto,
-    horasPactoCargue: plantilla.horasPactoCargue,
-    minutosPactoCargue: plantilla.minutosPactoCargue,
-    horasPactoDescargue: plantilla.horasPactoDescargue,
-    minutosPactoDescargue: plantilla.minutosPactoDescargue,
+    // Los de la remesa si se cambiaron al despachar; si no, los de la plantilla.
+    ...pactoDeRemesa(fila, plantilla),
     pesoReal: fila.pesoReal,
     cantidadReal: fila.cantidadReal,
     fechaHoraCargue: new Date(fila.fechaHoraCargue),
@@ -430,6 +439,7 @@ despachoRouter.post("/", async (req, res) => {
     fechaHoraDescargue: fechaHoraColombia(r.fechaHoraDescargue),
     ordenServicioGenerador: r.ordenServicioGenerador ?? null,
     valorFleteRemesa: r.valorFleteRemesa ? Number(r.valorFleteRemesa) : null,
+    ...pactoDeEntrada(r),
   }));
 
   // ---- Numeracion del viaje ----
@@ -748,11 +758,8 @@ async function procesarViaje(
     origen: aCabeceraMunicipal(rutaBase.origen),
     destino: aCabeceraMunicipal(rutaBase.destino),
     configuracion: vehiculo.configuracion,
-    // Las mismas horas con que Despachar consulta las vias: las de la plantilla principal.
-    horasPactadas: horasPactadasTotales([
-      { horas: plantillaPrincipal.horasPactoCargue, minutos: plantillaPrincipal.minutosPactoCargue },
-      { horas: plantillaPrincipal.horasPactoDescargue, minutos: plantillaPrincipal.minutosPactoDescargue },
-    ]),
+    // Las mismas horas con que Despachar consulta las vias: las de la primera carga (o su plantilla).
+    horasPactadas: horasPactadasDe(pactoDeRemesa(filasRemesa[0], plantillaPrincipal)),
     valorFlete: datosViaje.valorFleteReal ?? 0,
   });
 
@@ -1246,6 +1253,7 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
       fechaHoraDescargue: fechaHoraColombia(r.fechaHoraDescargue),
       ordenServicioGenerador: r.ordenServicioGenerador ?? null,
       valorFleteRemesa: r.valorFleteRemesa ? Number(r.valorFleteRemesa) : null,
+      ...pactoDeEntrada(r),
     });
 
     if (yaCreadas.length === 0) {
@@ -1274,6 +1282,10 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
             fechaHoraDescargue: n.fechaHoraDescargue,
             ordenServicioGenerador: n.ordenServicioGenerador,
             valorFleteRemesa: n.valorFleteRemesa,
+            horasPactoCargue: n.horasPactoCargue,
+            minutosPactoCargue: n.minutosPactoCargue,
+            horasPactoDescargue: n.horasPactoDescargue,
+            minutosPactoDescargue: n.minutosPactoDescargue,
           },
         });
       });
@@ -1290,6 +1302,10 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
       fechaHoraDescargue: new Date(f.fechaHoraDescargue),
       ordenServicioGenerador: f.ordenServicioGenerador,
       valorFleteRemesa: f.valorFleteRemesa,
+      horasPactoCargue: f.horasPactoCargue ?? null,
+      minutosPactoCargue: f.minutosPactoCargue ?? null,
+      horasPactoDescargue: f.horasPactoDescargue ?? null,
+      minutosPactoDescargue: f.minutosPactoDescargue ?? null,
     }));
   }
 
@@ -2121,8 +2137,8 @@ export async function tiemposLogisticos(viaje: Viaje) {
       consecutivo: r.consecutivoRemesa,
       fuente,
       tiempos: t,
-      pactadoCargue: p ? p.horasPactoCargue * 60 + p.minutosPactoCargue : null,
-      pactadoDescargue: p ? p.horasPactoDescargue * 60 + p.minutosPactoDescargue : null,
+      pactadoCargue: p ? pactoDeRemesa(r, p).horasPactoCargue * 60 + pactoDeRemesa(r, p).minutosPactoCargue : null,
+      pactadoDescargue: p ? pactoDeRemesa(r, p).horasPactoDescargue * 60 + pactoDeRemesa(r, p).minutosPactoDescargue : null,
       ejecutadoCargue: minutos(t?.entradaCargue, t?.salidaCargue),
       ejecutadoDescargue: minutos(t?.entradaDescargue, t?.salidaDescargue),
       conEsperaCargue: minutos(t?.llegadaCargue ?? t?.entradaCargue, t?.salidaCargue),
@@ -2142,13 +2158,8 @@ export async function tiemposLogisticos(viaje: Viaje) {
   const ultima = remesas.length ? await plantillas.findById(remesas[remesas.length - 1].plantillaId) : null;
   const origen = aCabeceraMunicipal(principal?.municipioOrigen);
   const destino = aCabeceraMunicipal(ultima?.municipioDestino ?? principal?.municipioDestino);
-  // Las mismas horas con que se verifica el piso al despachar: las de la plantilla principal.
-  const horasPactadas = principal
-    ? horasPactadasTotales([
-        { horas: principal.horasPactoCargue, minutos: principal.minutosPactoCargue },
-        { horas: principal.horasPactoDescargue, minutos: principal.minutosPactoDescargue },
-      ])
-    : 0;
+  // Las mismas horas con que se verifica el piso al despachar: las de la primera carga (o su plantilla).
+  const horasPactadas = principal ? horasPactadasDe(pactoDeRemesa(remesas[0], principal)) : 0;
   if (!config.rndc.simular && origen && destino && vehiculo?.configuracion) {
     try {
       vivo = await pisoSicetacEnVivo(
@@ -2688,8 +2699,8 @@ despachoRouter.get("/:id/detalle", async (req, res) => {
       codMercancia: p?.codMercancia ?? r.codMercancia ?? null,
       codTipoEmpaque: p?.codTipoEmpaque ?? null,
       unidadMedidaProducto: p?.unidadMedidaProducto ?? null,
-      pactoCargue: p ? `${p.horasPactoCargue} h ${p.minutosPactoCargue} min` : null,
-      pactoDescargue: p ? `${p.horasPactoDescargue} h ${p.minutosPactoDescargue} min` : null,
+      pactoCargue: p ? `${pactoDeRemesa(r, p).horasPactoCargue} h ${pactoDeRemesa(r, p).minutosPactoCargue} min` : null,
+      pactoDescargue: p ? `${pactoDeRemesa(r, p).horasPactoDescargue} h ${pactoDeRemesa(r, p).minutosPactoDescargue} min` : null,
       contratante: p ? tercero(p.contratante) : porNit(r.propietarioNit, r.propietarioSede, r.propietarioTipoId),
       remitente: p ? tercero(p.remitente) : porNit(r.remitenteNit, r.remitenteSede, r.remitenteTipoId),
       destinatario: p ? tercero(p.destinatario) : porNit(r.destinatarioNit, r.destinatarioSede, r.destinatarioTipoId),

@@ -1487,6 +1487,11 @@ export interface ViajeRemesa {
   ordenServicioGenerador: string | null;
   /** Parte del flete que corresponde a esta remesa, para ponderar el ICA. */
   valorFleteRemesa: number | null;
+  /** Tiempos pactados de esta remesa si se cambiaron al despachar (null = los de la plantilla). */
+  horasPactoCargue?: number | null;
+  minutosPactoCargue?: number | null;
+  horasPactoDescargue?: number | null;
+  minutosPactoDescargue?: number | null;
   estado: string; // PENDIENTE | CREADA | CUMPLIENDO | CUMPLIDA | ERROR | ANULADA
   mensajeError: string | null;
   /** Cumplido (proceso 5): kilos entregados, entradas reales y radicado. */
@@ -1516,8 +1521,59 @@ export interface NuevaViajeRemesa {
   fechaHoraDescargue: Date;
   ordenServicioGenerador?: string | null;
   valorFleteRemesa?: number | null;
+  /** Tiempos pactados si se cambiaron al despachar (null = los de la plantilla). */
+  horasPactoCargue?: number | null;
+  minutosPactoCargue?: number | null;
+  horasPactoDescargue?: number | null;
+  minutosPactoDescargue?: number | null;
   /** Consecutivo ya calculado a partir del numero base del viaje. */
   consecutivoRemesa?: string | null;
+}
+
+/** Tiempos pactados de cargue y descargue de una remesa. */
+export interface PactoRemesa {
+  horasPactoCargue: number;
+  minutosPactoCargue: number;
+  horasPactoDescargue: number;
+  minutosPactoDescargue: number;
+}
+
+/**
+ * Tiempos pactados de una remesa: los que se escribieron al despachar (cuando
+ * cargan o descargan mas rapido) o, si no, los de su plantilla.
+ */
+export function pactoDeRemesa(
+  fila: Partial<Pick<ViajeRemesa, keyof PactoRemesa>> | null | undefined,
+  plantilla: PactoRemesa | null | undefined,
+): PactoRemesa {
+  const de = (k: keyof PactoRemesa, defecto: number) => {
+    const v = fila?.[k];
+    return v === null || v === undefined ? (plantilla?.[k] ?? defecto) : Number(v);
+  };
+  return {
+    horasPactoCargue: de("horasPactoCargue", 1),
+    minutosPactoCargue: de("minutosPactoCargue", 0),
+    horasPactoDescargue: de("horasPactoDescargue", 1),
+    minutosPactoDescargue: de("minutosPactoDescargue", 0),
+  };
+}
+
+/**
+ * Tiempos pactados que llegan del despacho para una remesa: numeros enteros
+ * (horas 0 a 99, minutos 0 a 59) o null si no se escribieron.
+ */
+export function pactoDeEntrada(r: Record<string, unknown>): Record<keyof PactoRemesa, number | null> {
+  const num = (v: unknown, max: number) => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Math.trunc(Number(v));
+    return Number.isFinite(n) && n >= 0 && n <= max ? n : null;
+  };
+  return {
+    horasPactoCargue: num(r.horasPactoCargue, 99),
+    minutosPactoCargue: num(r.minutosPactoCargue, 59),
+    horasPactoDescargue: num(r.horasPactoDescargue, 99),
+    minutosPactoDescargue: num(r.minutosPactoDescargue, 59),
+  };
 }
 
 /**
@@ -1555,8 +1611,9 @@ export const viajeRemesas = {
       const [result] = await pool.query<ResultSetHeader>(
         `INSERT INTO viaje_remesas
           (viajeId, plantillaId, orden, pesoReal, cantidadReal, fechaHoraCargue,
-           fechaHoraDescargue, ordenServicioGenerador, valorFleteRemesa)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           fechaHoraDescargue, ordenServicioGenerador, valorFleteRemesa,
+           horasPactoCargue, minutosPactoCargue, horasPactoDescargue, minutosPactoDescargue)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           viajeId,
           r.plantillaId,
@@ -1567,6 +1624,10 @@ export const viajeRemesas = {
           fechaMysql(r.fechaHoraDescargue),
           r.ordenServicioGenerador ?? null,
           r.valorFleteRemesa ?? null,
+          r.horasPactoCargue ?? null,
+          r.minutosPactoCargue ?? null,
+          r.horasPactoDescargue ?? null,
+          r.minutosPactoDescargue ?? null,
         ]
       );
       // El consecutivo viene calculado desde el numero base del viaje

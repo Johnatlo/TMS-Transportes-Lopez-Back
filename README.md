@@ -536,7 +536,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_978 funciones, componentes, métodos y rutas en 66 archivos._
+_981 funciones, componentes, métodos y rutas en 66 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -566,7 +566,7 @@ _978 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/prorrateo.ts`](#srcprorrateots) (11)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
-- [`src/repo.ts`](#srcrepots) (94)
+- [`src/repo.ts`](#srcrepots) (96)
 - [`src/reportes.ts`](#srcreportests) (10)
 - [`src/rndc/builders.ts`](#srcrndcbuildersts) (44)
 - [`src/rndc/client.ts`](#srcrndcclientts) (12)
@@ -583,7 +583,7 @@ _978 funciones, componentes, métodos y rutas en 66 archivos._
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (49)
-- [`src/routes/despacho.ts`](#srcroutesdespachots) (48)
+- [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (19)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (22)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
@@ -1758,8 +1758,8 @@ _978 funciones, componentes, métodos y rutas en 66 archivos._
 > - Lo que una empresa le debe a la otra no es una cuenta entre empresas: es
 >   un gasto en una y un ingreso en la otra, cada uno con su reparto.
 > - Montos en DECIMAL; las cuentas se hacen en centavos (ver prorrateo.ts).
-> - Creditos: se crean con la cuota que cobra el banco (la tasa, que cambia
->   mes a mes, se deduce de monto, plazo y cuota) y el 4 x 1000 que se
+> - Creditos: se crean con la cuota que cobra el banco y, si se quiere, la
+>   tasa mensual (si no se escribe, se deduce de monto, plazo y cuota) y el 4 x 1000 que se
 >   descuenta a cada cuota. Tabla de amortizacion (capital, interes, saldo);
 >   al registrar el pago de una cuota (con el valor que de verdad se pago) se
 >   crea su gasto con el reparto del credito, sumando su 4 x 1000.
@@ -2725,6 +2725,14 @@ _978 funciones, componentes, métodos y rutas en 66 archivos._
     Los viajes ya despachados no cambian: el XML que se envio al RNDC quedo
     registrado con los valores de ese momento. Esto solo afecta lo que se
     despache de aqui en adelante.
+
+- **`pactoDeRemesa(fila, plantilla)`** · _función_
+  Tiempos pactados de una remesa: los que se escribieron al despachar (cuando
+  cargan o descargan mas rapido) o, si no, los de su plantilla.
+
+- **`pactoDeEntrada(r)`** · _función_
+  Tiempos pactados que llegan del despacho para una remesa: numeros enteros
+  (horas 0 a 99, minutos 0 a 59) o null si no se escribieron.
 
 - **`viajeRemesas`** · _módulo_
   Remesas de cada viaje (tabla viaje_remesas): una por plantilla, con su
@@ -4295,6 +4303,9 @@ _978 funciones, componentes, métodos y rutas en 66 archivos._
   funciones que arman el XML), mas la via elegida con su piso de SICETAC. Si
   algun bloque no se puede armar, se informa el motivo en vez de fallar.
 
+- **`horasPactadasDe(p)`** · _función_
+  Horas pactadas totales (cargue + descargue) de unos tiempos pactados.
+
 - **`mensajesDe(problemas, gravedad)`** · _función_
   Mensajes de los problemas de validacion de una gravedad (ERROR o AVISO).
 
@@ -4627,7 +4638,7 @@ _978 funciones, componentes, métodos y rutas en 66 archivos._
   GET /api/gastos/creditos: creditos con su tabla de amortizacion y saldo.
 
 - **`POST /creditos`** · _ruta HTTP_
-  POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, plazo, primeraCuota, cuotaFija, gmfPorMil?, prorratea, destinos, nota? }).
+  POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, plazo, primeraCuota, cuotaFija, tasaMensual?, gmfPorMil?, prorratea, destinos, nota? }).
 
 - **`PUT /creditos/:id`** · _ruta HTTP_
   PUT /api/gastos/creditos/:id: cambia el credito (rehace la tabla si aun no tiene cuotas pagadas).

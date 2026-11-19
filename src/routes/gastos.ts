@@ -114,7 +114,7 @@ gastosRouter.get("/creditos", async (req, res) => {
   res.json(await gastos.creditos());
 });
 
-/** POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, plazo, primeraCuota, cuotaFija, gmfPorMil?, prorratea, destinos, nota? }). */
+/** POST /api/gastos/creditos: crea un credito y su tabla ({ empresa, nombre, entidad?, obligacion?, monto, plazo, primeraCuota, cuotaFija, tasaMensual?, gmfPorMil?, prorratea, destinos, nota? }). */
 gastosRouter.post("/creditos", async (req, res) => {
   await responder(res, async () => {
     exigirEmpresa(req, req.body?.empresa);

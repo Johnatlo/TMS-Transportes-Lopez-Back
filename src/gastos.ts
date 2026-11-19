@@ -15,8 +15,8 @@
  * - Lo que una empresa le debe a la otra no es una cuenta entre empresas: es
  *   un gasto en una y un ingreso en la otra, cada uno con su reparto.
  * - Montos en DECIMAL; las cuentas se hacen en centavos (ver prorrateo.ts).
- * - Creditos: se crean con la cuota que cobra el banco (la tasa, que cambia
- *   mes a mes, se deduce de monto, plazo y cuota) y el 4 x 1000 que se
+ * - Creditos: se crean con la cuota que cobra el banco y, si se quiere, la
+ *   tasa mensual (si no se escribe, se deduce de monto, plazo y cuota) y el 4 x 1000 que se
  *   descuenta a cada cuota. Tabla de amortizacion (capital, interes, saldo);
  *   al registrar el pago de una cuota (con el valor que de verdad se pago) se
  *   crea su gasto con el reparto del credito, sumando su 4 x 1000.
@@ -562,8 +562,11 @@ export const gastos = {
     if (!Number.isFinite(cuotaFija) || cuotaFija <= 0) throw new ErrorCuadro("Escribe la cuota que cobra el banco.");
     const gmfPorMil = d.gmfPorMil === null || d.gmfPorMil === undefined || d.gmfPorMil === "" ? 4 : Number(d.gmfPorMil);
     if (!Number.isFinite(gmfPorMil) || gmfPorMil < 0 || gmfPorMil > 100) throw new ErrorCuadro("Revisa el 4 x 1000 (por mil).");
-    // La tasa (que cambia mes a mes) no se escribe: se deduce de la cuota del banco para separar capital e interes.
-    const tasa = conErrores(() => tasaImplicita(monto, plazo, cuotaFija)) * 100;
+    // La tasa mensual es opcional (cambia mes a mes): si se escribe se usa esa; si no, se deduce de la cuota del banco.
+    const tasaEscrita = d.tasaMensual === null || d.tasaMensual === undefined || d.tasaMensual === "" ? null : Number(d.tasaMensual);
+    if (tasaEscrita !== null && (!Number.isFinite(tasaEscrita) || tasaEscrita < 0 || tasaEscrita >= 100))
+      throw new ErrorCuadro("Revisa la tasa mensual (en porcentaje, por ejemplo 1,67).");
+    const tasa = tasaEscrita ?? conErrores(() => tasaImplicita(monto, plazo, cuotaFija)) * 100;
     const prorratea = d.prorratea === "INTERES" ? "INTERES" : "CAPITAL_E_INTERES";
     const destinos = await leerDestinos(d.destinos);
     const tabla = conErrores(() => amortizar(aCentavos(monto), tasa / 100, plazo, primeraCuota, aCentavos(cuotaFija)));

@@ -26,6 +26,7 @@ import {
   Conductor,
   Tercero,
   ParametrosEmpresa,
+  pactoDeRemesa,
 } from "../repo";
 import { TIPOS_EMPAQUE } from "./builders";
 
@@ -146,6 +147,8 @@ export function construirHtmlRemesa(d: DatosImpresionRemesa): string {
   const cargue = partesFecha(remesa.fechaHoraCargue);
   const descargue = partesFecha(remesa.fechaHoraDescargue);
   const tiempo = (h: number, m: number) => `${h} Horas ${m} Minutos`;
+  // Los de la remesa si se cambiaron al despachar; si no, los de la plantilla.
+  const pactado = pactoDeRemesa(remesa, plantilla);
 
   // Igual que al enviarla (construirDatosRemesa): si la unidad comercial son
   // kilos y no se digito cantidad, la cantidad es el peso.
@@ -258,8 +261,8 @@ export function construirHtmlRemesa(d: DatosImpresionRemesa): string {
 
 <table class="bloque">
   <tr>
-    ${lugar("Remitente / Lugar de Cargue:", rem, cargue, tiempo(plantilla.horasPactoCargue, plantilla.minutosPactoCargue))}
-    ${lugar("Destinatario / Lugar de Descargue:", des, descargue, tiempo(plantilla.horasPactoDescargue, plantilla.minutosPactoDescargue))}
+    ${lugar("Remitente / Lugar de Cargue:", rem, cargue, tiempo(pactado.horasPactoCargue, pactado.minutosPactoCargue))}
+    ${lugar("Destinatario / Lugar de Descargue:", des, descargue, tiempo(pactado.horasPactoDescargue, pactado.minutosPactoDescargue))}
   </tr>
 </table>
 
