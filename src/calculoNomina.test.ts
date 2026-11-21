@@ -1,5 +1,18 @@
 import { describe, expect, test } from "vitest";
-import { calcularLinea, diasPeriodo, diasPorVehiculo, mesDe, pesosConductor, pila, producidoPorConductor } from "./calculoNomina";
+import {
+  calcularLinea,
+  validarUpcs,
+  CONCEPTOS_GASTO,
+  diasPeriodo,
+  diasPorVehiculo,
+  errorReparto,
+  gastoDeLinea,
+  mesDe,
+  pesosConductor,
+  pila,
+  porcentajesDe,
+  producidoPorConductor,
+} from "./calculoNomina";
 import type { AsignacionVehiculo, EntradaLinea, ParametrosNomina, ViajeProducido } from "./calculoNomina";
 
 /** Parametros 2026 del Excel. */
@@ -201,5 +214,75 @@ describe("costo de un conductor que cambia de carro en el periodo", () => {
         new Map(),
       ).values(),
     ]).toEqual([0.25, 0.75]);
+  });
+});
+
+describe("UPC adicional, conceptos que van al gasto y reparto por vehiculo (21/11/2026)", () => {
+  test("UPC adicional: suma al costo de la empresa (con la salud) y no se le descuenta al empleado", () => {
+    const sin = calcularLinea({ ...CONDUCTOR, producido: 27_713_800 }, P2026);
+    const con = calcularLinea({ ...CONDUCTOR, producido: 27_713_800, upcAdicional: 98_200 }, P2026);
+    expect(con.upcAdicional).toBe(98_200);
+    expect(con.neto).toBe(sin.neto);
+    expect(con.costoTotal).toBe(sin.costoTotal + 98_200);
+  });
+  test("sin exclusiones, el gasto es el costo total; la UPC va aparte (a su vehiculo)", () => {
+    const c = calcularLinea({ ...CONDUCTOR, producido: 27_713_800, upcAdicional: 98_200 }, P2026);
+    expect(gastoDeLinea(c)).toEqual({ general: c.costoTotal - 98_200, upc: 98_200, total: c.costoTotal });
+  });
+  test("Yeferson: al gasto solo van cesantias e intereses (sin sueldo, auxilio, caja, prima ni vacaciones)", () => {
+    const c = calcularLinea(OFICINA, P2026);
+    const soloCesantias = CONCEPTOS_GASTO.map(([k]) => k).filter((k) => k !== "cesantias" && k !== "interesesCesantias");
+    expect(gastoDeLinea(c, soloCesantias).total).toBe(c.cesantias + c.interesesCesantias);
+    expect(c.neto).toBe(1_610_705);
+  });
+  test("reparto del conductor en porcentajes que suman 100; uno escrito a mano se revisa", () => {
+    expect(
+      porcentajesDe(
+        new Map([
+          [1, 2 / 3],
+          [2, 1 / 3],
+        ]),
+      ),
+    ).toEqual([
+      { vehiculoId: 1, porcentaje: 66.67 },
+      { vehiculoId: 2, porcentaje: 33.33 },
+    ]);
+    expect(
+      errorReparto([
+        { vehiculoId: 1, porcentaje: 60 },
+        { vehiculoId: 2, porcentaje: 40 },
+      ]),
+    ).toBeNull();
+    expect(
+      errorReparto([
+        { vehiculoId: 1, porcentaje: 60 },
+        { vehiculoId: 2, porcentaje: 30 },
+      ]),
+    ).toMatch(/suman 90/);
+    expect(
+      errorReparto([
+        { vehiculoId: 1, porcentaje: 50 },
+        { vehiculoId: 1, porcentaje: 50 },
+      ]),
+    ).toMatch(/repetido/);
+  });
+});
+
+describe("UPC adicional por beneficiario (puede no ser empleado)", () => {
+  test("cada uno con cedula, nombre, valor y vehiculo; la cedula queda solo con numeros y el nombre en mayuscula", () => {
+    const r = validarUpcs([{ cedula: "1.023.456.789", nombre: " maria perez ", valor: "98200", vehiculoId: 39 }]);
+    expect(r).toEqual({ upcs: [{ cedula: "1023456789", nombre: "MARIA PEREZ", valor: 98_200, vehiculoId: 39 }], error: null });
+  });
+  test("le falta algo o se repite: dice que", () => {
+    expect(validarUpcs([{ cedula: "", nombre: "ANA", valor: 1, vehiculoId: 1 }]).error).toMatch(/cedula de ANA/);
+    expect(validarUpcs([{ cedula: "123456", nombre: "ANA", valor: 0, vehiculoId: 1 }]).error).toMatch(/valor/);
+    expect(validarUpcs([{ cedula: "123456", nombre: "ANA", valor: 5, vehiculoId: 0 }]).error).toMatch(/vehiculo/);
+    expect(
+      validarUpcs([
+        { cedula: "123456", nombre: "ANA", valor: 5, vehiculoId: 1 },
+        { cedula: "123.456", nombre: "ANA B", valor: 5, vehiculoId: 1 },
+      ]).error,
+    ).toMatch(/repetida/);
+    expect(validarUpcs([]).error).toBeNull();
   });
 });

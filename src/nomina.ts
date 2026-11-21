@@ -21,7 +21,11 @@
  *   Conductores) y el total a pagar.
  *   Si manejo varios carros, su costo se reparte entre ellos: lo que sale del
  *   producido segun lo que produjo en cada uno y el resto por los dias que
- *   tuvo cada uno. Mientras es borrador se
+ *   tuvo cada uno (porcentajes que se pueden corregir y quedan guardados).
+ *   Cada linea puede tener UPC adicional (va con la salud, la paga la empresa
+ *   y se carga al vehiculo que se elija) y conceptos que no van al gasto (por
+ *   ejemplo, de un empleado solo cesantias e intereses); se recuerdan para la
+ *   nomina siguiente. Mientras es borrador se
  *   calcula con los datos actuales; al aprobarla el calculo queda guardado y
  *   se crea un gasto por empleado (categoria NOMINA) por su costo total,
  *   causado por dias entre los meses del periodo: el del conductor a su
@@ -30,8 +34,20 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
-import { calcularLinea, diasPeriodo, diasPorVehiculo, mesDe, pesosConductor, producidoPorConductor } from "./calculoNomina";
-import type { CalculoLinea, EntradaLinea, ParametrosNomina, ProducidoConductor, ViajeProducido } from "./calculoNomina";
+import {
+  calcularLinea,
+  CONCEPTOS_GASTO,
+  diasPeriodo,
+  diasPorVehiculo,
+  errorReparto,
+  gastoDeLinea,
+  mesDe,
+  pesosConductor,
+  porcentajesDe,
+  producidoPorConductor,
+  validarUpcs,
+} from "./calculoNomina";
+import type { CalculoLinea, EntradaLinea, ParametrosNomina, ProducidoConductor, UpcBeneficiario, ViajeProducido } from "./calculoNomina";
 import { gastos, EMPRESAS } from "./gastos";
 import { conductores } from "./conductores";
 import type { Destino } from "./prorrateo";
@@ -97,6 +113,20 @@ export interface LineaNomina {
   prestamos: Array<{ prestamoId: number; fecha: string; monto: number; saldo: number; cuota: number | null; descuento: number | null }>;
   /** Neto + saldo de las cuentas de viaje - prestamos descontados. */
   totalAPagar: number;
+  /** Conceptos que NO van al gasto (claves de CONCEPTOS_GASTO). */
+  excluidos: string[];
+  /** UPC adicional del mes: la suma de la de cada beneficiario. */
+  upcAdicional: number;
+  /** Beneficiarios de UPC adicional (pueden no ser empleados): cedula, nombre, valor y vehiculo al que se carga. */
+  upcs: Array<UpcBeneficiario & { placa: string }>;
+  /** El cotizante (el empleado de la linea), para la planilla. */
+  cotizante: { cedula: string | null; nombre: string };
+  /** Conductor: porcentaje de su costo que va a cada vehiculo (el guardado o el automatico). */
+  reparto: Array<{ vehiculoId: number; placa: string; porcentaje: number }>;
+  /** true = el reparto se escribio a mano. */
+  repartoManual: boolean;
+  /** Lo que va al gasto: al reparto del empleado (general) y a su vehiculo (UPC). */
+  gasto: { general: number; upc: number; total: number };
 }
 
 /** Una nomina con sus lineas y totales. */
@@ -176,7 +206,7 @@ async function parametrosDelAnio(anio: number): Promise<ParametrosNomina> {
 }
 
 /** Lo que entra al calculo de una linea a partir del empleado. */
-function entradaDe(e: Empleado, l: { dias: number; producido: number; ajuste: number }): EntradaLinea {
+function entradaDe(e: Empleado, l: { dias: number; producido: number; ajuste: number; upcAdicional?: number }): EntradaLinea {
   return {
     salarioBase: e.salarioBase,
     salarioAdicional: e.salarioAdicional,
@@ -187,6 +217,7 @@ function entradaDe(e: Empleado, l: { dias: number; producido: number; ajuste: nu
     dias: l.dias,
     producido: l.producido,
     ajuste: l.ajuste,
+    upcAdicional: l.upcAdicional ?? 0,
   };
 }
 
@@ -431,14 +462,36 @@ export const nomina = {
               ? json<ProducidoConductor>(l.detalleProducido, { total: 0, porVehiculo: [], viajes: [] })
               : (producidos.get(n.id)?.get(e.id) ?? { total: 0, porVehiculo: [], viajes: [] });
         const manual = !!l.producidoManual;
-        const valores = { dias: Number(l.dias), producido: manual || e.tipo !== "CONDUCTOR" ? Number(l.producido) : sistema.total, ajuste: Number(l.ajuste) };
+        const valores = {
+          dias: Number(l.dias),
+          producido: manual || e.tipo !== "CONDUCTOR" ? Number(l.producido) : sistema.total,
+          ajuste: Number(l.ajuste),
+          upcAdicional: Number(l.upcAdicional ?? 0),
+        };
         const entrada = aprobada ? json<EntradaLinea>(l.entrada, entradaDe(e, valores)) : entradaDe(e, valores);
-        const calculo = aprobada ? json<CalculoLinea | null>(l.calculo, null) : p ? calcularLinea(entrada, p) : null;
+        const guardado = aprobada ? json<CalculoLinea | null>(l.calculo, null) : null;
+        // Las aprobadas antes de la UPC adicional no la traen: 0.
+        const calculo = aprobada ? (guardado ? { ...guardado, upcAdicional: guardado.upcAdicional ?? 0 } : null) : p ? calcularLinea(entrada, p) : null;
+        const excluidos = json<string[]>(l.excluidos, []);
+        const upcs = json<UpcBeneficiario[]>(l.upcs, []);
+        const calculoFinal = calculo ?? calcularLinea(entrada, { ...VACIOS, anio });
+        // Reparto del conductor: el guardado, o el automatico (lo que produjo en cada carro y los dias que tuvo cada uno).
+        const repartoGuardado = json<Array<{ vehiculoId: number; porcentaje: number }> | null>(l.reparto, null);
+        const reparto =
+          e.tipo !== "CONDUCTOR"
+            ? []
+            : (repartoGuardado ?? repartoAutomatico(calculoFinal, sistema, e, dia(n.desde)!, hasta, l.vehiculoId ?? null)).map((r) => ({
+                ...r,
+                placa: placas.get(r.vehiculoId) ?? "?",
+              }));
         let problema: string | null = null;
         if (!p) problema = `Faltan los parametros de ${anio}.`;
         else if (e.tipo === "CONDUCTOR" && !l.vehiculoId && !sistema.porVehiculo.some((v) => v.producido > 0)) problema = "Elige el vehiculo.";
         else if (e.tipo === "OFICINA" && !e.destinos.length) problema = "El empleado no tiene a quien se reparte su costo.";
         else if (valores.ajuste !== 0 && !l.notaAjuste) problema = "El ajuste necesita una nota.";
+        else if (upcs.length && !e.cedula) problema = "Falta la cedula del empleado (cotizante de la UPC adicional): ponla en Empleados.";
+        else if (e.tipo === "CONDUCTOR" && !reparto.length && gastoDeLinea(calculoFinal, excluidos).general > 0)
+          problema = "Elige el vehiculo o el reparto entre vehiculos.";
         propias.push({
           id: l.id,
           empleadoId: e.id,
@@ -454,10 +507,17 @@ export const nomina = {
           porVehiculo: sistema.porVehiculo.map((v) => ({ ...v, placa: placas.get(v.vehiculoId) ?? "?" })),
           notaAjuste: l.notaAjuste ?? null,
           entrada,
-          calculo: calculo ?? calcularLinea(entrada, { ...VACIOS, anio }),
+          calculo: calculoFinal,
           gastoId: l.gastoId ?? null,
           problema: aprobada ? null : problema,
-          ...extrasDe(e, calculo ?? calcularLinea(entrada, { ...VACIOS, anio }), extras.get(n.id)!, todosPrestamos),
+          ...extrasDe(e, calculoFinal, extras.get(n.id)!, todosPrestamos),
+          excluidos,
+          upcAdicional: valores.upcAdicional,
+          upcs: upcs.map((u) => ({ ...u, placa: placas.get(u.vehiculoId) ?? "?" })),
+          cotizante: { cedula: e.cedula, nombre: e.nombre },
+          reparto,
+          repartoManual: !!repartoGuardado,
+          gasto: gastoDeLinea(calculoFinal, excluidos),
         });
       }
       const suma = (k: keyof CalculoLinea) => Math.round(propias.reduce((s, l) => s + l.calculo[k], 0) * 100) / 100;
@@ -492,15 +552,20 @@ export const nomina = {
       [desde, hasta, mes.desde, mes.hasta, texto(d.nota, 300), usuarioId],
     );
     const activos = (await this.empleados()).filter((e) => e.fechaIngreso <= hasta && (!e.fechaRetiro || e.fechaRetiro >= desde));
-    if (activos.length)
-      await pool.query("INSERT INTO nomina_lineas (nominaId, empleadoId, vehiculoId, dias) VALUES ?", [
+    if (activos.length) {
+      const anteriores = await ultimasLineas(activos.map((e) => e.id));
+      await pool.query("INSERT INTO nomina_lineas (nominaId, empleadoId, vehiculoId, dias, excluidos, upcAdicional, upcs) VALUES ?", [
         activos.map((e) => [
           res.insertId,
           e.id,
           e.tipo === "CONDUCTOR" ? (vehiculoEn(e, hasta)?.vehiculoId ?? null) : null,
           diasPeriodo(e.fechaIngreso > desde ? e.fechaIngreso : desde, e.fechaRetiro && e.fechaRetiro < hasta ? e.fechaRetiro : hasta),
+          anteriores.get(e.id)?.excluidos ?? null,
+          anteriores.get(e.id)?.upcAdicional ?? 0,
+          anteriores.get(e.id)?.upcs ?? null,
         ]),
       ]);
+    }
     return res.insertId;
   },
 
@@ -542,6 +607,43 @@ export const nomina = {
       if (!Number.isFinite(ajuste)) throw new ErrorCuadro("Revisa el ajuste.");
       sets.push("ajuste = ?");
       valores.push(ajuste);
+    }
+    if ("excluidos" in d) {
+      const validos = CONCEPTOS_GASTO.map(([k]) => k as string);
+      const lista = Array.isArray(d.excluidos) ? (d.excluidos as unknown[]).map(String).filter((k) => validos.includes(k)) : [];
+      sets.push("excluidos = ?");
+      valores.push(JSON.stringify([...new Set(lista)]));
+    }
+    if ("upcs" in d) {
+      const { upcs, error } = validarUpcs(d.upcs);
+      if (error) throw new ErrorCuadro(error);
+      if (upcs.length) {
+        const [propios] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE id IN (?) AND empresa IS NOT NULL AND eliminado = 0", [
+          [...new Set(upcs.map((u) => u.vehiculoId))],
+        ]);
+        if (propios.length !== new Set(upcs.map((u) => u.vehiculoId)).size)
+          throw new ErrorCuadro("La UPC adicional solo se carga a vehiculos de la flota propia.");
+      }
+      sets.push("upcs = ?", "upcAdicional = ?");
+      valores.push(JSON.stringify(upcs), Math.round(upcs.reduce((s, u) => s + u.valor, 0) * 100) / 100);
+    }
+    if ("reparto" in d) {
+      if (d.reparto === null) {
+        sets.push("reparto = NULL");
+      } else {
+        const reparto = (Array.isArray(d.reparto) ? (d.reparto as Array<Record<string, unknown>>) : []).map((r) => ({
+          vehiculoId: Number(r.vehiculoId),
+          porcentaje: Math.round(Number(r.porcentaje) * 100) / 100,
+        }));
+        const error = errorReparto(reparto);
+        if (error) throw new ErrorCuadro(error);
+        const [propios] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE id IN (?) AND empresa IS NOT NULL AND eliminado = 0", [
+          reparto.map((r) => r.vehiculoId),
+        ]);
+        if (propios.length !== reparto.length) throw new ErrorCuadro("El reparto solo puede ir a vehiculos de la flota propia.");
+        sets.push("reparto = ?");
+        valores.push(JSON.stringify(reparto));
+      }
     }
     if ("notaAjuste" in d) {
       sets.push("notaAjuste = ?");
@@ -607,11 +709,15 @@ export const nomina = {
     if (!e) throw new ErrorCuadro("Ese empleado no existe.");
     const [[n]] = await pool.query<RowDataPacket[]>("SELECT desde, hasta FROM nominas WHERE id = ?", [nominaId]);
     const hasta = dia(n.hasta)!;
-    await pool.query("INSERT IGNORE INTO nomina_lineas (nominaId, empleadoId, vehiculoId, dias) VALUES (?, ?, ?, ?)", [
+    const anterior = (await ultimasLineas([empleadoId])).get(empleadoId);
+    await pool.query("INSERT IGNORE INTO nomina_lineas (nominaId, empleadoId, vehiculoId, dias, excluidos, upcAdicional, upcs) VALUES (?, ?, ?, ?, ?, ?, ?)", [
       nominaId,
       empleadoId,
       e.tipo === "CONDUCTOR" ? (vehiculoEn(e, hasta)?.vehiculoId ?? null) : null,
       diasPeriodo(dia(n.desde)!, hasta),
+      anterior?.excluidos ?? null,
+      anterior?.upcAdicional ?? 0,
+      anterior?.upcs ?? null,
     ]);
   },
 
@@ -639,7 +745,7 @@ export const nomina = {
     if (conProblema) throw new ErrorCuadro(`${conProblema.nombre}: ${conProblema.problema}`);
     const p = await parametrosDelAnio(n.anioParametros);
     const empleados = new Map((await this.empleados()).map((e) => [e.id, e]));
-    const conCosto = n.lineas.filter((l) => l.calculo.costoTotal > 0);
+    const conCosto = n.lineas.filter((l) => l.gasto.total > 0);
     // Los viajes de cada conductor (para guardar el detalle del producido), calculados una vez.
     const asignaciones = [...empleados.values()].flatMap((e) =>
       e.vehiculos.map((v) => ({ empleadoId: e.id, vehiculoId: v.vehiculoId, desde: v.desde, hasta: v.hasta })),
@@ -649,33 +755,57 @@ export const nomina = {
       l.tipo !== "CONDUCTOR"
         ? { total: 0, porVehiculo: [], viajes: [] }
         : { total: l.producido, porVehiculo: l.porVehiculo.map(({ placa: _placa, ...v }) => v), viajes: viajesPor.get(l.empleadoId)?.viajes ?? [] };
-    for (const l of conCosto) await gastos.revisarCausaciones({ monto: l.calculo.costoTotal, causaDesde: n.desde, causaHasta: n.hasta });
+    for (const l of conCosto) await gastos.revisarCausaciones({ monto: l.gasto.total, causaDesde: n.desde, causaHasta: n.hasta });
     try {
       for (const l of conCosto) {
         const e = empleados.get(l.empleadoId)!;
-        const gastoId = await gastos.crear(
-          {
-            empresa: e.empresa,
-            tipo: "GASTO",
-            categoria: "NOMINA",
-            descripcion: `Nomina ${fechaTexto(n.desde)} - ${fechaTexto(n.hasta)}: ${e.nombre}`,
-            monto: l.calculo.costoTotal,
-            causaDesde: n.desde,
-            causaHasta: n.hasta,
-            destinos: e.tipo === "CONDUCTOR" ? destinosConductor(l, e, n.desde, n.hasta) : e.destinos,
-          },
-          usuarioId,
-          { origen: "NOMINA", creditoId: null, nominaId },
-        );
-        await pool.query("UPDATE nomina_lineas SET entrada = ?, calculo = ?, gastoId = ?, detalleProducido = ? WHERE id = ?", [
+        const periodo = `${fechaTexto(n.desde)} - ${fechaTexto(n.hasta)}`;
+        // El costo general: a los vehiculos del conductor segun su reparto, o a los destinos del de oficina.
+        let gastoId: number | null = null;
+        if (l.gasto.general > 0)
+          gastoId = await gastos.crear(
+            {
+              empresa: e.empresa,
+              tipo: "GASTO",
+              categoria: "NOMINA",
+              descripcion: `Nomina ${periodo}: ${e.nombre}`,
+              monto: l.gasto.general,
+              causaDesde: n.desde,
+              causaHasta: n.hasta,
+              destinos:
+                e.tipo === "CONDUCTOR" ? l.reparto.map((r) => ({ tipo: "VEHICULO", id: r.vehiculoId, modo: "PARTE", valor: r.porcentaje })) : e.destinos,
+            },
+            usuarioId,
+            { origen: "NOMINA", creditoId: null, nominaId },
+          );
+        // La UPC adicional: un gasto por beneficiario, a su vehiculo (si la UPC va al gasto).
+        if (l.gasto.upc > 0)
+          for (const u of l.upcs)
+            await gastos.crear(
+              {
+                empresa: e.empresa,
+                tipo: "GASTO",
+                categoria: "NOMINA",
+                descripcion: `UPC adicional ${periodo}: ${u.nombre} (CC ${u.cedula}), cotizante ${e.nombre}${e.cedula ? ` (CC ${e.cedula})` : ""}`,
+                monto: u.valor,
+                causaDesde: n.desde,
+                causaHasta: n.hasta,
+                destinos: [{ tipo: "VEHICULO", id: u.vehiculoId, modo: "PARTE", valor: 1 }],
+              },
+              usuarioId,
+              { origen: "NOMINA", creditoId: null, nominaId },
+            );
+        // El reparto queda guardado con la nomina (el porcentaje de cada vehiculo).
+        await pool.query("UPDATE nomina_lineas SET entrada = ?, calculo = ?, gastoId = ?, detalleProducido = ?, reparto = ? WHERE id = ?", [
           JSON.stringify(l.entrada),
           JSON.stringify(l.calculo),
           gastoId,
           JSON.stringify(detalleDe(l)),
+          l.tipo === "CONDUCTOR" ? JSON.stringify(l.reparto.map(({ vehiculoId, porcentaje }) => ({ vehiculoId, porcentaje }))) : null,
           l.id,
         ]);
       }
-      for (const l of n.lineas.filter((x) => x.calculo.costoTotal <= 0))
+      for (const l of n.lineas.filter((x) => x.gasto.total <= 0))
         await pool.query("UPDATE nomina_lineas SET entrada = ?, calculo = ?, detalleProducido = ? WHERE id = ?", [
           JSON.stringify(l.entrada),
           JSON.stringify(l.calculo),
@@ -715,7 +845,14 @@ function extrasDe(
   const cuentasViaje = e.tipo === "CONDUCTOR" ? (x.saldos.get(e.id) ?? { saldo: 0, sinCuenta: 0 }) : null;
   const suyos = prestamos
     .filter((p) => p.empleadoId === e.id)
-    .map((p) => ({ prestamoId: p.id, fecha: p.fecha, monto: p.monto, saldo: p.saldo, cuota: p.cuota, descuento: p.descuentos.find((d) => d.mes === x.mes)?.valor ?? null }))
+    .map((p) => ({
+      prestamoId: p.id,
+      fecha: p.fecha,
+      monto: p.monto,
+      saldo: p.saldo,
+      cuota: p.cuota,
+      descuento: p.descuentos.find((d) => d.mes === x.mes)?.valor ?? null,
+    }))
     .filter((p) => p.saldo > 0 || p.descuento !== null);
   const descontado = suyos.reduce((s, p) => s + (p.descuento ?? 0), 0);
   return {
@@ -744,9 +881,7 @@ async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProdu
     [desde, hasta],
   );
   const producido = await conductores.producidoEntre(desde, hasta);
-  return filas
-    .filter((f) => f.vehiculoId)
-    .map((f) => ({ id: f.id, fecha: dia(f.fecha)!, vehiculoId: f.vehiculoId, flete: producido.get(f.id) ?? null }));
+  return filas.filter((f) => f.vehiculoId).map((f) => ({ id: f.id, fecha: dia(f.fecha)!, vehiculoId: f.vehiculoId, flete: producido.get(f.id) ?? null }));
 }
 
 /**
@@ -755,13 +890,34 @@ async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProdu
  * los dias que tuvo cada uno (ver pesosConductor); si no hay datos, el
  * vehiculo de la linea.
  */
-function destinosConductor(l: LineaNomina, e: Empleado, desde: string, hasta: string): Destino[] {
-  const producido = new Map(l.porVehiculo.map((v) => [v.vehiculoId, v.producido]));
+function repartoAutomatico(
+  calculo: CalculoLinea,
+  sistema: ProducidoConductor,
+  e: Empleado,
+  desde: string,
+  hasta: string,
+  vehiculoId: number | null,
+): Array<{ vehiculoId: number; porcentaje: number }> {
+  const producido = new Map(sistema.porVehiculo.map((v) => [v.vehiculoId, v.producido]));
+  // Los carros que tuvo en el periodo (aunque no haya hecho viajes en alguno) pagan su parte por dias.
   const dias = diasPorVehiculo(e.vehiculos, desde, hasta);
-  if (!dias.size && l.vehiculoId) dias.set(l.vehiculoId, 1);
-  const pesos = [...pesosConductor(l.calculo, producido, dias).entries()].filter(([, p]) => p > 0);
-  if (!pesos.length) return [{ tipo: "VEHICULO", id: l.vehiculoId!, modo: "PARTE", valor: 1 }];
-  return pesos.map(([id, p]) => ({ tipo: "VEHICULO", id, modo: "PARTE", valor: Math.round(p * 1_000_000) / 1_000_000 }));
+  if (!dias.size && vehiculoId) dias.set(vehiculoId, 1);
+  const reparto = porcentajesDe(pesosConductor(calculo, producido, dias));
+  return reparto.length ? reparto : vehiculoId ? [{ vehiculoId, porcentaje: 100 }] : [];
+}
+
+/** Lo de la ultima linea de nomina de cada empleado (exclusiones y UPC adicional), para la nomina siguiente. */
+async function ultimasLineas(empleados: number[]): Promise<Map<number, { excluidos: string | null; upcAdicional: number; upcs: string | null }>> {
+  if (!empleados.length) return new Map();
+  const [filas] = await pool.query<RowDataPacket[]>(
+    `SELECT l.empleadoId, l.excluidos, l.upcAdicional, l.upcs FROM nomina_lineas l JOIN nominas n ON n.id = l.nominaId
+      WHERE l.empleadoId IN (?) ORDER BY n.desde DESC, l.id DESC`,
+    [empleados],
+  );
+  const r = new Map<number, { excluidos: string | null; upcAdicional: number; upcs: string | null }>();
+  for (const f of filas)
+    if (!r.has(f.empleadoId)) r.set(f.empleadoId, { excluidos: f.excluidos ?? null, upcAdicional: Number(f.upcAdicional ?? 0), upcs: f.upcs ?? null });
+  return r;
 }
 
 const VACIOS: Omit<ParametrosNomina, "anio"> = {

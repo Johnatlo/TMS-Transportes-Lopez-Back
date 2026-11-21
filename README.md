@@ -537,14 +537,14 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1067 funciones, componentes, métodos y rutas en 72 archivos._
+_1072 funciones, componentes, métodos y rutas en 72 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (36)
 - [`src/calculoConductores.ts`](#srccalculoconductorests) (9)
-- [`src/calculoNomina.ts`](#srccalculonominats) (9)
+- [`src/calculoNomina.ts`](#srccalculonominats) (13)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (9)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
@@ -563,7 +563,7 @@ _1067 funciones, componentes, métodos y rutas en 72 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
-- [`src/nomina.ts`](#srcnominats) (35)
+- [`src/nomina.ts`](#srcnominats) (36)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
 - [`src/prorrateo.ts`](#srcprorrateots) (12)
@@ -1105,8 +1105,15 @@ _1067 funciones, componentes, métodos y rutas en 72 archivos._
 >   cesantias; vacaciones sobre el salarial. Se provisionan (no se redondean).
 > - Ajuste: una diferencia manual con nota (lo que en el Excel eran los
 >   "-15200" sueltos). Suma al costo del empleador.
+> - UPC adicional: lo que se paga por los beneficiarios adicionales en salud
+>   (va en la planilla con la salud). Lo asume la empresa: suma al costo y no
+>   se le descuenta al empleado.
 > - Costo total = lo que se le paga al empleado (devengado) + costo del
->   empleador. Eso es lo que va a la rentabilidad.
+>   empleador.
+> - Gasto: lo que se carga a los vehiculos (o al reparto del de oficina): la
+>   suma de los conceptos que se marcan (por defecto todos = el costo total).
+>   Un empleado puede no cargar algunos (por ejemplo solo cesantias e
+>   intereses); lo que se le paga no cambia.
 >
 > Todo en pesos con dos decimales. Los porcentajes vienen en % (12 = 12 %).
 
@@ -1121,6 +1128,19 @@ _1067 funciones, componentes, métodos y rutas en 72 archivos._
 
 - **`calcularLinea(e, p)`** · _función_
   Calcula una linea de nomina.
+
+- **`gastoDeLinea(c, excluidos)`** · _función_
+  Lo que va al gasto de una linea: la suma de los conceptos que no se
+  excluyeron, separando la UPC adicional (va al vehiculo que se elija, no al
+  reparto del empleado). Sin exclusiones, general + upc = costo total.
+
+- **`porcentajesDe(pesos)`** · _función_
+  Reparto del costo de un conductor entre sus vehiculos en porcentajes que
+  suman 100 (con dos decimales; el redondeo lo absorbe el mayor). Viene de
+  los pesos de pesosConductor.
+
+- **`errorReparto(reparto)`** · _función_
+  Revisa un reparto escrito a mano: vehiculos distintos, porcentajes positivos que suman 100. Devuelve el error o null.
 
 - **`diasPeriodo(desde, hasta)`** · _función_
   Dias de nomina de un periodo (mes comercial de 30 dias): del 21/10 al 20/11 son 30.
@@ -1145,6 +1165,11 @@ _1067 funciones, componentes, métodos y rutas en 72 archivos._
 
 - **`diasPorVehiculo(asignaciones, desde, hasta)`** · _función_
   Dias que el conductor tuvo cada vehiculo dentro del periodo (por su asignacion con fechas).
+
+- **`validarUpcs(x)`** · _función_
+  Revisa y normaliza la lista de UPC adicional de una linea: cada uno con
+  cedula (solo numeros), nombre, valor mayor que cero y vehiculo; sin cedulas
+  repetidas. Devuelve la lista o el error.
 
 ### `src/calculoUtilidades.ts`
 
@@ -2269,7 +2294,11 @@ _1067 funciones, componentes, métodos y rutas en 72 archivos._
 >   Conductores) y el total a pagar.
 >   Si manejo varios carros, su costo se reparte entre ellos: lo que sale del
 >   producido segun lo que produjo en cada uno y el resto por los dias que
->   tuvo cada uno. Mientras es borrador se
+>   tuvo cada uno (porcentajes que se pueden corregir y quedan guardados).
+>   Cada linea puede tener UPC adicional (va con la salud, la paga la empresa
+>   y se carga al vehiculo que se elija) y conceptos que no van al gasto (por
+>   ejemplo, de un empleado solo cesantias e intereses); se recuerdan para la
+>   nomina siguiente. Mientras es borrador se
 >   calcula con los datos actuales; al aprobarla el calculo queda guardado y
 >   se crea un gasto por empleado (categoria NOMINA) por su costo total,
 >   causado por dias entre los meses del periodo: el del conductor a su
@@ -2380,11 +2409,14 @@ _1067 funciones, componentes, métodos y rutas en 72 archivos._
   PRODUCIDO CONDUCTOR como flete (matriz de fletes conductor o el escrito a
   mano en su cuenta de viaje; null = sin valor, no suma).
 
-- **`destinosConductor(l, e, desde, hasta)`** · _función_
+- **`repartoAutomatico(calculo, sistema, e, desde, hasta, vehiculoId)`** · _función_
   A quien va el costo de un conductor: si manejo varios carros en el periodo,
   la parte del producido segun lo que produjo en cada uno y el resto segun
   los dias que tuvo cada uno (ver pesosConductor); si no hay datos, el
   vehiculo de la linea.
+
+- **`ultimasLineas(empleados)`** · _función_
+  Lo de la ultima linea de nomina de cada empleado (exclusiones y UPC adicional), para la nomina siguiente.
 
 ### `src/perfilVehiculos.ts`
 

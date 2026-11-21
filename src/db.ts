@@ -1115,6 +1115,12 @@ export async function initSchema(): Promise<void> {
     ["nominas", "producidoHasta", "DATE"],
     ["nomina_lineas", "producidoManual", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["nomina_lineas", "detalleProducido", "TEXT"],
+    // Conceptos que no van al gasto, UPC adicional (y el vehiculo al que va) y el reparto del conductor entre vehiculos.
+    ["nomina_lineas", "excluidos", "TEXT"],
+    ["nomina_lineas", "upcAdicional", "DECIMAL(15,2) NOT NULL DEFAULT 0"],
+    // UPC adicional por beneficiario ([{ cedula, nombre, valor, vehiculoId }]); upcAdicional es su suma.
+    ["nomina_lineas", "upcs", "TEXT"],
+    ["nomina_lineas", "reparto", "TEXT"],
     // Socios externos (solo estan en una sociedad, no en la empresa) y sus datos.
     ["socios", "externo", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["socios", "documento", "VARCHAR(20)"],

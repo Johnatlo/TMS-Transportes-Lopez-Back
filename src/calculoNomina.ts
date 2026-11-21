@@ -15,8 +15,15 @@
  *   cesantias; vacaciones sobre el salarial. Se provisionan (no se redondean).
  * - Ajuste: una diferencia manual con nota (lo que en el Excel eran los
  *   "-15200" sueltos). Suma al costo del empleador.
+ * - UPC adicional: lo que se paga por los beneficiarios adicionales en salud
+ *   (va en la planilla con la salud). Lo asume la empresa: suma al costo y no
+ *   se le descuenta al empleado.
  * - Costo total = lo que se le paga al empleado (devengado) + costo del
- *   empleador. Eso es lo que va a la rentabilidad.
+ *   empleador.
+ * - Gasto: lo que se carga a los vehiculos (o al reparto del de oficina): la
+ *   suma de los conceptos que se marcan (por defecto todos = el costo total).
+ *   Un empleado puede no cargar algunos (por ejemplo solo cesantias e
+ *   intereses); lo que se le paga no cambia.
  *
  * Todo en pesos con dos decimales. Los porcentajes vienen en % (12 = 12 %).
  */
@@ -56,6 +63,8 @@ export interface EntradaLinea {
   dias: number;
   producido: number;
   ajuste: number;
+  /** UPC adicional del mes (salud de beneficiarios adicionales; la paga la empresa). */
+  upcAdicional?: number;
 }
 
 /** El resultado de una linea. */
@@ -80,8 +89,10 @@ export interface CalculoLinea {
   cesantias: number;
   interesesCesantias: number;
   vacaciones: number;
+  /** UPC adicional (va con la salud en la planilla; la paga la empresa). */
+  upcAdicional: number;
   ajuste: number;
-  /** Aportes + provisiones + ajuste. */
+  /** Aportes + UPC adicional + provisiones + ajuste. */
   costoEmpleador: number;
   /** Devengado + costo del empleador: lo que va a la rentabilidad. */
   costoTotal: number;
@@ -120,7 +131,8 @@ export function calcularLinea(e: EntradaLinea, p: ParametrosNomina): CalculoLine
   const interesesCesantias = pct(cesantias, p.interesesCesantias);
   const vacaciones = pct(salarial, p.vacaciones);
   const ajuste = c2(e.ajuste);
-  const costoEmpleador = c2(pensionEmpleador + saludEmpleador + arl + caja + prima + cesantias + interesesCesantias + vacaciones + ajuste);
+  const upcAdicional = c2(e.upcAdicional ?? 0);
+  const costoEmpleador = c2(pensionEmpleador + saludEmpleador + upcAdicional + arl + caja + prima + cesantias + interesesCesantias + vacaciones + ajuste);
   return {
     basico,
     variable,
@@ -140,10 +152,69 @@ export function calcularLinea(e: EntradaLinea, p: ParametrosNomina): CalculoLine
     cesantias,
     interesesCesantias,
     vacaciones,
+    upcAdicional,
     ajuste,
     costoEmpleador,
     costoTotal: c2(devengado + costoEmpleador),
   };
+}
+
+/**
+ * Conceptos de la nomina que pueden ir o no al gasto (los vehiculos): todo lo
+ * que la empresa paga por el empleado. Sumados dan el costo total.
+ */
+export const CONCEPTOS_GASTO = [
+  ["basico", "Sueldo basico"],
+  ["auxilio", "Auxilio de transporte"],
+  ["variable", "% salarial del producido"],
+  ["viaticos", "Viaticos"],
+  ["saludEmpleador", "Salud (empresa)"],
+  ["upcAdicional", "UPC adicional"],
+  ["pensionEmpleador", "Pension (empresa)"],
+  ["arl", "ARL"],
+  ["caja", "Caja de compensacion"],
+  ["prima", "Prima"],
+  ["cesantias", "Cesantias"],
+  ["interesesCesantias", "Intereses de cesantias"],
+  ["vacaciones", "Vacaciones"],
+  ["ajuste", "Ajuste"],
+] as const;
+export type ConceptoGasto = (typeof CONCEPTOS_GASTO)[number][0];
+
+/**
+ * Lo que va al gasto de una linea: la suma de los conceptos que no se
+ * excluyeron, separando la UPC adicional (va al vehiculo que se elija, no al
+ * reparto del empleado). Sin exclusiones, general + upc = costo total.
+ */
+export function gastoDeLinea(c: CalculoLinea, excluidos: readonly string[] = []): { general: number; upc: number; total: number } {
+  const incluido = (k: ConceptoGasto) => !excluidos.includes(k);
+  const general = c2(CONCEPTOS_GASTO.filter(([k]) => k !== "upcAdicional" && incluido(k)).reduce((s, [k]) => s + c[k], 0));
+  const upc = incluido("upcAdicional") ? c.upcAdicional : 0;
+  return { general, upc, total: c2(general + upc) };
+}
+
+/**
+ * Reparto del costo de un conductor entre sus vehiculos en porcentajes que
+ * suman 100 (con dos decimales; el redondeo lo absorbe el mayor). Viene de
+ * los pesos de pesosConductor.
+ */
+export function porcentajesDe(pesos: Map<number, number>): Array<{ vehiculoId: number; porcentaje: number }> {
+  const lista = [...pesos.entries()].filter(([, p]) => p > 0).map(([vehiculoId, p]) => ({ vehiculoId, porcentaje: c2(p * 100) }));
+  if (!lista.length) return [];
+  const diferencia = c2(100 - lista.reduce((s, x) => s + x.porcentaje, 0));
+  const mayor = lista.reduce((a, b) => (b.porcentaje > a.porcentaje ? b : a));
+  mayor.porcentaje = c2(mayor.porcentaje + diferencia);
+  return lista;
+}
+
+/** Revisa un reparto escrito a mano: vehiculos distintos, porcentajes positivos que suman 100. Devuelve el error o null. */
+export function errorReparto(reparto: Array<{ vehiculoId: number; porcentaje: number }>): string | null {
+  if (!reparto.length) return "Elige al menos un vehiculo.";
+  if (new Set(reparto.map((r) => r.vehiculoId)).size !== reparto.length) return "Un vehiculo esta repetido en el reparto.";
+  if (reparto.some((r) => !Number.isFinite(r.porcentaje) || r.porcentaje <= 0)) return "Cada porcentaje debe ser mayor que cero.";
+  const suma = c2(reparto.reduce((s, r) => s + r.porcentaje, 0));
+  if (Math.abs(suma - 100) > 0.01) return `Los porcentajes suman ${suma} %: deben sumar 100 %.`;
+  return null;
 }
 
 /** Dias de nomina de un periodo (mes comercial de 30 dias): del 21/10 al 20/11 son 30. */
@@ -258,4 +329,43 @@ export function diasPorVehiculo(
     dias.set(a.vehiculoId, (dias.get(a.vehiculoId) ?? 0) + n);
   }
   return dias;
+}
+
+/**
+ * Un beneficiario de UPC adicional: la persona por la que se paga (puede no
+ * ser empleado, por ejemplo un familiar del conductor), cuanto y a que
+ * vehiculo se carga. El cotizante es el empleado de la linea.
+ */
+export interface UpcBeneficiario {
+  cedula: string;
+  nombre: string;
+  valor: number;
+  vehiculoId: number;
+}
+
+/**
+ * Revisa y normaliza la lista de UPC adicional de una linea: cada uno con
+ * cedula (solo numeros), nombre, valor mayor que cero y vehiculo; sin cedulas
+ * repetidas. Devuelve la lista o el error.
+ */
+export function validarUpcs(x: unknown): { upcs: UpcBeneficiario[]; error: string | null } {
+  if (!Array.isArray(x)) return { upcs: [], error: "Envia la lista de UPC adicional." };
+  const upcs = x.map((u: Record<string, unknown>) => ({
+    cedula: String(u?.cedula ?? "").replace(/\D/g, ""),
+    nombre: String(u?.nombre ?? "")
+      .trim()
+      .toUpperCase()
+      .slice(0, 150),
+    valor: c2(Number(u?.valor)),
+    vehiculoId: Number(u?.vehiculoId) || 0,
+  }));
+  for (const [i, u] of upcs.entries()) {
+    const quien = u.nombre || `el beneficiario ${i + 1}`;
+    if (u.cedula.length < 5) return { upcs, error: `Escribe la cedula de ${quien}.` };
+    if (!u.nombre) return { upcs, error: `Escribe el nombre del beneficiario con cedula ${u.cedula}.` };
+    if (!Number.isFinite(u.valor) || u.valor <= 0) return { upcs, error: `Escribe el valor de la UPC de ${quien}.` };
+    if (!u.vehiculoId) return { upcs, error: `Elige a que vehiculo va la UPC de ${quien}.` };
+  }
+  if (new Set(upcs.map((u) => u.cedula)).size !== upcs.length) return { upcs, error: "Hay una cedula repetida en la UPC adicional." };
+  return { upcs, error: null };
 }
