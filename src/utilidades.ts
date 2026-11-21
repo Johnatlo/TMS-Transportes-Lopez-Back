@@ -39,6 +39,8 @@ export interface ViajeTercero {
   tercero: string | null;
   cliente: string;
   manifiesto: string | null;
+  /** Remision del viaje en el Cuadro pagos. */
+  remision: string | null;
   flete: number;
   saldoEmpresa: number;
   saldoTercero: number;
@@ -262,6 +264,7 @@ export const utilidades = {
         tercero: f.tercero,
         cliente: f.empresa,
         manifiesto: f.manifiesto,
+        remision: f.remision,
         flete: f.valorEmpresa,
         saldoEmpresa: f.saldoEmpresa,
         saldoTercero: f.saldoBeneficiario,

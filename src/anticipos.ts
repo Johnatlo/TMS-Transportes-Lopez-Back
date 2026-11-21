@@ -186,6 +186,8 @@ export interface FilaAnticipo {
   cuadroViajeId: number | null;
   empresa: string | null;
   manifiesto: string | null;
+  /** Remision del viaje en el Cuadro pagos (para buscar por ella). */
+  remision: string | null;
   efectivo: number;
   combustible: number;
   valor: number;
@@ -240,7 +242,7 @@ const sqlDescuentoGalon = (bomba: string, fecha: string) => `COALESCE((
 
 const SELECT_ANTICIPOS = `
   SELECT a.id, a.tanqueoId, a.tramo, a.fecha, COALESCE(a.placa, c.placa) AS placa, a.cuadroViajeId,
-         c.empresa, c.manifiesto, a.efectivo, a.combustible, a.valor, a.bombaId, b.nombre AS bomba,
+         c.empresa, c.manifiesto, c.remision, a.efectivo, a.combustible, a.valor, a.bombaId, b.nombre AS bomba,
          t.facturaBomba, t.fechaFacturaBomba, COALESCE(t.idaYVuelta, 0) AS idaYVuelta,
          (SELECT ${sqlFlota()} FROM vehiculos ve
            WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
@@ -265,6 +267,7 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   cuadroViajeId: r.cuadroViajeId ?? null,
   empresa: r.empresa ?? null,
   manifiesto: r.manifiesto ?? null,
+  remision: r.remision ?? null,
   efectivo: Number(r.efectivo ?? 0),
   combustible: Number(r.combustible ?? 0),
   valor: Number(r.valor ?? 0),

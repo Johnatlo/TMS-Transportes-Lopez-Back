@@ -267,6 +267,8 @@ export interface Viaje {
   creadoPorNombre?: string | null;
   anuladoPorNombre?: string | null;
   cumplidoPorNombre?: string | null;
+  /** Remisiones del viaje en el Cuadro pagos, separadas por coma (vienen del SELECT; para buscar por ellas). */
+  remisiones?: string | null;
 }
 
 /**
@@ -275,7 +277,9 @@ export interface Viaje {
  */
 const SELECT_VIAJES = `
   SELECT v.*, uc.nombre AS creadoPorNombre, ua.nombre AS anuladoPorNombre,
-         ucu.nombre AS cumplidoPorNombre
+         ucu.nombre AS cumplidoPorNombre,
+         (SELECT GROUP_CONCAT(DISTINCT cv.remision ORDER BY cv.remision SEPARATOR ', ') FROM cuadro_viajes cv
+           WHERE cv.viajeId = v.id AND cv.remision IS NOT NULL AND cv.remision <> '') AS remisiones
     FROM viajes v
     LEFT JOIN usuarios uc ON uc.id = v.creadoPorId
     LEFT JOIN usuarios ua ON ua.id = v.anuladoPorId
@@ -1968,6 +1972,8 @@ export const viajes = {
 export interface FilaConsecutivo {
   viajeId: number;
   remesaId: number;
+  /** Remision de la remesa en el Cuadro pagos. */
+  remision: string | null;
   orden: number;
   fechaPlanillada: Date;
   placa: string | null;
@@ -2041,7 +2047,11 @@ export const consecutivos = {
                       END
                  FROM cuadro_viajes cv
                 WHERE cv.viajeRemesaId = vr.id AND cv.anulado = 0 AND cv.reconocidoDeViajeId IS NULL
-                ORDER BY cv.id LIMIT 1) AS valorFacturar
+                ORDER BY cv.id LIMIT 1) AS valorFacturar,
+              -- Remision de la remesa en el Cuadro pagos (para buscar por ella).
+              (SELECT cv.remision FROM cuadro_viajes cv
+                WHERE cv.viajeRemesaId = vr.id AND cv.anulado = 0 AND cv.remision IS NOT NULL AND cv.remision <> ''
+                ORDER BY cv.id LIMIT 1) AS remision
          FROM viaje_remesas vr
          JOIN viajes v ON v.id = vr.viajeId
          LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId

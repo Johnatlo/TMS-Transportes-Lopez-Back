@@ -26,6 +26,8 @@ export interface Preoperacional {
   id: number;
   viajeId: number | null;
   manifiesto: string | null;
+  /** Remisiones del viaje en el Cuadro pagos (para buscar por ellas). */
+  remisiones: string | null;
   fecha: string;
   placa: string;
   conductor: string;
@@ -39,6 +41,8 @@ export interface Preoperacional {
 export interface PreoperacionalPendiente {
   viajeId: number;
   manifiesto: string | null;
+  /** Remisiones del viaje en el Cuadro pagos. */
+  remisiones: string | null;
   fecha: string;
   placa: string | null;
   conductor: string | null;
@@ -101,6 +105,7 @@ const mapear = (r: RowDataPacket): Preoperacional => ({
   id: Number(r.id),
   viajeId: r.viajeId ?? null,
   manifiesto: r.manifiesto ?? null,
+  remisiones: r.remisiones ?? null,
   fecha: dia(r.fecha)!,
   placa: String(r.placa),
   conductor: String(r.conductor ?? ""),
@@ -111,7 +116,9 @@ const mapear = (r: RowDataPacket): Preoperacional => ({
 });
 
 const SELECT = `
-  SELECT p.*, v.consecutivoManifiesto AS manifiesto, u.nombre AS creadoPor
+  SELECT p.*, v.consecutivoManifiesto AS manifiesto, u.nombre AS creadoPor,
+         (SELECT GROUP_CONCAT(DISTINCT cv.remision ORDER BY cv.remision SEPARATOR ', ') FROM cuadro_viajes cv
+           WHERE cv.viajeId = p.viajeId AND cv.remision IS NOT NULL AND cv.remision <> '') AS remisiones
     FROM preoperacionales p
     LEFT JOIN viajes v ON v.id = p.viajeId
     LEFT JOIN usuarios u ON u.id = p.creadoPorId`;
@@ -128,7 +135,9 @@ export const preoperacional = {
   async pendientes(dias = 30): Promise<PreoperacionalPendiente[]> {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT v.id, v.consecutivoManifiesto, v.fechaCreacion, COALESCE(ve.placa, v.placaRndc) AS placa,
-              COALESCE(c.nombre, v.conductorRndc) AS conductor
+              COALESCE(c.nombre, v.conductorRndc) AS conductor,
+              (SELECT GROUP_CONCAT(DISTINCT cv.remision ORDER BY cv.remision SEPARATOR ', ') FROM cuadro_viajes cv
+           WHERE cv.viajeId = v.id AND cv.remision IS NOT NULL AND cv.remision <> '') AS remisiones
          FROM viajes v
          LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId
          LEFT JOIN conductores c ON c.id = v.conductorId
@@ -141,6 +150,7 @@ export const preoperacional = {
     return rows.map((r) => ({
       viajeId: Number(r.id),
       manifiesto: r.consecutivoManifiesto ?? null,
+      remisiones: r.remisiones ?? null,
       fecha: new Date(r.fechaCreacion).toISOString(),
       placa: r.placa ?? null,
       conductor: r.conductor ?? null,
