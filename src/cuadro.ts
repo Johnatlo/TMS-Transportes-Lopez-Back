@@ -55,7 +55,7 @@ export type FilaHeredable = Record<string, unknown> & {
 
 /** Campos que se copian del anulado si en la fila nueva estan vacios. */
 const CAMPOS_HEREDABLES = [
-  "remision", "fechaRadicado", "facturaNumero", "facturaFecha", "facturaVence",
+  "remision", "remisionUrl", "facturaUrl", "fechaRadicado", "facturaNumero", "facturaFecha", "facturaVence",
   "tarifaFleteId", "pesoFacturadoKg", "notaFactura", "enviadoFacturarEn",
   "facturaFechaPago", "fechaPagoSaldo", "revisadoContabilidadPorId", "revisadoContabilidadEn",
   "revisadoGerenciaPorId", "revisadoGerenciaEn",
@@ -242,6 +242,10 @@ export interface FilaCuadro {
   manifiesto: string | null;
   remesa: string | null;
   remision: string | null;
+  /** Link (Drive) de la remision escaneada. */
+  remisionUrl: string | null;
+  /** Link (Drive) de la factura. */
+  facturaUrl: string | null;
   pesoKg: number | null;
   tipoFlete: "KILO" | "FIJO";
   tarifaKilo: number | null;
@@ -478,6 +482,8 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     manifiesto: r.manifiesto,
     remesa: r.remesa,
     remision: r.remision,
+    remisionUrl: r.remisionUrl ?? null,
+    facturaUrl: r.facturaUrl ?? null,
     pesoKg: num(r.pesoKg),
     tipoFlete: r.tipoFlete === "FIJO" ? ("FIJO" as const) : ("KILO" as const),
     tarifaKilo: num(r.tarifaKilo),
@@ -560,6 +566,8 @@ const CAMPOS_EDITABLES: Record<string, "texto" | "numero" | "fecha" | "booleano"
   empresa: "texto",
   manifiesto: "texto",
   remision: "texto",
+  remisionUrl: "texto",
+  facturaUrl: "texto",
   pesoKg: "numero",
   pesoFacturadoKg: "numero",
   notaFactura: "texto",
@@ -646,6 +654,12 @@ function valorCampo(campo: string, tipo: string, crudo: unknown): unknown {
  * empresa en mayuscula. Lanza ErrorCuadro si algo no es valido.
  */
 function validar(datos: Record<string, unknown>) {
+  // Links de la remision y de la factura: vacios o un link (https://...), sin guardar archivos.
+  for (const campo of ["remisionUrl", "facturaUrl"]) {
+    const v = String(datos[campo] ?? "").trim();
+    if (v && !/^https?:\/\/\S+$/i.test(v)) throw new ErrorCuadro(`El link de la ${campo === "remisionUrl" ? "remision" : "factura"} debe empezar por https://`);
+    if (v.length > 500) throw new ErrorCuadro("El link es demasiado largo (maximo 500 caracteres).");
+  }
   if ("tipoFlete" in datos && !["KILO", "FIJO"].includes(String(datos.tipoFlete))) {
     throw new ErrorCuadro("El flete es por kilo (KILO) o fijo (FIJO).");
   }
@@ -1137,18 +1151,20 @@ export const cuadro = {
   /** Una factura que cubre varios viajes (los urbanos se facturan juntos). */
   async facturar(
     ids: number[],
-    datos: { facturaNumero?: string | null; facturaFecha?: string | null; facturaVence?: string | null }
+    datos: { facturaNumero?: string | null; facturaFecha?: string | null; facturaVence?: string | null; facturaUrl?: string | null }
   ) {
     if (ids.length === 0) throw new ErrorCuadro("Selecciona al menos un viaje.");
+    validar({ facturaUrl: datos.facturaUrl });
+    const link = valorCampo("facturaUrl", "texto", datos.facturaUrl);
     const numero = valorCampo("facturaNumero", "texto", datos.facturaNumero);
     const fecha = valorCampo("facturaFecha", "fecha", datos.facturaFecha);
     const vence = valorCampo("facturaVence", "fecha", datos.facturaVence);
     const [res] = await pool.query<ResultSetHeader>(
       `UPDATE cuadro_viajes SET facturado = 1,
               facturaNumero = COALESCE(?, facturaNumero), facturaFecha = COALESCE(?, facturaFecha),
-              facturaVence = COALESCE(?, facturaVence)
+              facturaVence = COALESCE(?, facturaVence), facturaUrl = COALESCE(?, facturaUrl)
         WHERE id IN (?)`,
-      [numero, fecha, vence, ids]
+      [numero, fecha, vence, link, ids]
     );
     return res.affectedRows;
   },

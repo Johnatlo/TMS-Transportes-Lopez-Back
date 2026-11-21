@@ -160,6 +160,10 @@ export interface ViajeFactura {
   placa: string;
   manifiesto: string | null;
   remision: string | null;
+  /** Link (Drive) de la remision escaneada. */
+  remisionUrl: string | null;
+  /** Link (Drive) de la factura. */
+  facturaUrl: string | null;
   valorFlete: number | null;
   /** Socio dueno del vehiculo o TERCEROS (filtro por dueno). */
   dueno: GrupoDueno;
@@ -361,6 +365,8 @@ export function agruparCartera(
             placa: v.placa,
             manifiesto: v.manifiesto,
             remision: v.remision,
+            remisionUrl: v.remisionUrl,
+            facturaUrl: v.facturaUrl,
             valorFlete: v.valorFlete,
             dueno: grupoDe(v.dueno),
           })),

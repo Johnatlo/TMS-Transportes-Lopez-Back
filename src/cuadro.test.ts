@@ -32,6 +32,8 @@ function viaje(cambios: Partial<Base> = {}): Base {
     manifiesto: "00006775",
     remesa: "00006775",
     remision: null,
+    remisionUrl: null,
+    facturaUrl: null,
     pesoKg: 34_000,
     tipoFlete: "KILO",
     tarifaKilo: null,

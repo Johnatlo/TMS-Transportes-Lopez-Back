@@ -188,6 +188,10 @@ export interface FilaAnticipo {
   manifiesto: string | null;
   /** Remision del viaje en el Cuadro pagos (para buscar por ella). */
   remision: string | null;
+  /** Link (Drive) de la remision escaneada. */
+  remisionUrl: string | null;
+  /** Link (Drive) de la factura. */
+  facturaUrl: string | null;
   efectivo: number;
   combustible: number;
   valor: number;
@@ -242,7 +246,7 @@ const sqlDescuentoGalon = (bomba: string, fecha: string) => `COALESCE((
 
 const SELECT_ANTICIPOS = `
   SELECT a.id, a.tanqueoId, a.tramo, a.fecha, COALESCE(a.placa, c.placa) AS placa, a.cuadroViajeId,
-         c.empresa, c.manifiesto, c.remision, a.efectivo, a.combustible, a.valor, a.bombaId, b.nombre AS bomba,
+         c.empresa, c.manifiesto, c.remision, c.remisionUrl, c.facturaUrl, a.efectivo, a.combustible, a.valor, a.bombaId, b.nombre AS bomba,
          t.facturaBomba, t.fechaFacturaBomba, COALESCE(t.idaYVuelta, 0) AS idaYVuelta,
          (SELECT ${sqlFlota()} FROM vehiculos ve
            WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
@@ -268,6 +272,8 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   empresa: r.empresa ?? null,
   manifiesto: r.manifiesto ?? null,
   remision: r.remision ?? null,
+  remisionUrl: r.remisionUrl ?? null,
+  facturaUrl: r.facturaUrl ?? null,
   efectivo: Number(r.efectivo ?? 0),
   combustible: Number(r.combustible ?? 0),
   valor: Number(r.valor ?? 0),
@@ -425,6 +431,10 @@ export interface AbonoSocio {
     empresa: string | null;
     manifiesto: string | null;
     remesa: string | null;
+    /** Remision y links (Drive) de la remision y de la factura del viaje. */
+    remision: string | null;
+    remisionUrl: string | null;
+    facturaUrl: string | null;
     fecha: string | null;
   }>;
 }
@@ -908,7 +918,7 @@ export const anticipos = {
       "SELECT a.*, p.fecha AS fechaPago FROM abonos_socio a LEFT JOIN bomba_pagos p ON p.id = a.pagoId ORDER BY a.fecha DESC, a.id DESC"
     );
     const [viajes] = await pool.query<RowDataPacket[]>(
-      `SELECT av.abonoId, av.cuadroViajeId, av.valor, c.placa, c.empresa, c.manifiesto, c.remesa, c.fecha
+      `SELECT av.abonoId, av.cuadroViajeId, av.valor, c.placa, c.empresa, c.manifiesto, c.remesa, c.remision, c.remisionUrl, c.facturaUrl, c.fecha
          FROM abonos_socio_viajes av LEFT JOIN cuadro_viajes c ON c.id = av.cuadroViajeId ORDER BY av.id`
     );
     return abonos.map((a) => ({
@@ -929,6 +939,9 @@ export const anticipos = {
           empresa: v.empresa ?? null,
           manifiesto: v.manifiesto ?? null,
           remesa: v.remesa ?? null,
+          remision: v.remision ?? null,
+          remisionUrl: v.remisionUrl ?? null,
+          facturaUrl: v.facturaUrl ?? null,
           fecha: dia(v.fecha),
         })),
     }));

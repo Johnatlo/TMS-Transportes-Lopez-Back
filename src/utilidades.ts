@@ -41,6 +41,10 @@ export interface ViajeTercero {
   manifiesto: string | null;
   /** Remision del viaje en el Cuadro pagos. */
   remision: string | null;
+  /** Link (Drive) de la remision escaneada. */
+  remisionUrl: string | null;
+  /** Link (Drive) de la factura. */
+  facturaUrl: string | null;
   flete: number;
   saldoEmpresa: number;
   saldoTercero: number;
@@ -229,6 +233,8 @@ export const utilidades = {
         vehiculoId: porPlaca.get(placaClave(f.placa))!,
         fecha: f.fecha,
         manifiesto: f.manifiesto,
+        remisionUrl: f.remisionUrl,
+        facturaUrl: f.facturaUrl,
         cliente: f.empresa,
         flete: f.valorEmpresa,
         retencion: f.retencion,
@@ -265,6 +271,8 @@ export const utilidades = {
         cliente: f.empresa,
         manifiesto: f.manifiesto,
         remision: f.remision,
+        remisionUrl: f.remisionUrl,
+        facturaUrl: f.facturaUrl,
         flete: f.valorEmpresa,
         saldoEmpresa: f.saldoEmpresa,
         saldoTercero: f.saldoBeneficiario,

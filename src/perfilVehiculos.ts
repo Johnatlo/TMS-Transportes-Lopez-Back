@@ -18,6 +18,10 @@ export interface ViajePerfil {
   fecha: string;
   empresa: string;
   manifiesto: string | null;
+  /** Remision y links (Drive) de la remision y de la factura. */
+  remision: string | null;
+  remisionUrl: string | null;
+  facturaUrl: string | null;
   conductor: string | null;
   ruta: string | null;
 }
@@ -72,7 +76,7 @@ export const perfilVehiculos = {
 
     const [[viajes], [conteo], [preops]] = await Promise.all([
       pool.query<RowDataPacket[]>(
-        `SELECT id, fecha, placa, empresa, manifiesto, conductor, rutaManual
+        `SELECT id, fecha, placa, empresa, manifiesto, remision, remisionUrl, facturaUrl, conductor, rutaManual
            FROM cuadro_viajes
           WHERE anulado = 0 AND REPLACE(placa, '-', '') IN (?)
           ORDER BY fecha DESC, id DESC`,
@@ -128,6 +132,9 @@ export const perfilVehiculos = {
           fecha: dia(f.fecha)!,
           empresa: String(f.empresa),
           manifiesto: f.manifiesto ?? null,
+          remision: f.remision ?? null,
+          remisionUrl: f.remisionUrl ?? null,
+          facturaUrl: f.facturaUrl ?? null,
           conductor: f.conductor ?? null,
           ruta: f.rutaManual ?? null,
         })),

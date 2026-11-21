@@ -269,6 +269,9 @@ export interface Viaje {
   cumplidoPorNombre?: string | null;
   /** Remisiones del viaje en el Cuadro pagos, separadas por coma (vienen del SELECT; para buscar por ellas). */
   remisiones?: string | null;
+  /** Links de las remisiones y facturas de sus filas del cuadro, separados por espacio. */
+  remisionUrls?: string | null;
+  facturaUrls?: string | null;
 }
 
 /**
@@ -279,7 +282,12 @@ const SELECT_VIAJES = `
   SELECT v.*, uc.nombre AS creadoPorNombre, ua.nombre AS anuladoPorNombre,
          ucu.nombre AS cumplidoPorNombre,
          (SELECT GROUP_CONCAT(DISTINCT cv.remision ORDER BY cv.remision SEPARATOR ', ') FROM cuadro_viajes cv
-           WHERE cv.viajeId = v.id AND cv.remision IS NOT NULL AND cv.remision <> '') AS remisiones
+           WHERE cv.viajeId = v.id AND cv.remision IS NOT NULL AND cv.remision <> '') AS remisiones,
+         -- Links (Drive) de las remisiones y facturas de sus filas del cuadro, separados por espacio.
+         (SELECT GROUP_CONCAT(DISTINCT cv.remisionUrl SEPARATOR ' ') FROM cuadro_viajes cv
+           WHERE cv.viajeId = v.id AND cv.anulado = 0 AND cv.remisionUrl IS NOT NULL AND cv.remisionUrl <> '') AS remisionUrls,
+         (SELECT GROUP_CONCAT(DISTINCT cv.facturaUrl SEPARATOR ' ') FROM cuadro_viajes cv
+           WHERE cv.viajeId = v.id AND cv.anulado = 0 AND cv.facturaUrl IS NOT NULL AND cv.facturaUrl <> '') AS facturaUrls
     FROM viajes v
     LEFT JOIN usuarios uc ON uc.id = v.creadoPorId
     LEFT JOIN usuarios ua ON ua.id = v.anuladoPorId
@@ -1974,6 +1982,8 @@ export interface FilaConsecutivo {
   remesaId: number;
   /** Remision de la remesa en el Cuadro pagos. */
   remision: string | null;
+  remisionUrl: string | null;
+  facturaUrl: string | null;
   orden: number;
   fechaPlanillada: Date;
   placa: string | null;
@@ -2051,7 +2061,13 @@ export const consecutivos = {
               -- Remision de la remesa en el Cuadro pagos (para buscar por ella).
               (SELECT cv.remision FROM cuadro_viajes cv
                 WHERE cv.viajeRemesaId = vr.id AND cv.anulado = 0 AND cv.remision IS NOT NULL AND cv.remision <> ''
-                ORDER BY cv.id LIMIT 1) AS remision
+                ORDER BY cv.id LIMIT 1) AS remision,
+              (SELECT cv.remisionUrl FROM cuadro_viajes cv
+                WHERE cv.viajeRemesaId = vr.id AND cv.anulado = 0 AND cv.remisionUrl IS NOT NULL AND cv.remisionUrl <> ''
+                ORDER BY cv.id LIMIT 1) AS remisionUrl,
+              (SELECT cv.facturaUrl FROM cuadro_viajes cv
+                WHERE cv.viajeRemesaId = vr.id AND cv.anulado = 0 AND cv.facturaUrl IS NOT NULL AND cv.facturaUrl <> ''
+                ORDER BY cv.id LIMIT 1) AS facturaUrl
          FROM viaje_remesas vr
          JOIN viajes v ON v.id = vr.viajeId
          LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId

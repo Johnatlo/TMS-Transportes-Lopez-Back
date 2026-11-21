@@ -554,7 +554,7 @@ export const nomina = {
     }
     if (!ids.length) return [];
     const [viajes] = await pool.query<RowDataPacket[]>(
-      `SELECT c.id, c.fecha, c.placa, c.manifiesto, c.empresa AS cliente, c.concepto, c.pesoKg, c.tipoFlete, c.tarifaKilo, c.valorFijo,
+      `SELECT c.id, c.fecha, c.placa, c.manifiesto, c.remision, c.remisionUrl, c.facturaUrl, c.empresa AS cliente, c.concepto, c.pesoKg, c.tipoFlete, c.tarifaKilo, c.valorFijo,
               IF(c.tipoFlete = 'FIJO', c.valorFijo, c.pesoKg * c.tarifaKilo) AS flete
          FROM cuadro_viajes c WHERE c.id IN (?) ORDER BY c.fecha, c.id`,
       [ids],
@@ -564,6 +564,9 @@ export const nomina = {
       fecha: dia(v.fecha)!,
       placa: v.placa,
       manifiesto: v.manifiesto ?? null,
+      remision: v.remision ?? null,
+      remisionUrl: v.remisionUrl ?? null,
+      facturaUrl: v.facturaUrl ?? null,
       cliente: v.cliente,
       concepto: v.concepto ?? null,
       pesoKg: v.pesoKg === null ? null : Number(v.pesoKg),

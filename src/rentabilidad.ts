@@ -377,6 +377,10 @@ export interface FilaRentabilidad extends AjustesRentabilidad, CalculoRentabilid
   tercero: string | null;
   empresa: string;
   remision: string | null;
+  /** Link (Drive) de la remision escaneada. */
+  remisionUrl: string | null;
+  /** Link (Drive) de la factura. */
+  facturaUrl: string | null;
   manifiesto: string | null;
   facturaNumero: string | null;
   facturaFecha: string | null;
@@ -553,6 +557,8 @@ export const rentabilidad = {
         tercero: t?.tercero ?? null,
         empresa: f.concepto ? `${f.empresa} (${f.concepto})` : f.empresa,
         remision: f.remision,
+        remisionUrl: f.remisionUrl,
+        facturaUrl: f.facturaUrl,
         manifiesto: f.manifiesto,
         facturaNumero: f.facturaNumero,
         facturaFecha: f.facturaFecha,

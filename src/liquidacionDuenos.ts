@@ -20,6 +20,10 @@ export interface FilaLiquidacionDueno {
   placa: string;
   empresa: string;
   remision: string | null;
+  /** Link (Drive) de la remision escaneada. */
+  remisionUrl: string | null;
+  /** Link (Drive) de la factura. */
+  facturaUrl: string | null;
   manifiesto: string | null;
   facturaNumero: string | null;
   facturaFecha: string | null;
@@ -68,6 +72,8 @@ export function fotoViaje(f: FilaRentabilidad): FilaLiquidacionDueno {
     placa: f.placa,
     empresa: f.empresa,
     remision: f.remision,
+    remisionUrl: f.remisionUrl,
+    facturaUrl: f.facturaUrl,
     manifiesto: f.manifiesto,
     facturaNumero: f.facturaNumero,
     facturaFecha: f.facturaFecha,

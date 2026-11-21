@@ -45,6 +45,8 @@ function fila(cambios: Partial<FilaCuadro> = {}): FilaCuadro {
     manifiesto: "00006775",
     remesa: "00006775",
     remision: null,
+    remisionUrl: null,
+    facturaUrl: null,
     pesoKg: 34_000,
     tipoFlete: "KILO" as const,
     tarifaKilo: 100,

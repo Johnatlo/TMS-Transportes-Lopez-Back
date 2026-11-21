@@ -1127,6 +1127,9 @@ export async function initSchema(): Promise<void> {
     ["creditos_cuotas", "valorPagado", "DECIMAL(15,2)"],
     // Tiempos pactados de cada remesa si se cambian al despachar (vacios = los de la plantilla).
     ["viaje_remesas", "horasPactoCargue", "INT"],
+    // Links (Drive) de la remision escaneada y de la factura de cada viaje del Cuadro pagos.
+    ["cuadro_viajes", "remisionUrl", "VARCHAR(500)"],
+    ["cuadro_viajes", "facturaUrl", "VARCHAR(500)"],
     // Gastos: forma (unico, diferido, recurrente), quincenal, proveedor y factura (numero y credito o debito), y el recurrente que lo genero.
     ["gastos", "forma", "VARCHAR(10) NOT NULL DEFAULT 'UNICO'"],
     ["gastos", "periodicidad", "VARCHAR(10) NOT NULL DEFAULT 'MENSUAL'"],

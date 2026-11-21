@@ -48,6 +48,9 @@ export interface ViajeCascada {
   vehiculoId: number;
   fecha: string;
   manifiesto: string | null;
+  /** Links (Drive) de la remision y de la factura (para consultarlos). */
+  remisionUrl?: string | null;
+  facturaUrl?: string | null;
   cliente: string;
   flete: number;
   retencion: number;
