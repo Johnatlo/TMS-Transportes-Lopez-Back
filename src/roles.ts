@@ -38,15 +38,21 @@ export type Area =
   | "REPARTO"
   /** Libro de gastos, creditos y nomina (M&C los ve todos; registra los de su empresa). */
   | "GASTOS"
+  /**
+   * Conductores: matriz de fletes conductor, cuentas de viaje, prestamos y
+   * liquidacion de los conductores. Solo acceso total y M&C (M&C solo los
+   * vehiculos de su flota).
+   */
+  | "CONDUCTORES"
   /** Configuracion de la empresa y la empresa de cada vehiculo. */
   | "ADMINISTRACION"
   /** Usuarios y sus roles. */
   | "USUARIOS";
 
 const AREAS: Record<Rol, Area[]> = {
-  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "ADMINISTRACION", "USUARIOS"],
+  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"],
   ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "ADMINISTRACION"],
-  MYC: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "ADMINISTRACION"],
+  MYC: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "CONDUCTORES", "ADMINISTRACION"],
 };
 
 /** El rol tiene acceso a esa area. */

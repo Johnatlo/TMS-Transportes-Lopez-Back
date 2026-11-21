@@ -69,6 +69,8 @@ export interface ViajeCascada {
   combustible?: number;
   efectivo?: number;
   transferencia?: number;
+  /** Tiene cuenta de viaje: su costo es lo gastado (gasto del libro) y no el anticipo. */
+  conCuenta?: boolean;
   /** Lo que se le liquida al dueno por el viaje. */
   saldoBeneficiario: number;
 }

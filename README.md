@@ -537,16 +537,18 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1003 funciones, componentes, métodos y rutas en 67 archivos._
+_1067 funciones, componentes, métodos y rutas en 72 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (36)
+- [`src/calculoConductores.ts`](#srccalculoconductorests) (9)
 - [`src/calculoNomina.ts`](#srccalculonominats) (9)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (9)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
+- [`src/conductores.ts`](#srcconductorests) (29)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/contingencia.ts`](#srccontingenciats) (9)
@@ -557,14 +559,16 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
 - [`src/facturacion.ts`](#srcfacturacionts) (11)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/flota.ts`](#srcflotats) (1)
-- [`src/gastos.ts`](#srcgastosts) (37)
+- [`src/gastos.ts`](#srcgastosts) (38)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
-- [`src/nomina.ts`](#srcnominats) (34)
+- [`src/nomina.ts`](#srcnominats) (35)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
 - [`src/prorrateo.ts`](#srcprorrateots) (12)
+- [`src/proteccion.ts`](#srcproteccionts) (3)
+- [`src/proteccionMeses.ts`](#srcproteccionmesests) (3)
 - [`src/reglasGastos.ts`](#srcreglasgastosts) (6)
 - [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
@@ -584,10 +588,11 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
 - [`src/roles.ts`](#srcrolests) (7)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
+- [`src/routes/conductores.ts`](#srcroutesconductorests) (17)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (50)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (26)
-- [`src/routes/nomina.ts`](#srcroutesnominats) (22)
+- [`src/routes/nomina.ts`](#srcroutesnominats) (23)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
@@ -1028,6 +1033,60 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
   - **`recuperaciones.borrarDe(usuarioId)`** · _método_
     Anula los codigos pendientes de un usuario (tras usarlos).
 
+### `src/calculoConductores.ts`
+
+> Cuentas de viaje y liquidacion de conductores, sin base de datos (se
+> prueba en calculoConductores.test.ts con las hojas de "cuentas de viaje" y
+> el cuadro SWK-973).
+>
+> - Producido conductor: lo que vale el viaje para el conductor, segun la
+>   matriz de fletes conductor (aparte de la de la empresa y mas baja): por
+>   tonelada (valor x toneladas reales) o fijo por viaje, con el valor vigente
+>   en la fecha del viaje. Sobre el sale el % del conductor (4 % salarial, que
+>   genera prestaciones, y 5 % de viaticos, que no).
+> - Cuenta de viaje (la hoja que llena el conductor): lo que recibio (anticipo
+>   de la bomba y transferencia) y lo que gasto por concepto. El saldo es
+>   gastos - recibido: positivo, la empresa le debe al conductor; negativo, el
+>   conductor debe (el "rojo" de la hoja).
+> - Prestamos al conductor: un monto con su saldo; cada mes se decide si se
+>   descuenta y cuanto.
+> - Liquidacion del mes: lo de la nomina (sueldo, % y aportes) + el saldo de
+>   las cuentas de viaje - lo que se descuenta de los prestamos.
+
+- **`c2(v)`** · _función_
+  Centavos exactos.
+
+- **`suma(xs)`** · _función_
+  Suma a centavos.
+
+- **`fleteConductorEn(fletes, tarifaFleteId, fecha)`** · _función_
+  El flete conductor vigente de una tarifa en una fecha (el ultimo que empezo antes o ese dia).
+
+- **`producidoConductor(viaje, fletes, manual)`** · _función_
+  Producido conductor de un viaje: el escrito a mano (si lo hay) o el de la
+  matriz (por tonelada: valor x toneladas reales; fijo: el valor). null si no
+  hay valor (sin tarifa en la matriz o sin peso).
+
+- **`totalGastos(g)`** · _función_
+  Total de los gastos de una cuenta de viaje.
+
+- **`saldoCuenta(gastos, recibido)`** · _función_
+  Saldo de una cuenta de viaje con el conductor: gastos - lo que recibio
+  (anticipo + transferencia). Positivo: la empresa le debe; negativo: el
+  conductor debe (el "rojo").
+
+- **`saldoPrestamo(monto, descuentos)`** · _función_
+  Saldo de un prestamo: el monto menos lo descontado.
+
+- **`liquidarConductor(e)`** · _función_
+  Liquidacion del conductor en el mes: el % sobre el producido conductor de
+  sus viajes (que la nomina paga con el sueldo), el saldo de sus cuentas de
+  viaje y lo que se descuenta de prestamos. El total a pagar es el neto de la
+  nomina + el saldo de las cuentas - los prestamos.
+
+- **`nombreComparable(t)`** · _función_
+  Texto comparable de un nombre de tarifa (sin tildes ni signos, en mayuscula).
+
 ### `src/calculoNomina.ts`
 
 > Calculo de una linea de nomina (empleado y empleador), sin base de datos
@@ -1218,6 +1277,128 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
   lista y el concepto es lo que sobra del nombre ("URBANO", "RECONOCIDO",
   "CARTON"). Si no, el cliente es la misma empresa. `concepto` (el de un
   reconocido del cuadro) se usa si el nombre no trae uno.
+
+### `src/conductores.ts`
+
+> Modulo Cuentas vehiculos: matriz de fletes conductor, cuentas de viaje, prestamos
+> y liquidacion de los conductores (el calculo esta en calculoConductores.ts).
+> Solo lo ven el rol total y M&C; M&C solo los vehiculos de su flota.
+>
+> - Matriz de fletes conductor: un valor por tarifa de la matriz de fletes de
+>   la empresa (la misma tarifa con que se cobra el viaje), por tonelada o
+>   fijo, con su vigencia. Se ve solo en este modulo.
+> - Producido conductor de cada viaje de la flota propia: el de la matriz, o
+>   el escrito a mano en su cuenta de viaje. Es lo que la nomina usa como
+>   producido del conductor (4 % salarial y 5 % de viaticos).
+> - Cuenta de viaje: la hoja de gastos del conductor. El ACPM sale del
+>   combustible de los anticipos del viaje (se puede corregir). Al guardarla,
+>   sus gastos quedan en el libro de gastos como un gasto del vehiculo
+>   (categoria VEHICULO, origen CUENTA_VIAJE) en la fecha del viaje; en
+>   Utilidades ese viaje cuenta lo gastado y no el anticipo.
+> - Prestamos: monto, cuota sugerida y lo descontado cada mes (se decide mes
+>   a mes; se ve y se cambia igual aqui y en la nomina).
+> - Liquidacion del mes: neto de la nomina + saldo de las cuentas de viaje -
+>   prestamos descontados. Se marca pagada con su fecha.
+
+- **`c2(v)`** · _función_
+  Centavos exactos.
+
+- **`num(v)`** · _función_
+  Numero de la base (null si no hay).
+
+- **`mesDe(v)`** · _función_
+  Mes "AAAA-MM" valido.
+
+- **`pesos(v, campo)`** · _función_
+  Valor en pesos >= 0 (vacio = null).
+
+- **`viajesEntre(desde, hasta, empresa)`** · _función_
+  Los viajes de la flota propia (no anulados, sin reconocidos) entre dos fechas, con su cuenta.
+
+- **`fletesConductor()`** · _función_
+  Toda la matriz de fletes conductor.
+
+- **`exigirFleteLibre(tarifaFleteId, desde, accion)`** · _función_
+  Un valor de la matriz de fletes conductor desde `desde` (nuevo, corregido o
+  borrado) no puede cambiar el producido de viajes de meses congelados
+  (cerrados, con nomina aprobada o liquidacion pagada). Llenar un tramo que no
+  tenia valor si se deja (no cambia nada ya calculado con la matriz).
+
+- **`exigirSinPagar(empleadoId, mes, que)`** · _función_
+  La liquidacion de ese conductor en ese mes no esta pagada (si lo esta, hay que quitar el pago para cambiar algo).
+
+- **`exigirSinNominaAprobada(mes)`** · _función_
+  El producido conductor de un mes con nomina aprobada no se cambia (reabre la nomina primero).
+
+- **`mesProducido(n)`** · _función_
+  Mes del producido de una nomina (el de su producidoDesde).
+
+- **`conductores`** · _módulo_
+  Repositorio del modulo Cuentas vehiculos.
+
+  - **`conductores.fletes()`** · _método_
+    La matriz: cada tarifa de la empresa con su flete conductor vigente y su historial.
+
+  - **`conductores.guardarFlete(d, usuarioId)`** · _método_
+    Guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }).
+
+  - **`conductores.borrarFlete(id)`** · _método_
+    Borra un valor de la matriz (no si cambiaria meses congelados).
+
+  - **`conductores.importarFletes(filas, aplicar, usuarioId)`** · _método_
+    Importa la matriz desde el Excel (filas { nombre, valor, tipo, desde }):
+    cada nombre se busca entre las tarifas de la empresa (sin tildes ni
+    signos). Con aplicar = false solo dice cuales encontro; con true las guarda.
+
+  - **`conductores.viajes(mes, empresa)`** · _método_
+    Los viajes de la flota propia de un mes con su producido conductor y su cuenta de viaje.
+
+  - **`conductores.producidoEntre(desde, hasta)`** · _método_
+    Producido conductor por viaje entre dos fechas (lo usa la nomina).
+
+  - **`conductores.guardarCuenta(cuadroViajeId, d, usuarioId, empresa)`** · _método_
+    Guarda la cuenta de viaje de un viaje (los conceptos, el ACPM vacio = el
+    combustible de los anticipos, el producido conductor a mano o vacio = el
+    de la matriz, la nota) y deja su gasto en el libro de gastos.
+
+  - **`conductores.sincronizarGasto(cuadroViajeId, usuarioId)`** · _método_
+    Deja el gasto del libro igual a la cuenta de viaje: lo borra y lo vuelve a
+    crear con el total (si es mayor que cero), en la fecha del viaje y al
+    vehiculo. Si el mes esta cerrado, no deja cambiarla.
+
+  - **`conductores.borrarCuenta(cuadroViajeId, empresa)`** · _método_
+    Borra la cuenta de viaje de un viaje y su gasto del libro.
+
+  - **`conductores.prestamos(empresa, empleadoId)`** · _método_
+    Prestamos (de una empresa o de las dos) con su saldo y lo descontado por mes.
+
+  - **`conductores.guardarPrestamo(d, usuarioId, empresa, id)`** · _método_
+    Registra o cambia un prestamo ({ empleadoId, fecha, monto, cuota?, nota? }).
+
+  - **`conductores.borrarPrestamo(id, empresa)`** · _método_
+    Borra un prestamo (con lo descontado).
+
+  - **`conductores.descontar(prestamoId, d, usuarioId, empresa)`** · _método_
+    Lo que se descuenta de un prestamo en un mes ({ mes, valor }): valor vacio
+    o 0 = ese mes no se descuenta. No puede pasar del saldo. Es el mismo dato
+    en la nomina y en la liquidacion del conductor.
+
+  - **`conductores.descuentosDelMes(mes)`** · _método_
+    Lo que se descuenta de prestamos a cada empleado en un mes.
+
+  - **`conductores.saldosEntre(desde, hasta)`** · _método_
+    Saldo de las cuentas de viaje de cada conductor entre dos fechas (lo que se le debe o debe).
+
+  - **`conductores.liquidacion(mes, empresa)`** · _método_
+    Liquidacion de cada conductor en el mes (el mes del producido): sus viajes
+    con producido conductor y cuenta de viaje, la nomina que cubre ese mes
+    (sueldo, % y aportes), los prestamos y si ya se le pago.
+
+  - **`conductores.pagar(empleadoId, mes, d, usuarioId, empresa)`** · _método_
+    Marca pagada la liquidacion de un conductor en un mes ({ fechaPago }), con su total de ese momento.
+
+  - **`conductores.quitarPago(empleadoId, mes, empresa)`** · _método_
+    Quita la marca de pagada.
 
 ### `src/config.ts`
 
@@ -1695,12 +1876,17 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
   Matriz de fletes y envio a facturacion: lectura y escritura en la base.
 
   - **`facturacion.tarifas()`** · _método_
-    La matriz de fletes, por nombre.
+    La matriz de fletes, por nombre (sin las retiradas).
 
   - **`facturacion.reemplazarTarifas(lista)`** · _método_
-    Reemplaza la matriz completa por la importada (en una transaccion: si algo
-    falla queda la anterior). Los viajes que apuntaban a tarifas viejas
-    conservan su valor; solo pierden el enlace a la tarifa.
+    Deja la matriz igual a la importada (en una transaccion: si algo falla
+    queda la anterior), sin romper lo que cuelga de ella: cada tarifa se busca
+    por su nombre y se actualiza en su lugar (conserva su id, asi los viajes
+    siguen enlazados y la matriz de fletes conductor sigue colgando de ella);
+    las nuevas se agregan. Las que ya no vienen se borran si ningun viaje ni
+    la matriz de fletes conductor las usa; si las usan, quedan retiradas (no
+    salen en la matriz ni en la deduccion, pero el historial no se pierde).
+    Los viajes conservan su valor: cada uno guarda su copia del flete.
 
   - **`facturacion.crearTarifa(datos)`** · _método_
     Agrega una tarifa a la matriz sin importar el Excel, y la devuelve.
@@ -1887,6 +2073,9 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
   - **`gastos.borrarDeNomina(nominaId)`** · _método_
     Borra los gastos que genero una nomina (al reabrirla). Sus meses deben estar abiertos.
 
+  - **`gastos.borrarDeCuenta(cuentaViajeId)`** · _método_
+    Borra el gasto de una cuenta de viaje (sus meses deben estar abiertos).
+
   - **`gastos.cerrarMes(d, usuarioId)`** · _método_
     Cierra o abre un mes ("AAAA-MM"): con el mes cerrado sus gastos no cambian.
 
@@ -2070,9 +2259,14 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
 >   La nomina usa los del ano en que termina.
 > - Nomina: un periodo (desde/hasta, variable) con una linea por empleado
 >   (dias, producido, vehiculo, ajuste con nota). El producido de cada
->   conductor sale de los viajes del cuadro (flete de los vehiculos que
->   manejaba en el mes del producido, por defecto el mes calendario en que
->   empieza la nomina); se puede escribir a mano y volver al del sistema.
+>   conductor es su PRODUCIDO CONDUCTOR (modulo Cuentas vehiculos: la matriz de
+>   fletes conductor, no el flete de la empresa) de los viajes de los
+>   vehiculos que manejaba en el mes del producido (por defecto el mes
+>   calendario en que empieza la nomina); se puede escribir a mano y volver
+>   al del sistema. Sobre el van el % salarial (genera prestaciones) y el de
+>   viaticos (no). Cada linea muestra tambien el saldo de sus cuentas de
+>   viaje, lo que se descuenta de sus prestamos ese mes (el mismo dato que en
+>   Conductores) y el total a pagar.
 >   Si manejo varios carros, su costo se reparte entre ellos: lo que sale del
 >   producido segun lo que produjo en cada uno y el resto por los dias que
 >   tuvo cada uno. Mientras es borrador se
@@ -2175,11 +2369,16 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
   - **`nomina.reabrir(nominaId)`** · _método_
     Reabre una nomina aprobada: borra sus gastos (sus meses deben estar abiertos).
 
+- **`extrasDe(e, calculo, x, prestamos)`** · _función_
+  Cuentas de viaje, prestamos del mes y total a pagar de una linea.
+
 - **`periodoProducido(n)`** · _función_
   Periodo del producido de una nomina (fila de la base); si no tiene, el mes en que empieza.
 
 - **`viajesDelCuadro(desde, hasta)`** · _función_
-  Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su flete (null = sin tarifa).
+  Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su
+  PRODUCIDO CONDUCTOR como flete (matriz de fletes conductor o el escrito a
+  mano en su cuenta de viaje; null = sin valor, no suma).
 
 - **`destinosConductor(l, e, desde, hasta)`** · _función_
   A quien va el costo de un conductor: si manejo varios carros en el periodo,
@@ -2336,6 +2535,50 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
 
 - **`gmfDe(centavos, porMil)`** · _función_
   El 4 x 1000 (o lo que se ponga por mil) de un pago, en centavos redondeados al peso.
+
+### `src/proteccion.ts`
+
+> Meses congelados: los que ya se cerraron o se pagaron, y que una matriz no
+> puede cambiar hacia atras (las reglas, sin base de datos, en proteccionMeses.ts).
+>
+> - Cerrados en Gastos (periodos_cierre) o con el reparto de utilidades
+>   aprobado (repartos_utilidades): congelan las matrices de Rentabilidad
+>   (comisiones y ReteICA por cliente).
+> - Ademas, para la matriz de fletes conductor: los meses del producido de
+>   una nomina aprobada y los meses con alguna liquidacion de conductor
+>   pagada.
+>
+> Un cambio de una matriz que rija desde una fecha no puede tocar viajes de un
+> mes congelado: el valor nuevo debe empezar despues del ultimo de esos meses.
+
+- **`mesesCerrados()`** · _función_
+  Meses ("AAAA-MM") cerrados en Gastos o con el reparto de utilidades aprobado.
+
+- **`mesesCongeladosConductores()`** · _función_
+  Meses congelados para el producido conductor: cerrados + nomina aprobada (mes de su producido) + liquidacion pagada.
+
+- **`exigirVigenciaLibre(desde, que)`** · _función_
+  Una matriz de Rentabilidad no puede regir desde una fecha que caiga en un
+  mes cerrado o con el reparto aprobado (ni antes de uno): cambiaria cuentas
+  ya cerradas.
+
+### `src/proteccionMeses.ts`
+
+> Reglas de los meses congelados, sin base de datos (se prueban en
+> proteccionMeses.test.ts). Ver proteccion.ts.
+
+- **`primeroDelSiguiente(mes)`** · _función_
+  "2026-10" -> "2026-11-01".
+
+- **`primerDiaLibre(congelados, desde)`** · _función_
+  Si un valor que rige desde `desde` tocaria un mes congelado (ese mes o uno
+  posterior), el primer dia desde el que si podria regir (el 1 del mes
+  siguiente al ultimo congelado); null si no toca ninguno.
+
+- **`mesesTocados(fechasViajes, desde, hasta, congelados)`** · _función_
+  Los meses congelados que tocaria cambiar un valor de la matriz de fletes
+  conductor: los de los viajes (fechas) de esa tarifa que caen en el tramo en
+  que rige el valor (desde `desde` hasta antes de `hasta`, o sin fin).
 
 ### `src/reglasGastos.ts`
 
@@ -2527,7 +2770,8 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
     reteicaPorMil, ciudad }] }). No borra lo anterior: agrega una fila por
     cliente nuevo o cambiado, y marca como quitados los que ya no estan, todo
     desde esa fecha (hoy si no se da). Los viajes de antes conservan sus
-    valores. Las filas sin cliente se ignoran. En una transaccion.
+    valores. Las filas sin cliente se ignoran. En una transaccion. No puede
+    regir desde un mes cerrado en Gastos o con el reparto aprobado (ni antes).
 
 ### `src/repo.ts`
 
@@ -4181,6 +4425,63 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
 - **`GET /perfiles-vehiculos/:placa`** · _ruta HTTP_
   GET /api/catalogo/perfiles-vehiculos/:placa: perfil de un vehiculo (404 si es de un tercero o no existe).
 
+### `src/routes/conductores.ts`
+
+> Rutas del modulo Cuentas vehiculos (/api/conductores): matriz de fletes conductor,
+> cuentas de viaje, prestamos y liquidacion de los conductores (ver
+> src/conductores.ts). Solo el rol total y M&C; M&C solo su flota.
+
+- **`empresaDe(req)`** · _función_
+  M&C solo ve y cambia lo de su flota.
+
+- **`usuario(req)`** · _función_
+  Id del usuario de la sesion.
+
+- **`GET /fletes`** · _ruta HTTP_
+  GET /api/conductores/fletes: la matriz de fletes conductor (cada tarifa de la empresa con su valor e historial).
+
+- **`PUT /fletes`** · _ruta HTTP_
+  PUT /api/conductores/fletes: guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }).
+
+- **`DELETE /fletes/:id`** · _ruta HTTP_
+  DELETE /api/conductores/fletes/:id: borra un valor de la matriz.
+
+- **`POST /fletes/importar`** · _ruta HTTP_
+  POST /api/conductores/fletes/importar: importa la matriz del Excel ({ filas, aplicar }); sin aplicar solo dice cuales encontro.
+
+- **`GET /viajes`** · _ruta HTTP_
+  GET /api/conductores/viajes?mes=AAAA-MM: viajes de la flota propia con su producido conductor y su cuenta de viaje.
+
+- **`PUT /viajes/:id/cuenta`** · _ruta HTTP_
+  PUT /api/conductores/viajes/:id/cuenta: guarda la cuenta de viaje (conceptos, ACPM, producido a mano, nota).
+
+- **`DELETE /viajes/:id/cuenta`** · _ruta HTTP_
+  DELETE /api/conductores/viajes/:id/cuenta: borra la cuenta de viaje y su gasto del libro.
+
+- **`GET /prestamos`** · _ruta HTTP_
+  GET /api/conductores/prestamos: prestamos con su saldo y lo descontado por mes.
+
+- **`POST /prestamos`** · _ruta HTTP_
+  POST /api/conductores/prestamos: registra un prestamo ({ empleadoId, fecha, monto, cuota?, nota? }).
+
+- **`PUT /prestamos/:id`** · _ruta HTTP_
+  PUT /api/conductores/prestamos/:id: cambia un prestamo.
+
+- **`DELETE /prestamos/:id`** · _ruta HTTP_
+  DELETE /api/conductores/prestamos/:id: borra un prestamo.
+
+- **`PUT /prestamos/:id/descuento`** · _ruta HTTP_
+  PUT /api/conductores/prestamos/:id/descuento: lo que se descuenta en un mes ({ mes, valor }; vacio = no se descuenta).
+
+- **`GET /liquidacion`** · _ruta HTTP_
+  GET /api/conductores/liquidacion?mes=AAAA-MM: liquidacion de cada conductor en el mes.
+
+- **`PUT /liquidacion/:empleadoId/:mes/pago`** · _ruta HTTP_
+  PUT /api/conductores/liquidacion/:empleadoId/:mes/pago: marca pagada la liquidacion ({ fechaPago }).
+
+- **`DELETE /liquidacion/:empleadoId/:mes/pago`** · _ruta HTTP_
+  DELETE /api/conductores/liquidacion/:empleadoId/:mes/pago: quita la marca de pagada.
+
 ### `src/routes/cuadro.ts`
 
 - **`responder(res, fn)`** · _función_
@@ -4832,6 +5133,11 @@ _1003 funciones, componentes, métodos y rutas en 67 archivos._
 
 - **`GET /:id(\d+)/lineas/:linea/viajes`** · _ruta HTTP_
   GET /api/nomina/:id/lineas/:linea/viajes: los viajes del sistema que suman el producido de la linea.
+
+- **`PUT /prestamos/:id/descuento`** · _ruta HTTP_
+  PUT /api/nomina/prestamos/:id/descuento: lo que se descuenta de un prestamo
+  en un mes ({ mes, valor }; vacio = no se descuenta). Es el mismo dato que en
+  Cuentas vehiculos > Liquidacion.
 
 ### `src/routes/preoperacional.ts`
 

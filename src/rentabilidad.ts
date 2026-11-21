@@ -27,6 +27,7 @@ import { cuadro, dia, ErrorCuadro, hoyColombia } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 import { icaSugerido, terceros } from "./terceros";
 import { cambiosDeMatriz, fechaVigencia, vigentesEn } from "./vigencias";
+import { exigirVigenciaLibre } from "./proteccion";
 import type { FilaVigente } from "./vigencias";
 
 /** Retefuente 1 % + FOPAT 0,1 % (el FOPAT se suma desde que se genera el manifiesto). */
@@ -607,10 +608,13 @@ export const rentabilidad = {
    * reteicaPorMil, ciudad }] }). No borra lo anterior: agrega una fila por
    * cliente nuevo o cambiado, y marca como quitados los que ya no estan, todo
    * desde esa fecha (hoy si no se da). Los viajes de antes conservan sus
-   * valores. Las filas sin cliente se ignoran. En una transaccion.
+   * valores. Las filas sin cliente se ignoran. En una transaccion. No puede
+   * regir desde un mes cerrado en Gastos o con el reparto aprobado (ni antes).
    */
   async guardarMatrices(d: Record<string, unknown>) {
     const desde = fechaVigencia(d.vigenteDesde) ?? hoyColombia();
+    // No puede regir desde un mes ya cerrado en Gastos o con el reparto aprobado: cambiaria cuentas cerradas.
+    await exigirVigenciaLibre(desde, "La matriz de comisiones y retenciones");
     const lista = (x: unknown) => (Array.isArray(x) ? (x as Record<string, unknown>[]) : null);
     const comisiones = lista(d.comisiones);
     const retenciones = lista(d.retenciones);

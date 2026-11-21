@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 import { responder } from "./cuadro";
 import { ErrorCuadro } from "../cuadro";
 import { nomina } from "../nomina";
+import { conductores } from "../conductores";
 import { rolDePeticion } from "../accesos";
 import type { EmpresaVehiculo } from "../roles";
 
@@ -198,5 +199,17 @@ nominaRouter.get("/:id(\\d+)/lineas/:linea/viajes", async (req, res) => {
     const linea = Number(req.params.linea);
     await exigirLinea(req, linea);
     return nomina.viajesDeLinea(Number(req.params.id), linea);
+  });
+});
+
+/**
+ * PUT /api/nomina/prestamos/:id/descuento: lo que se descuenta de un prestamo
+ * en un mes ({ mes, valor }; vacio = no se descuenta). Es el mismo dato que en
+ * Cuentas vehiculos > Liquidacion.
+ */
+nominaRouter.put("/prestamos/:id/descuento", async (req, res) => {
+  await responder(res, async () => {
+    await conductores.descontar(Number(req.params.id), req.body ?? {}, req.usuario?.id ?? null, empresaDe(req));
+    return { ok: true };
   });
 });

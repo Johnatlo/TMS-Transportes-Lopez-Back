@@ -225,6 +225,10 @@ export const utilidades = {
     );
     const porPlaca = new Map(flota.map((v) => [placaClave(v.placa), v.id as number]));
     const filasRent = await rentabilidad.listar();
+    // Viajes con cuenta de viaje (modulo Cuentas vehiculos): su costo es lo gastado, que llega por el libro de gastos
+    // como gasto directo del vehiculo; su anticipo ya no se cuenta (seria contar dos veces la plata del viaje).
+    const [conCuenta] = await pool.query<RowDataPacket[]>("SELECT cuadroViajeId FROM cuentas_viaje WHERE gastoId IS NOT NULL");
+    const viajesConCuenta = new Set(conCuenta.map((c) => c.cuadroViajeId as number));
     // 1 y 2 (y los anticipos del 3): los viajes de Rentabilidad de la flota propia en el mes.
     const viajes: ViajeCascada[] = filasRent
       .filter((f) => f.fecha >= desde && f.fecha <= hasta && porPlaca.has(placaClave(f.placa)))
@@ -247,10 +251,11 @@ export const utilidades = {
         descargue: f.descargue,
         poliza: f.poliza,
         otrosDescuentos: f.otrosDescuentos,
-        anticipo: f.anticipo,
-        combustible: f.combustible,
-        efectivo: f.efectivo,
-        transferencia: f.transferencia,
+        anticipo: viajesConCuenta.has(f.id) ? 0 : f.anticipo,
+        combustible: viajesConCuenta.has(f.id) ? 0 : f.combustible,
+        efectivo: viajesConCuenta.has(f.id) ? 0 : f.efectivo,
+        transferencia: viajesConCuenta.has(f.id) ? 0 : f.transferencia,
+        conCuenta: viajesConCuenta.has(f.id),
         saldoBeneficiario: f.saldoBeneficiario,
       }));
     // Lo que se le pago al dueno por los viajes en el mes (por la fecha de pago, sea cual sea la del viaje).

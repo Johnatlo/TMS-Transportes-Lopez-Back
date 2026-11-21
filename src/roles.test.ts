@@ -3,10 +3,11 @@ import { correosSiempreTotal, placaClave, puede, rolDe, veCuentasDe, veRentabili
 
 describe("roles", () => {
   test("cada rol entra a sus areas", () => {
-    const todas = ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "ADMINISTRACION", "USUARIOS"];
+    const todas = ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"];
     expect(todas.every((a) => puede("TOTAL", a as never))).toBe(true);
     // Administrativas: todo menos el reparto de los socios y el cambio de roles (17/11/2026).
-    expect(todas.filter((a) => !puede("ADMINISTRATIVO", a as never))).toEqual(["REPARTO", "USUARIOS"]);
+    // Y el modulo de conductores (cuentas de viaje y liquidacion): solo total y M&C (21/11/2026).
+    expect(todas.filter((a) => !puede("ADMINISTRATIVO", a as never))).toEqual(["REPARTO", "CONDUCTORES", "USUARIOS"]);
     // M&C: todo menos el cambio de roles (la rentabilidad de terceros se filtra por vehiculo).
     expect(todas.filter((a) => !puede("MYC", a as never))).toEqual(["USUARIOS"]);
     expect([veRentabilidadTerceros("TOTAL"), veRentabilidadTerceros("ADMINISTRATIVO"), veRentabilidadTerceros("MYC")]).toEqual([true, true, false]);

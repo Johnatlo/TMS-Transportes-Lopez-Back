@@ -86,16 +86,21 @@ export type FilaPorFacturar = FilaCuadro & {
 
 /** Matriz de fletes y envio a facturacion: lectura y escritura en la base. */
 export const facturacion = {
-  /** La matriz de fletes, por nombre. */
+  /** La matriz de fletes, por nombre (sin las retiradas). */
   async tarifas(): Promise<TarifaFlete[]> {
-    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM tarifas_flete ORDER BY nombre, id");
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM tarifas_flete WHERE retirada = 0 ORDER BY nombre, id");
     return rows.map(mapearTarifa);
   },
 
   /**
-   * Reemplaza la matriz completa por la importada (en una transaccion: si algo
-   * falla queda la anterior). Los viajes que apuntaban a tarifas viejas
-   * conservan su valor; solo pierden el enlace a la tarifa.
+   * Deja la matriz igual a la importada (en una transaccion: si algo falla
+   * queda la anterior), sin romper lo que cuelga de ella: cada tarifa se busca
+   * por su nombre y se actualiza en su lugar (conserva su id, asi los viajes
+   * siguen enlazados y la matriz de fletes conductor sigue colgando de ella);
+   * las nuevas se agregan. Las que ya no vienen se borran si ningun viaje ni
+   * la matriz de fletes conductor las usa; si las usan, quedan retiradas (no
+   * salen en la matriz ni en la deduccion, pero el historial no se pierde).
+   * Los viajes conservan su valor: cada uno guarda su copia del flete.
    */
   async reemplazarTarifas(lista: Record<string, unknown>[]): Promise<number> {
     if (!Array.isArray(lista) || lista.length === 0) throw new ErrorCuadro("La matriz importada no trae tarifas.");
@@ -106,12 +111,42 @@ export const facturacion = {
       // El Excel no trae la marca de urbano: se conserva la de la tarifa del mismo nombre.
       const [urbanas] = await conexion.query<RowDataPacket[]>("SELECT nombre FROM tarifas_flete WHERE urbano = 1");
       const nombresUrbanos = new Set(urbanas.map((u) => String(u.nombre)));
-      await conexion.query("UPDATE cuadro_viajes SET tarifaFleteId = NULL WHERE tarifaFleteId IS NOT NULL");
-      await conexion.query("DELETE FROM tarifas_flete");
-      await conexion.query(
-        "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones, urbano) VALUES ?",
-        [tarifas.map((t) => [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano || nombresUrbanos.has(t.nombre)])]
-      );
+      const [existentes] = await conexion.query<RowDataPacket[]>("SELECT id, nombre FROM tarifas_flete ORDER BY id");
+      // Por nombre: si un nombre se repite (dos rutas del mismo cliente), la primera del Excel va con la primera de la base, y asi.
+      const porNombre = new Map<string, number[]>();
+      for (const e of existentes) porNombre.set(String(e.nombre), [...(porNombre.get(String(e.nombre)) ?? []), e.id as number]);
+      const usadas = new Set<number>();
+      for (const t of tarifas) {
+        const valores = [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano || nombresUrbanos.has(t.nombre)];
+        const id = porNombre.get(t.nombre)?.shift();
+        if (id) {
+          await conexion.query(
+            "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, pesoFijoKg = ?, observaciones = ?, urbano = ?, retirada = 0 WHERE id = ?",
+            [...valores, id]
+          );
+          usadas.add(id);
+        } else {
+          const [res] = await conexion.query<ResultSetHeader>(
+            "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones, urbano) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            valores
+          );
+          usadas.add(res.insertId);
+        }
+      }
+      // Las que ya no vienen: fuera si nadie las usa; retiradas si las usan viajes o la matriz de fletes conductor.
+      const sobran = existentes.map((e) => e.id as number).filter((id) => !usadas.has(id));
+      if (sobran.length) {
+        const [enUso] = await conexion.query<RowDataPacket[]>(
+          `SELECT DISTINCT tarifaFleteId AS id FROM cuadro_viajes WHERE tarifaFleteId IN (?)
+           UNION SELECT DISTINCT tarifaFleteId FROM fletes_conductor WHERE tarifaFleteId IN (?)`,
+          [sobran, sobran]
+        );
+        const usadasPorOtros = new Set(enUso.map((u) => u.id as number));
+        const borrar = sobran.filter((id) => !usadasPorOtros.has(id));
+        const retirar = sobran.filter((id) => usadasPorOtros.has(id));
+        if (borrar.length) await conexion.query("DELETE FROM tarifas_flete WHERE id IN (?)", [borrar]);
+        if (retirar.length) await conexion.query("UPDATE tarifas_flete SET retirada = 1 WHERE id IN (?)", [retirar]);
+      }
       await conexion.commit();
     } catch (exc) {
       await conexion.rollback();

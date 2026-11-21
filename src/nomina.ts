@@ -11,9 +11,14 @@
  *   La nomina usa los del ano en que termina.
  * - Nomina: un periodo (desde/hasta, variable) con una linea por empleado
  *   (dias, producido, vehiculo, ajuste con nota). El producido de cada
- *   conductor sale de los viajes del cuadro (flete de los vehiculos que
- *   manejaba en el mes del producido, por defecto el mes calendario en que
- *   empieza la nomina); se puede escribir a mano y volver al del sistema.
+ *   conductor es su PRODUCIDO CONDUCTOR (modulo Cuentas vehiculos: la matriz de
+ *   fletes conductor, no el flete de la empresa) de los viajes de los
+ *   vehiculos que manejaba en el mes del producido (por defecto el mes
+ *   calendario en que empieza la nomina); se puede escribir a mano y volver
+ *   al del sistema. Sobre el van el % salarial (genera prestaciones) y el de
+ *   viaticos (no). Cada linea muestra tambien el saldo de sus cuentas de
+ *   viaje, lo que se descuenta de sus prestamos ese mes (el mismo dato que en
+ *   Conductores) y el total a pagar.
  *   Si manejo varios carros, su costo se reparte entre ellos: lo que sale del
  *   producido segun lo que produjo en cada uno y el resto por los dias que
  *   tuvo cada uno. Mientras es borrador se
@@ -28,6 +33,7 @@ import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
 import { calcularLinea, diasPeriodo, diasPorVehiculo, mesDe, pesosConductor, producidoPorConductor } from "./calculoNomina";
 import type { CalculoLinea, EntradaLinea, ParametrosNomina, ProducidoConductor, ViajeProducido } from "./calculoNomina";
 import { gastos, EMPRESAS } from "./gastos";
+import { conductores } from "./conductores";
 import type { Destino } from "./prorrateo";
 import type { EmpresaVehiculo } from "./roles";
 
@@ -85,6 +91,12 @@ export interface LineaNomina {
   gastoId: number | null;
   /** Por que no se puede aprobar (falta vehiculo, destinos o nota). */
   problema: string | null;
+  /** Conductor: saldo de sus cuentas de viaje del mes del producido (positivo: se le debe) y viajes sin cuenta. */
+  cuentasViaje: { saldo: number; sinCuenta: number } | null;
+  /** Prestamos con saldo o con descuento en el mes del producido. */
+  prestamos: Array<{ prestamoId: number; fecha: string; monto: number; saldo: number; cuota: number | null; descuento: number | null }>;
+  /** Neto + saldo de las cuentas de viaje - prestamos descontados. */
+  totalAPagar: number;
 }
 
 /** Una nomina con sus lineas y totales. */
@@ -395,6 +407,13 @@ export const nomina = {
       const { desde, hasta } = periodoProducido(n);
       producidos.set(n.id, producidoPorConductor(await viajesDelCuadro(desde, hasta), asignaciones));
     }
+    // Cuentas de viaje y prestamos del mes del producido de cada nomina (modulo Cuentas vehiculos).
+    const todosPrestamos = await conductores.prestamos(null);
+    const extras = new Map<number, { saldos: Map<number, { saldo: number; sinCuenta: number }>; mes: string }>();
+    for (const n of filas) {
+      const { desde, hasta } = periodoProducido(n);
+      extras.set(n.id, { saldos: await conductores.saldosEntre(desde, hasta), mes: desde.slice(0, 7) });
+    }
     return filas.map((n) => {
       const hasta = dia(n.hasta)!;
       const anio = Number(hasta.slice(0, 4));
@@ -438,6 +457,7 @@ export const nomina = {
           calculo: calculo ?? calcularLinea(entrada, { ...VACIOS, anio }),
           gastoId: l.gastoId ?? null,
           problema: aprobada ? null : problema,
+          ...extrasDe(e, calculo ?? calcularLinea(entrada, { ...VACIOS, anio }), extras.get(n.id)!, todosPrestamos),
         });
       }
       const suma = (k: keyof CalculoLinea) => Math.round(propias.reduce((s, l) => s + l.calculo[k], 0) * 100) / 100;
@@ -553,6 +573,7 @@ export const nomina = {
       ids = producidoPorConductor(await viajesDelCuadro(n.producidoDesde, n.producidoHasta), asignaciones).get(l.empleadoId)?.viajes ?? [];
     }
     if (!ids.length) return [];
+    const producido = await conductores.producidoEntre(n.producidoDesde, n.producidoHasta);
     const [viajes] = await pool.query<RowDataPacket[]>(
       `SELECT c.id, c.fecha, c.placa, c.manifiesto, c.remision, c.remisionUrl, c.facturaUrl, c.empresa AS cliente, c.concepto, c.pesoKg, c.tipoFlete, c.tarifaKilo, c.valorFijo,
               IF(c.tipoFlete = 'FIJO', c.valorFijo, c.pesoKg * c.tarifaKilo) AS flete
@@ -572,7 +593,10 @@ export const nomina = {
       pesoKg: v.pesoKg === null ? null : Number(v.pesoKg),
       tipoFlete: v.tipoFlete,
       tarifaKilo: v.tarifaKilo === null ? null : Number(v.tarifaKilo),
-      flete: v.flete === null ? null : Math.round(Number(v.flete) * 100) / 100,
+      /** Flete de la empresa (referencia). */
+      fleteEmpresa: v.flete === null ? null : Math.round(Number(v.flete) * 100) / 100,
+      /** Producido conductor: lo que suma al producido de la nomina. */
+      flete: producido.get(v.id) ?? null,
     }));
   },
 
@@ -681,23 +705,48 @@ export const nomina = {
   },
 };
 
+/** Cuentas de viaje, prestamos del mes y total a pagar de una linea. */
+function extrasDe(
+  e: Empleado,
+  calculo: CalculoLinea,
+  x: { saldos: Map<number, { saldo: number; sinCuenta: number }>; mes: string },
+  prestamos: Awaited<ReturnType<typeof conductores.prestamos>>,
+): Pick<LineaNomina, "cuentasViaje" | "prestamos" | "totalAPagar"> {
+  const cuentasViaje = e.tipo === "CONDUCTOR" ? (x.saldos.get(e.id) ?? { saldo: 0, sinCuenta: 0 }) : null;
+  const suyos = prestamos
+    .filter((p) => p.empleadoId === e.id)
+    .map((p) => ({ prestamoId: p.id, fecha: p.fecha, monto: p.monto, saldo: p.saldo, cuota: p.cuota, descuento: p.descuentos.find((d) => d.mes === x.mes)?.valor ?? null }))
+    .filter((p) => p.saldo > 0 || p.descuento !== null);
+  const descontado = suyos.reduce((s, p) => s + (p.descuento ?? 0), 0);
+  return {
+    cuentasViaje,
+    prestamos: suyos,
+    totalAPagar: Math.round((calculo.neto + (cuentasViaje?.saldo ?? 0) - descontado) * 100) / 100,
+  };
+}
+
 /** Periodo del producido de una nomina (fila de la base); si no tiene, el mes en que empieza. */
 function periodoProducido(n: RowDataPacket): { desde: string; hasta: string } {
   const mes = mesDe(dia(n.desde)!);
   return { desde: dia(n.producidoDesde) ?? mes.desde, hasta: dia(n.producidoHasta) ?? mes.hasta };
 }
 
-/** Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su flete (null = sin tarifa). */
+/**
+ * Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su
+ * PRODUCIDO CONDUCTOR como flete (matriz de fletes conductor o el escrito a
+ * mano en su cuenta de viaje; null = sin valor, no suma).
+ */
 async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProducido[]> {
   const [filas] = await pool.query<RowDataPacket[]>(
-    `SELECT c.id, c.fecha, COALESCE(c.vehiculoId, v.id) AS vehiculoId, IF(c.tipoFlete = 'FIJO', c.valorFijo, c.pesoKg * c.tarifaKilo) AS flete
+    `SELECT c.id, c.fecha, COALESCE(c.vehiculoId, v.id) AS vehiculoId
        FROM cuadro_viajes c LEFT JOIN vehiculos v ON v.placa = c.placa AND v.eliminado = 0
-      WHERE c.anulado = 0 AND c.fecha BETWEEN ? AND ?`,
+      WHERE c.anulado = 0 AND c.reconocidoDeViajeId IS NULL AND c.fecha BETWEEN ? AND ?`,
     [desde, hasta],
   );
+  const producido = await conductores.producidoEntre(desde, hasta);
   return filas
     .filter((f) => f.vehiculoId)
-    .map((f) => ({ id: f.id, fecha: dia(f.fecha)!, vehiculoId: f.vehiculoId, flete: f.flete === null ? null : Number(f.flete) }));
+    .map((f) => ({ id: f.id, fecha: dia(f.fecha)!, vehiculoId: f.vehiculoId, flete: producido.get(f.id) ?? null }));
 }
 
 /**

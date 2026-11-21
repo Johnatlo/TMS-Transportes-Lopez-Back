@@ -323,6 +323,7 @@ async function escribirReparto(
 function exigirManual(g: Gasto, accion: "cambiar" | "anular" = "cambiar"): void {
   if (g.origen === "CREDITO") throw new ErrorCuadro("Este gasto sale de un credito: se cambia desde el credito (pago de la cuota).");
   if (g.origen === "NOMINA") throw new ErrorCuadro("Este gasto sale de la nomina: reabre la nomina para cambiarlo.");
+  if (g.origen === "CUENTA_VIAJE") throw new ErrorCuadro("Este gasto sale de una cuenta de viaje: se cambia en Cuentas vehiculos > Cuentas de viaje.");
   // Un periodo de un recurrente se puede anular (ese mes no se pago), pero su valor se cambia en el recurrente.
   if (g.origen === "RECURRENTE" && accion === "cambiar")
     throw new ErrorCuadro("Este gasto sale de un recurrente: cambia su valor desde una fecha en Recurrentes.");
@@ -441,7 +442,14 @@ export const gastos = {
   async crear(
     d: Record<string, unknown>,
     usuarioId: number | null,
-    origen: { origen: string; creditoId: number | null; nominaId?: number | null; recurrenteId?: number | null; periodo?: string | null } = {
+    origen: {
+      origen: string;
+      creditoId: number | null;
+      nominaId?: number | null;
+      recurrenteId?: number | null;
+      periodo?: string | null;
+      cuentaViajeId?: number | null;
+    } = {
       origen: "MANUAL",
       creditoId: null,
     },
@@ -459,8 +467,8 @@ export const gastos = {
     return enTransaccion(async (con) => {
       const [res] = await con.query<ResultSetHeader>(
         `INSERT INTO gastos (empresa, tipo, categoria, descripcion, monto, fechaPago, soporteUrl, causaDesde, causaCuotas, causaHasta, destinos, origen,
-                             creditoId, nominaId, creadoPorId, forma, periodicidad, proveedor, numeroFactura, tipoFactura, recurrenteId, periodo)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                             creditoId, nominaId, creadoPorId, forma, periodicidad, proveedor, numeroFactura, tipoFactura, recurrenteId, periodo, cuentaViajeId)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           g.empresa,
           g.tipo,
@@ -484,6 +492,7 @@ export const gastos = {
           g.tipoFactura,
           origen.recurrenteId ?? null,
           origen.periodo ?? null,
+          origen.cuentaViajeId ?? null,
         ],
       );
       await escribirReparto(con, res.insertId, g);
@@ -784,6 +793,15 @@ export const gastos = {
     ]);
     await exigirAbierto(caus.map((c) => dia(c.fecha)!));
     await pool.query("DELETE FROM gastos WHERE nominaId = ?", [nominaId]);
+  },
+
+  /** Borra el gasto de una cuenta de viaje (sus meses deben estar abiertos). */
+  async borrarDeCuenta(cuentaViajeId: number): Promise<void> {
+    const [caus] = await pool.query<RowDataPacket[]>("SELECT c.fecha FROM gastos_causaciones c JOIN gastos g ON g.id = c.gastoId WHERE g.cuentaViajeId = ?", [
+      cuentaViajeId,
+    ]);
+    await exigirAbierto(caus.map((c) => dia(c.fecha)!));
+    await pool.query("DELETE FROM gastos WHERE cuentaViajeId = ?", [cuentaViajeId]);
   },
 
   /** Cierra o abre un mes ("AAAA-MM"): con el mes cerrado sus gastos no cambian. */

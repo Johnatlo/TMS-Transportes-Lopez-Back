@@ -284,7 +284,7 @@ export async function deducirConMatriz(v: ViajeParaTarifa): Promise<Deduccion> {
 export async function cargarTarifas(): Promise<TarifaMatriz[]> {
   if (matriz) return matriz;
   const [rows] = await pool.query<RowDataPacket[]>(
-    "SELECT id, nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, urbano FROM tarifas_flete ORDER BY nombre, id"
+    "SELECT id, nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, urbano FROM tarifas_flete WHERE retirada = 0 ORDER BY nombre, id"
   );
   const num = (x: unknown) => (x === null || x === undefined ? null : Number(x));
   matriz = rows.map((r) => ({

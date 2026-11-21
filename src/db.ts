@@ -1129,6 +1129,10 @@ export async function initSchema(): Promise<void> {
     ["viaje_remesas", "horasPactoCargue", "INT"],
     // Links (Drive) de la remision escaneada y de la factura de cada viaje del Cuadro pagos.
     ["cuadro_viajes", "remisionUrl", "VARCHAR(500)"],
+    // El gasto del libro que sale de una cuenta de viaje (modulo Cuentas vehiculos).
+    ["gastos", "cuentaViajeId", "INT"],
+    // Tarifa que ya no viene en la matriz importada pero la usan viajes o la matriz de fletes conductor: queda, retirada.
+    ["tarifas_flete", "retirada", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["cuadro_viajes", "facturaUrl", "VARCHAR(500)"],
     // Gastos: forma (unico, diferido, recurrente), quincenal, proveedor y factura (numero y credito o debito), y el recurrente que lo genero.
     ["gastos", "forma", "VARCHAR(10) NOT NULL DEFAULT 'UNICO'"],
@@ -1398,6 +1402,88 @@ export async function initSchema(): Promise<void> {
       desde DATE NOT NULL,
       hasta DATE,
       CONSTRAINT fk_asignacion_empleado FOREIGN KEY (empleadoId) REFERENCES empleados(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Liquidacion de conductores (modulo Cuentas vehiculos): matriz de fletes conductor (aparte de la de la empresa,
+  // con su vigencia), cuentas de viaje (la hoja de gastos del conductor), prestamos al conductor con lo que se
+  // descuenta cada mes, y la liquidacion pagada de cada conductor y mes.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fletes_conductor (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      tarifaFleteId INT NOT NULL,
+      valor DECIMAL(15,2) NOT NULL,
+      tipo VARCHAR(5) NOT NULL DEFAULT 'TON',
+      desde DATE NOT NULL,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_flete_conductor (tarifaFleteId, desde),
+      CONSTRAINT fk_flete_conductor_tarifa FOREIGN KEY (tarifaFleteId) REFERENCES tarifas_flete(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cuentas_viaje (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      cuadroViajeId INT NOT NULL,
+      producidoManual DECIMAL(15,2),
+      acpm DECIMAL(15,2),
+      peajes DECIMAL(15,2) NOT NULL DEFAULT 0,
+      cargue DECIMAL(15,2) NOT NULL DEFAULT 0,
+      descargue DECIMAL(15,2) NOT NULL DEFAULT 0,
+      parqueo DECIMAL(15,2) NOT NULL DEFAULT 0,
+      llantas DECIMAL(15,2) NOT NULL DEFAULT 0,
+      lavada DECIMAL(15,2) NOT NULL DEFAULT 0,
+      comision DECIMAL(15,2) NOT NULL DEFAULT 0,
+      engrase DECIMAL(15,2) NOT NULL DEFAULT 0,
+      propinas DECIMAL(15,2) NOT NULL DEFAULT 0,
+      arreglos DECIMAL(15,2) NOT NULL DEFAULT 0,
+      accesorios DECIMAL(15,2) NOT NULL DEFAULT 0,
+      otros DECIMAL(15,2) NOT NULL DEFAULT 0,
+      otrosConcepto VARCHAR(200),
+      nota VARCHAR(300),
+      gastoId INT,
+      actualizadoPorId INT,
+      actualizadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_cuenta_viaje (cuadroViajeId),
+      CONSTRAINT fk_cuenta_viaje FOREIGN KEY (cuadroViajeId) REFERENCES cuadro_viajes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS prestamos_empleado (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empleadoId INT NOT NULL,
+      fecha DATE NOT NULL,
+      monto DECIMAL(15,2) NOT NULL,
+      cuota DECIMAL(15,2),
+      nota VARCHAR(300),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_prestamo_empleado FOREIGN KEY (empleadoId) REFERENCES empleados(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS prestamos_descuentos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      prestamoId INT NOT NULL,
+      mes CHAR(7) NOT NULL,
+      valor DECIMAL(15,2) NOT NULL,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_descuento_mes (prestamoId, mes),
+      CONSTRAINT fk_descuento_prestamo FOREIGN KEY (prestamoId) REFERENCES prestamos_empleado(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS liquidaciones_conductor (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empleadoId INT NOT NULL,
+      mes CHAR(7) NOT NULL,
+      fechaPago DATE NOT NULL,
+      total DECIMAL(15,2) NOT NULL,
+      detalle TEXT,
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_liquidacion_mes (empleadoId, mes),
+      CONSTRAINT fk_liquidacion_empleado FOREIGN KEY (empleadoId) REFERENCES empleados(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   // Parametros de nomina por ano (porcentajes en %).
