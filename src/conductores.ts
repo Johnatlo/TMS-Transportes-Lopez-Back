@@ -1,7 +1,9 @@
 /**
  * Modulo Cuentas vehiculos: matriz de fletes conductor, cuentas de viaje, prestamos
  * y liquidacion de los conductores (el calculo esta en calculoConductores.ts).
- * Solo lo ven el rol total y M&C; M&C solo los vehiculos de su flota.
+ * Solo lo ven el rol total y M&C; M&C solo los vehiculos de su flota y los
+ * marcados para todos (vehiculos.visibleTodos, como el XGJ-197, al que le
+ * hacen cuentas todos los socios), con el conductor que los maneja.
  *
  * - Matriz de fletes conductor: un valor por tarifa de la matriz de fletes de
  *   la empresa (la misma tarifa con que se cobra el viaje), por tonelada,
@@ -164,7 +166,7 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
        LEFT JOIN tarifas_flete tf ON tf.id = c.tarifaFleteId
        LEFT JOIN cuentas_viaje cv ON cv.cuadroViajeId = c.id
       WHERE c.anulado = 0 AND c.reconocidoDeViajeId IS NULL AND c.fecha BETWEEN ? AND ?
-        AND v.empresa IS NOT NULL ${empresa ? "AND v.empresa = ?" : ""}
+        AND v.empresa IS NOT NULL ${empresa ? "AND (v.empresa = ? OR v.visibleTodos = 1)" : ""}
       ORDER BY c.fecha, c.placa, c.id`,
     empresa ? [desde, hasta, empresa] : [desde, hasta],
   );
@@ -491,13 +493,13 @@ export const conductores = {
   /** Borra la cuenta de viaje de un viaje y su gasto del libro. */
   async borrarCuenta(cuadroViajeId: number, empresa: EmpresaVehiculo | null): Promise<void> {
     const [[c]] = await pool.query<RowDataPacket[]>(
-      `SELECT cv.id, v.empresa, c.fecha FROM cuentas_viaje cv JOIN cuadro_viajes c ON c.id = cv.cuadroViajeId
+      `SELECT cv.id, v.empresa, v.visibleTodos, c.fecha FROM cuentas_viaje cv JOIN cuadro_viajes c ON c.id = cv.cuadroViajeId
          LEFT JOIN vehiculos v ON v.id = COALESCE(c.vehiculoId, (SELECT x.id FROM vehiculos x WHERE x.placa = c.placa AND x.eliminado = 0 LIMIT 1))
         WHERE cv.cuadroViajeId = ?`,
       [cuadroViajeId],
     );
     if (!c) return;
-    if (empresa && c.empresa !== empresa) throw new ErrorCuadro("Ese viaje es de la otra empresa.");
+    if (empresa && c.empresa !== empresa && !c.visibleTodos) throw new ErrorCuadro("Ese viaje es de la otra empresa.");
     const [viaje] = (await viajesEntre(dia(c.fecha)!, dia(c.fecha)!, null)).filter((v) => v.cuadroViajeId === cuadroViajeId);
     await exigirSinPagar(viaje?.empleadoId ?? null, dia(c.fecha)!.slice(0, 7), "la cuenta de este viaje");
     await gastos.borrarDeCuenta(c.id);
@@ -635,12 +637,14 @@ export const conductores = {
     const m = mesDe(mes);
     const viajes = await this.viajes(m, empresa);
     const { nomina } = await import("./nomina");
-    const nominaDelMes = (await nomina.nominas({ empresa })).find((n) => mesProducido(n) === m) ?? null;
+    // M&C: sus conductores y los que manejaron un vehiculo visible para todos en el mes (su nomina y prestamos completos).
+    const nominaDelMes = (await nomina.nominas({})).find((n) => mesProducido(n) === m) ?? null;
+    const deVisibles = [...new Set(viajes.map((v) => v.empleadoId).filter((x): x is number => !!x))];
     const [empleados] = await pool.query<RowDataPacket[]>(
-      `SELECT id, nombre, empresa, pctSalarial, pctViaticos FROM empleados WHERE tipo = 'CONDUCTOR' ${empresa ? "AND empresa = ?" : ""} ORDER BY nombre`,
-      empresa ? [empresa] : [],
+      `SELECT id, nombre, empresa, pctSalarial, pctViaticos FROM empleados WHERE tipo = 'CONDUCTOR' ${empresa ? "AND (empresa = ? OR id IN (?))" : ""} ORDER BY nombre`,
+      empresa ? [empresa, deVisibles.length ? deVisibles : [0]] : [],
     );
-    const prestamos = await this.prestamos(empresa);
+    const prestamos = await this.prestamos(null);
     const [pagadas] = await pool.query<RowDataPacket[]>("SELECT empleadoId, fechaPago, total, detalle FROM liquidaciones_conductor WHERE mes = ?", [m]);
     const conductores: LiquidacionMesConductor[] = [];
     for (const e of empleados) {
@@ -718,10 +722,8 @@ export const conductores = {
   /** Quita la marca de pagada. */
   async quitarPago(empleadoId: number, mes: unknown, empresa: EmpresaVehiculo | null): Promise<void> {
     const m = mesDe(mes);
-    if (empresa) {
-      const [[e]] = await pool.query<RowDataPacket[]>("SELECT empresa FROM empleados WHERE id = ?", [empleadoId]);
-      if (e?.empresa !== empresa) throw new ErrorCuadro("Ese conductor es de la otra empresa.");
-    }
+    if (empresa && !(await this.liquidacion(m, empresa)).conductores.some((c) => c.empleadoId === empleadoId))
+      throw new ErrorCuadro("Ese conductor es de la otra empresa.");
     await pool.query("DELETE FROM liquidaciones_conductor WHERE empleadoId = ? AND mes = ?", [empleadoId, m]);
   },
 };

@@ -1324,7 +1324,9 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 
 > Modulo Cuentas vehiculos: matriz de fletes conductor, cuentas de viaje, prestamos
 > y liquidacion de los conductores (el calculo esta en calculoConductores.ts).
-> Solo lo ven el rol total y M&C; M&C solo los vehiculos de su flota.
+> Solo lo ven el rol total y M&C; M&C solo los vehiculos de su flota y los
+> marcados para todos (vehiculos.visibleTodos, como el XGJ-197, al que le
+> hacen cuentas todos los socios), con el conductor que los maneja.
 >
 > - Matriz de fletes conductor: un valor por tarifa de la matriz de fletes de
 >   la empresa (la misma tarifa con que se cobra el viaje), por tonelada,

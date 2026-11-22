@@ -98,12 +98,15 @@ export async function cuentasVehiculos(
     rentabilidad.listar(),
     pool.query<RowDataPacket[]>("SELECT nombre, pctSalarial, pctViaticos FROM empleados"),
   ]);
+  const [marcados] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE visibleTodos = 1");
+  const visibles = new Set(marcados.map((x) => x.id as number));
   const deConductor = new Map(viajesConductor.map((v) => [v.cuadroViajeId, v]));
   const deRent = new Map(filasRent.map((f) => [f.id, f]));
   const pct = new Map(empleados.map((e) => [e.nombre as string, (Number(e.pctSalarial) + Number(e.pctViaticos)) / 100]));
   const vehiculos: CuentaVehiculo[] = [];
   for (const v of u.vehiculos) {
-    if (empresa && v.empresa !== empresa) continue;
+    // M&C: sus vehiculos y los visibles para todos (XGJ-197).
+    if (empresa && v.empresa !== empresa && !visibles.has(v.vehiculoId)) continue;
     const c = v.cascada;
     const conGastos = c.directos.length + c.conductor.length + c.generales.length > 0;
     if (!c.viajes && !conGastos) continue;
