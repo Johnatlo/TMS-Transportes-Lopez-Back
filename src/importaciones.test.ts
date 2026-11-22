@@ -121,19 +121,25 @@ describe("propuesta de los anticipos", () => {
       viaje({ id: 2, placa: "SWK973", fecha: "2026-09-05", empresa: "RECOLAM S.EN C." }),
     ];
     const [a, b] = proponerAnticipos(
-      [fila({ placa: "SWK-973", fecha: "2026-09-03", cliente: "PORCELATINO" }), fila({ fila: 3, placa: "SWK-973", fecha: "2026-09-03", cliente: "PORCELATINO", efectivo: 900_000 })],
+      [
+        fila({ placa: "SWK-973", fecha: "2026-09-03", cliente: "PORCELATINO" }),
+        fila({ fila: 3, placa: "SWK-973", fecha: "2026-09-03", cliente: "PORCELATINO", efectivo: 900_000 }),
+      ],
       viajes,
-      new Map()
+      new Map(),
     );
     expect([a.propuesto, b.propuesto]).toEqual([1, 2]);
   });
 
   test("un anticipo sin viaje de su cliente no le quita el viaje al que si es de ese cliente", () => {
-    const viajes = [viaje({ id: 7, placa: "SWO594", fecha: "2026-09-03", empresa: "MADEIROS L&D SAS" }), viaje({ id: 8, placa: "SWO594", fecha: "2026-09-12", empresa: "BODEGAS" })];
+    const viajes = [
+      viaje({ id: 7, placa: "SWO594", fecha: "2026-09-03", empresa: "MADEIROS L&D SAS" }),
+      viaje({ id: 8, placa: "SWO594", fecha: "2026-09-12", empresa: "BODEGAS" }),
+    ];
     const [corona, madeiros] = proponerAnticipos(
       [fila({ cliente: "CORONA" }), fila({ fila: 3, cliente: "MADEIROS L&D", efectivo: 839_996 })],
       viajes,
-      new Map()
+      new Map(),
     );
     expect(madeiros.propuesto).toBe(7);
     expect(corona.propuesto).toBe(8);
@@ -145,10 +151,16 @@ describe("propuesta de los anticipos", () => {
   });
 
   test("dos filas iguales del mismo Excel (ida y vuelta) se cargan las dos; reimportar las salta", () => {
-    const viajes = [viaje({ id: 1, placa: "SWO594", fecha: "2026-09-01", empresa: "CORONA" }), viaje({ id: 2, placa: "SWO594", fecha: "2026-09-04", empresa: "CORONA" })];
+    const viajes = [
+      viaje({ id: 1, placa: "SWO594", fecha: "2026-09-01", empresa: "CORONA" }),
+      viaje({ id: 2, placa: "SWO594", fecha: "2026-09-04", empresa: "CORONA" }),
+    ];
     const filas = [fila({}), fila({ fila: 3 })];
     const nuevas = proponerAnticipos(filas, viajes, new Map());
-    expect(nuevas.map((a) => [a.yaImportado, a.propuesto])).toEqual([[false, 1], [false, 2]]);
+    expect(nuevas.map((a) => [a.yaImportado, a.propuesto])).toEqual([
+      [false, 1],
+      [false, 2],
+    ]);
     const otraVez = proponerAnticipos(filas, viajes, new Map([["SWO594|2026-09-01|1100000|1100000", 2]]));
     expect(otraVez.every((a) => a.yaImportado)).toBe(true);
     const unaYa = proponerAnticipos(filas, viajes, new Map([["SWO594|2026-09-01|1100000|1100000", 1]]));
@@ -168,7 +180,7 @@ describe("cartera por dueno", () => {
         { placa: "SKX202", dueno: "MILLER", valor: 4_000_000 },
         { placa: "SPS199", dueno: "TERCEROS", valor: 2_000_001 },
       ],
-      5_000_000
+      5_000_000,
     );
     expect(reparto.MILLER! + reparto.TERCEROS!).toBe(5_000_000);
     expect(reparto.MILLER).toBe(3_333_333);

@@ -109,7 +109,7 @@ describe("calcular: terceros", () => {
         icaTerceroPorMil: 4,
         efectivo: 1_300_000,
         combustible: 1_300_000,
-      })
+      }),
     );
     // Lado empresa: 1 % + 0,1 %, ICA 4 por mil, 4 x 1000 + 5.000 y Supertransporte.
     expect([c.retencion, c.reteIca, c.supertransporte]).toEqual([60_552, 22_019, 6_611]);
@@ -132,7 +132,12 @@ describe("calcular: terceros", () => {
     const sin = calcular(entrada(base));
     const con = calcular(entrada({ ...base, rentOtrosDescuentos: 200_000 }));
     expect(con.saldoBeneficiario).toBe(sin.saldoBeneficiario - 200_000);
-    expect([con.saldoEmpresa, con.rentabilidad, con.anticipoRenta, con.ganancia]).toEqual([sin.saldoEmpresa, sin.rentabilidad, sin.anticipoRenta, sin.ganancia]);
+    expect([con.saldoEmpresa, con.rentabilidad, con.anticipoRenta, con.ganancia]).toEqual([
+      sin.saldoEmpresa,
+      sin.rentabilidad,
+      sin.anticipoRenta,
+      sin.ganancia,
+    ]);
   });
 
   test("un urbano no lleva poliza RCE", () => {
@@ -177,7 +182,11 @@ describe("grupoDe", () => {
     expect(grupoDe("TEK-298", "TERCERO", "CELSO")).toBe("CELSO");
     expect(grupoDe("XJB207", "LOPEZ", "MAURICIO")).toBe("SOCIEDAD");
     // Con dos o mas socios en Participaciones pasa a SOCIEDAD; los de hoja propia conservan la suya.
-    expect([grupoDe("SZX880", "LOPEZ", "MAURICIO", true), grupoDe("SWK973", "LOPEZ", null, true), grupoDe("SZX880", "LOPEZ", "MAURICIO")]).toEqual(["SOCIEDAD", "SWK-973", "MAURICIO"]);
+    expect([grupoDe("SZX880", "LOPEZ", "MAURICIO", true), grupoDe("SWK973", "LOPEZ", null, true), grupoDe("SZX880", "LOPEZ", "MAURICIO")]).toEqual([
+      "SOCIEDAD",
+      "SWK-973",
+      "MAURICIO",
+    ]);
     expect(grupoDe("SPS199", "TERCERO", null)).toBe("TERCEROS");
     expect(grupoDe("ZAP745", "TERCERO", "CELSO")).toBe("CELSO");
     expect(grupoDe("ABC123", "LOPEZ", null)).toBe("PROPIOS");

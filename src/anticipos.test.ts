@@ -27,9 +27,7 @@ describe("anticipo que se registra en un viaje", () => {
   });
 
   test("ida y vuelta sin valor de vuelta: se pide", () => {
-    expect(() => validarAnticipo({ fecha: "2026-10-14", bombaId: 3, efectivo: 1000, idaYVuelta: true })).toThrow(
-      /anticipo de vuelta/
-    );
+    expect(() => validarAnticipo({ fecha: "2026-10-14", bombaId: 3, efectivo: 1000, idaYVuelta: true })).toThrow(/anticipo de vuelta/);
   });
 
   test("con combustible la bomba es obligatoria; solo efectivo no la necesita", () => {
@@ -75,7 +73,7 @@ describe("cuentas con la bomba", () => {
         { bombaId: null, valor: 900_000, fechaPago: null },
       ],
       1_000_000,
-      { cupoBomba: 500_000_000, precioGalonBomba: 11390 }
+      { cupoBomba: 500_000_000, precioGalonBomba: 11390 },
     );
     expect(r).toMatchObject({ deuda: 7_000_000, pagado: 2_200_000, abonadoSocio: 1_000_000, pendiente: 3_800_000, cupoDisponible: 496_200_000 });
   });
@@ -89,20 +87,14 @@ describe("cuentas con la bomba", () => {
       ],
       1_000_000,
       { cupoBomba: 500_000_000, precioGalonBomba: 11390 },
-      0
+      0,
     );
     expect(r).toMatchObject({ abonadoSocio: 1_000_000, pendiente: 1_800_000 });
   });
 
   test("los abonos del socio sin cruzar no se descuentan de la deuda", () => {
     // Abono de 500.000 registrado pero sin cruzar: la deuda sigue completa.
-    const r = resumirBomba(
-      [{ bombaId: 1, valor: 1_800_000, fechaPago: null }],
-      0,
-      { cupoBomba: 500_000_000, precioGalonBomba: 11390 },
-      0,
-      500_000
-    );
+    const r = resumirBomba([{ bombaId: 1, valor: 1_800_000, fechaPago: null }], 0, { cupoBomba: 500_000_000, precioGalonBomba: 11390 }, 0, 500_000);
     expect(r).toMatchObject({ abonadoSocio: 0, abonadoPorCruzar: 500_000, pendiente: 1_800_000 });
   });
 
@@ -123,10 +115,13 @@ describe("cuentas con la bomba", () => {
 describe("aviso de anticipo repetido", () => {
   // Casos reales encontrados al cuadrar con el reporte de la empresa.
   test("mismo valor el mismo dia (SDO-355: la ida otra vez)", () => {
-    const avisos = avisosRepetido([1_200_000], [
-      { tramo: "IDA", total: 1_200_000, manifiesto: "00006816" },
-      { tramo: "VUELTA", total: 1_200_000, manifiesto: null },
-    ]);
+    const avisos = avisosRepetido(
+      [1_200_000],
+      [
+        { tramo: "IDA", total: 1_200_000, manifiesto: "00006816" },
+        { tramo: "VUELTA", total: 1_200_000, manifiesto: null },
+      ],
+    );
     expect(avisos[0]).toBe("Ya hay un anticipo de 1.200.000 ese dia en esta placa (ida del manifiesto 00006816).");
   });
 

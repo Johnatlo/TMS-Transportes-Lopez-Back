@@ -94,7 +94,7 @@ describe("fechas de pago imposibles", () => {
         pagosSueltos: [{ fecha: "1909-10-30", valor: 2_207_100 }],
       },
       "2026-08-23",
-      "2026-10-23"
+      "2026-10-23",
     );
     expect(r.resumen.saldoInicial).toBe(-2_207_100);
   });

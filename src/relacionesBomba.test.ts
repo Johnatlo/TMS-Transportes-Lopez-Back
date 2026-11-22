@@ -54,7 +54,7 @@ describe("emparejarVales (relacion AE5044797, SWN-623)", () => {
   test("la bomba tambien da efectivo: se compara con el efectivo del tramo, y el mismo tramo toma los dos vales", () => {
     const r = emparejarVales(
       [vale("2026-09-20", 600_064), vale("2026-09-20", 1_200_000, "EDS SAN ESTEBAN", "EFECTIVO"), vale("2026-09-20", 900_000, "EDS SAN ESTEBAN", "EFECTIVO")],
-      [tramo(1, "2026-09-20", 600_064)]
+      [tramo(1, "2026-09-20", 600_064)],
     );
     expect(r.map((v) => [v.tipo, v.tramoId, v.estado])).toEqual([
       ["COMBUSTIBLE", 1, "COINCIDE"],
@@ -67,7 +67,7 @@ describe("emparejarVales (relacion AE5044797, SWN-623)", () => {
   test("no usa tramos de otra estacion, ya cruzados ni lejanos en fecha", () => {
     const r = emparejarVales(
       [vale("2026-09-18", 1_000_000, "EDS CHUSACA")],
-      [tramo(1, "2026-09-18", 1_000_000, "S. ESTEBAN"), tramo(2, "2026-09-18", 1_000_000, "CHUSACA", true), tramo(3, "2026-09-25", 1_000_000, "CHUSACA")]
+      [tramo(1, "2026-09-18", 1_000_000, "S. ESTEBAN"), tramo(2, "2026-09-18", 1_000_000, "CHUSACA", true), tramo(3, "2026-09-25", 1_000_000, "CHUSACA")],
     );
     expect(r[0].estado).toBe("SIN_TANQUEO");
   });
@@ -114,7 +114,9 @@ describe("ida y vuelta", () => {
   });
 
   test("no junta dos tanqueos con facturas de la bomba distintas", () => {
-    expect(parejasIdaYVuelta([suelto({ tanqueoId: 1, tramoId: 1, facturaBomba: "AE1" }), suelto({ tanqueoId: 2, tramoId: 2, facturaBomba: "AE2" })])).toEqual([]);
+    expect(parejasIdaYVuelta([suelto({ tanqueoId: 1, tramoId: 1, facturaBomba: "AE1" }), suelto({ tanqueoId: 2, tramoId: 2, facturaBomba: "AE2" })])).toEqual(
+      [],
+    );
   });
 });
 

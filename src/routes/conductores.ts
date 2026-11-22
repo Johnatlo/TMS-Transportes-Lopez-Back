@@ -6,6 +6,7 @@
 import { Router, type Request } from "express";
 import { responder } from "./cuadro";
 import { conductores } from "../conductores";
+import { cuentasVehiculos } from "../cuentasVehiculo";
 import { rolDePeticion } from "../accesos";
 import type { EmpresaVehiculo } from "../roles";
 
@@ -37,6 +38,11 @@ conductoresRouter.delete("/fletes/:id", async (req, res) => {
 /** POST /api/conductores/fletes/importar: importa la matriz del Excel ({ filas, aplicar }); sin aplicar solo dice cuales encontro. */
 conductoresRouter.post("/fletes/importar", async (req, res) => {
   await responder(res, () => conductores.importarFletes(req.body?.filas, req.body?.aplicar === true, usuario(req)));
+});
+
+/** GET /api/conductores/cuentas-vehiculos?mes=AAAA-MM: la cuenta de cada vehiculo en el mes (viajes, descuentos, conductor y lo que queda). */
+conductoresRouter.get("/cuentas-vehiculos", async (req, res) => {
+  await responder(res, () => cuentasVehiculos(req.query.mes, empresaDe(req)));
 });
 
 /** GET /api/conductores/viajes?mes=AAAA-MM: viajes de la flota propia con su producido conductor y su cuenta de viaje. */

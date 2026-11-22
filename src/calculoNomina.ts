@@ -8,6 +8,9 @@
  * - Conductor: + % salarial del producido (4 %) y % de viaticos (5 %), que no
  *   es salario: no paga aportes ni genera prestaciones (salvo lo que pase del
  *   limite no salarial de la Ley 1393, 40 % del total, que entra al IBC).
+ *   Los viajes con flete conductor INTEGRO (urbanos con valor fijo) no van al
+ *   %: su valor se le paga completo, repartido entre salarial y viaticos en la
+ *   misma proporcion de los porcentajes (4/9 y 5/9).
  * - Auxilio de transporte: si el empleado lo tiene y gana hasta 2 minimos.
  * - Aportes (salud y pension del empleado; pension, salud, ARL y caja del
  *   empleador) se redondean hacia arriba a la centena, como la PILA.
@@ -61,7 +64,10 @@ export interface EntradaLinea {
   riesgoArl: number;
   /** Dias trabajados (30 = el mes completo). */
   dias: number;
+  /** Producido al que se le saca el % (sin los viajes integros). */
   producido: number;
+  /** Viajes con flete conductor INTEGRO: se pagan completos (no van al %). */
+  integro?: number;
   ajuste: number;
   /** UPC adicional del mes (salud de beneficiarios adicionales; la paga la empresa). */
   upcAdicional?: number;
@@ -105,13 +111,26 @@ export const pila = (v: number) => (v <= 0 ? 0 : Math.ceil(c2(v) / 100 - 1e-9) *
 /** Un porcentaje (en %) de un valor, a centavos. */
 const pct = (v: number, p: number) => c2((v * p) / 100);
 
+/**
+ * Lo que el conductor gana por sus viajes: el % salarial y de viaticos del
+ * producido, mas los viajes integros completos, repartidos entre salarial y
+ * viaticos en la proporcion de los porcentajes (sin porcentajes, todo salarial).
+ */
+export function pagoProducido(producido: number, integro: number, pctSalarial: number, pctViaticos: number): { variable: number; viaticos: number } {
+  const total = pctSalarial + pctViaticos;
+  const integroSalarial = total > 0 ? c2((integro * pctSalarial) / total) : c2(integro);
+  return {
+    variable: c2(pct(producido, pctSalarial) + integroSalarial),
+    viaticos: c2(pct(producido, pctViaticos) + c2(integro) - integroSalarial),
+  };
+}
+
 /** Calcula una linea de nomina. */
 export function calcularLinea(e: EntradaLinea, p: ParametrosNomina): CalculoLinea {
   const dias = Math.max(0, Math.min(30, e.dias));
   const mensual = (e.salarioBase ?? p.smmlv) + e.salarioAdicional;
   const basico = c2((mensual * dias) / 30);
-  const variable = pct(e.producido, e.pctSalarial);
-  const viaticos = pct(e.producido, e.pctViaticos);
+  const { variable, viaticos } = pagoProducido(e.producido, e.integro ?? 0, e.pctSalarial, e.pctViaticos);
   const salarial = c2(basico + variable);
   const tieneAuxilio = e.auxilio && dias > 0 && (salarial * 30) / dias <= 2 * p.smmlv;
   const auxilio = tieneAuxilio ? c2((p.auxilioTransporte * dias) / 30) : 0;
@@ -232,6 +251,8 @@ export interface ViajeProducido {
   fecha: string;
   vehiculoId: number;
   flete: number | null;
+  /** Flete conductor INTEGRO: se paga completo, no va al %. */
+  integro?: boolean;
 }
 
 /** Vehiculo de un conductor con fechas (empleados_vehiculos). */
@@ -244,8 +265,11 @@ export interface AsignacionVehiculo {
 
 /** Producido de un conductor: el total y cuanto en cada vehiculo. */
 export interface ProducidoConductor {
+  /** Todo lo de sus viajes (con los integros). */
   total: number;
-  porVehiculo: Array<{ vehiculoId: number; producido: number; viajes: number; sinTarifa: number }>;
+  /** Lo de los viajes integros (se pagan completos; las nominas viejas no lo traen). */
+  integro?: number;
+  porVehiculo: Array<{ vehiculoId: number; producido: number; integro?: number; viajes: number; sinTarifa: number }>;
   /** Viajes que le tocaron (ids), para ver el detalle. */
   viajes: number[];
 }
@@ -265,10 +289,10 @@ export function producidoPorConductor(viajes: ViajeProducido[], asignaciones: As
       .filter((x) => x.vehiculoId === v.vehiculoId && x.desde <= v.fecha && (!x.hasta || x.hasta >= v.fecha))
       .sort((x, y) => y.desde.localeCompare(x.desde))[0];
     if (!a) continue;
-    const p = resultado.get(a.empleadoId) ?? { total: 0, porVehiculo: [], viajes: [] };
+    const p = resultado.get(a.empleadoId) ?? { total: 0, integro: 0, porVehiculo: [], viajes: [] };
     let pv = p.porVehiculo.find((x) => x.vehiculoId === v.vehiculoId);
     if (!pv) {
-      pv = { vehiculoId: v.vehiculoId, producido: 0, viajes: 0, sinTarifa: 0 };
+      pv = { vehiculoId: v.vehiculoId, producido: 0, integro: 0, viajes: 0, sinTarifa: 0 };
       p.porVehiculo.push(pv);
     }
     pv.viajes += 1;
@@ -276,6 +300,10 @@ export function producidoPorConductor(viajes: ViajeProducido[], asignaciones: As
     else {
       pv.producido = c2(pv.producido + v.flete);
       p.total = c2(p.total + v.flete);
+      if (v.integro) {
+        pv.integro = c2((pv.integro ?? 0) + v.flete);
+        p.integro = c2((p.integro ?? 0) + v.flete);
+      }
     }
     p.viajes.push(v.id);
     resultado.set(a.empleadoId, p);

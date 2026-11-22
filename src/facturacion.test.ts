@@ -8,9 +8,16 @@ import { normalizarTarifa } from "./facturacion";
 
 describe("tarifas de la matriz de fletes", () => {
   test("normaliza tipo, valor y peso minimo", () => {
-    expect(
-      normalizarTarifa({ nombre: " APROREC ", razonSocial: "APROREC SAS", valor: "130000", tipo: "ton", pesoMinimoKg: "34000" })
-    ).toEqual({ nombre: "APROREC", razonSocial: "APROREC SAS", valor: 130000, tipo: "TON", pesoMinimoKg: 34000, pesoFijoKg: null, observaciones: null, urbano: false });
+    expect(normalizarTarifa({ nombre: " APROREC ", razonSocial: "APROREC SAS", valor: "130000", tipo: "ton", pesoMinimoKg: "34000" })).toEqual({
+      nombre: "APROREC",
+      razonSocial: "APROREC SAS",
+      valor: 130000,
+      tipo: "TON",
+      pesoMinimoKg: 34000,
+      pesoFijoKg: null,
+      observaciones: null,
+      urbano: false,
+    });
   });
 
   test("la marca de urbano llega como booleano", () => {

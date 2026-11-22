@@ -8,6 +8,7 @@ import {
   errorReparto,
   gastoDeLinea,
   mesDe,
+  pagoProducido,
   pesosConductor,
   pila,
   porcentajesDe,
@@ -284,5 +285,35 @@ describe("UPC adicional por beneficiario (puede no ser empleado)", () => {
       ]).error,
     ).toMatch(/repetida/);
     expect(validarUpcs([]).error).toBeNull();
+  });
+});
+
+describe("viajes con flete conductor INTEGRO (se pagan completos, sin %)", () => {
+  test("200.000 integro: no es 9 % de 200.000 sino los 200.000, en la proporcion 4/9 salarial y 5/9 viaticos", () => {
+    expect(pagoProducido(0, 200_000, 4, 5)).toEqual({ variable: 88_888.89, viaticos: 111_111.11 });
+    // Con producido al %: 9 % de 10.000.000 = 400.000 + 500.000, mas el integro.
+    expect(pagoProducido(10_000_000, 200_000, 4, 5)).toEqual({ variable: 488_888.89, viaticos: 611_111.11 });
+    // Sin porcentajes: todo salarial.
+    expect(pagoProducido(0, 200_000, 0, 0)).toEqual({ variable: 200_000, viaticos: 0 });
+  });
+
+  test("en la linea: el integro suma completo al devengado y su parte salarial genera prestaciones", () => {
+    const sin = calcularLinea({ ...CONDUCTOR, producido: 10_000_000 }, P2026);
+    const con = calcularLinea({ ...CONDUCTOR, producido: 10_000_000, integro: 200_000 }, P2026);
+    expect(con.devengado - sin.devengado).toBeCloseTo(200_000, 2);
+    expect(con.variable - sin.variable).toBeCloseTo(88_888.89, 2);
+    expect(con.cesantias).toBeGreaterThan(sin.cesantias);
+  });
+
+  test("producido por conductor: separa lo integro (total con todo, integro aparte) por vehiculo", () => {
+    const p = producidoPorConductor(
+      [
+        { id: 1, fecha: "2026-10-02", vehiculoId: 33, flete: 4_200_000 },
+        { id: 2, fecha: "2026-10-03", vehiculoId: 33, flete: 200_000, integro: true },
+      ],
+      [{ empleadoId: 7, vehiculoId: 33, desde: "2026-01-01", hasta: null }],
+    ).get(7)!;
+    expect([p.total, p.integro]).toEqual([4_400_000, 200_000]);
+    expect(p.porVehiculo[0]).toMatchObject({ producido: 4_400_000, integro: 200_000, viajes: 2 });
   });
 });

@@ -7,7 +7,9 @@
  *   matriz de fletes conductor (aparte de la de la empresa y mas baja): por
  *   tonelada (valor x toneladas reales) o fijo por viaje, con el valor vigente
  *   en la fecha del viaje. Sobre el sale el % del conductor (4 % salarial, que
- *   genera prestaciones, y 5 % de viaticos, que no).
+ *   genera prestaciones, y 5 % de viaticos, que no). INTEGRO: un valor por
+ *   viaje que se le paga completo (los urbanos, que con el % quedarian muy
+ *   bajos); no va al %.
  * - Cuenta de viaje (la hoja que llena el conductor): lo que recibio (anticipo
  *   de la bomba y transferencia) y lo que gasto por concepto. El saldo es
  *   gastos - recibido: positivo, la empresa le debe al conductor; negativo, el
@@ -17,6 +19,8 @@
  * - Liquidacion del mes: lo de la nomina (sueldo, % y aportes) + el saldo de
  *   las cuentas de viaje - lo que se descuenta de los prestamos.
  */
+
+import { pagoProducido } from "./calculoNomina";
 
 /** Centavos exactos. */
 const c2 = (v: number) => Math.round(v * 100 + Number.EPSILON) / 100;
@@ -42,12 +46,24 @@ export const CONCEPTOS = [
 export type Concepto = (typeof CONCEPTOS)[number][0];
 export type GastosCuenta = Record<Concepto, number>;
 
+/** Tipos de flete conductor. */
+export type TipoFleteConductor = "TON" | "FIJO" | "INTEGRO";
+/** El tipo de un texto (de la base o del Excel): por defecto TON. */
+export const tipoFleteConductor = (t: unknown): TipoFleteConductor => {
+  const x = String(t ?? "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return x === "FIJO" ? "FIJO" : x === "INTEGRO" ? "INTEGRO" : "TON";
+};
+
 /** Un valor de la matriz de fletes conductor desde una fecha. */
 export interface FleteConductor {
   tarifaFleteId: number;
   valor: number;
-  /** TON: por tonelada; FIJO: por viaje. */
-  tipo: "TON" | "FIJO";
+  /** TON: por tonelada; FIJO: por viaje (va al %); INTEGRO: por viaje, se le paga completo. */
+  tipo: TipoFleteConductor;
   desde: string;
 }
 
@@ -70,9 +86,14 @@ export function producidoConductor(
   if (manual !== null && manual !== undefined) return c2(manual);
   const f = fleteConductorEn(fletes, viaje.tarifaFleteId, viaje.fecha);
   if (!f) return null;
-  if (f.tipo === "FIJO") return c2(f.valor);
+  if (f.tipo === "FIJO" || f.tipo === "INTEGRO") return c2(f.valor);
   if (!viaje.pesoKg) return null;
   return c2((f.valor * viaje.pesoKg) / 1000);
+}
+
+/** true si el flete conductor del viaje es INTEGRO (se le paga completo, sin %). */
+export function esIntegro(viaje: { fecha: string; tarifaFleteId: number | null }, fletes: FleteConductor[]): boolean {
+  return fleteConductorEn(fletes, viaje.tarifaFleteId, viaje.fecha)?.tipo === "INTEGRO";
 }
 
 /** Total de los gastos de una cuenta de viaje. */
@@ -101,10 +122,12 @@ export interface NominaConductor {
 /** La liquidacion de un conductor en el mes. */
 export interface LiquidacionConductor {
   viajes: number;
-  /** Suma del producido conductor de sus viajes (sin los que no tienen valor). */
+  /** Suma del producido conductor de sus viajes que van al % (sin los que no tienen valor). */
   producido: number;
+  /** Suma de los viajes integros: se le pagan completos. */
+  integro: number;
   viajesSinProducido: number;
-  /** % salarial y de viaticos sobre el producido conductor. */
+  /** % salarial y de viaticos sobre el producido conductor, mas los integros (en la proporcion de los %). */
   salarial: number;
   viaticos: number;
   /** Suma de los saldos de sus cuentas de viaje (positivo: se le debe). */
@@ -125,22 +148,25 @@ export interface LiquidacionConductor {
  * nomina + el saldo de las cuentas - los prestamos.
  */
 export function liquidarConductor(e: {
-  viajes: Array<{ producido: number | null; saldo: number | null }>;
+  viajes: Array<{ producido: number | null; saldo: number | null; integro?: boolean }>;
   pctSalarial: number;
   pctViaticos: number;
   nomina: NominaConductor | null;
   prestamos: number;
 }): LiquidacionConductor {
   const conProducido = e.viajes.filter((v) => v.producido !== null);
-  const producido = suma(conProducido.map((v) => v.producido!));
+  const producido = suma(conProducido.filter((v) => !v.integro).map((v) => v.producido!));
+  const integro = suma(conProducido.filter((v) => v.integro).map((v) => v.producido!));
+  const pago = pagoProducido(producido, integro, e.pctSalarial, e.pctViaticos);
   const saldoCuentas = suma(e.viajes.filter((v) => v.saldo !== null).map((v) => v.saldo!));
   const netoNomina = e.nomina ? c2(e.nomina.neto) : null;
   return {
     viajes: e.viajes.length,
     producido,
+    integro,
     viajesSinProducido: e.viajes.length - conProducido.length,
-    salarial: c2((producido * e.pctSalarial) / 100),
-    viaticos: c2((producido * e.pctViaticos) / 100),
+    salarial: pago.variable,
+    viaticos: pago.viaticos,
     saldoCuentas,
     viajesSinCuenta: e.viajes.filter((v) => v.saldo === null).length,
     prestamos: c2(e.prestamos),

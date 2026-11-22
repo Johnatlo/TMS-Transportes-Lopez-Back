@@ -4,8 +4,9 @@
  * Solo lo ven el rol total y M&C; M&C solo los vehiculos de su flota.
  *
  * - Matriz de fletes conductor: un valor por tarifa de la matriz de fletes de
- *   la empresa (la misma tarifa con que se cobra el viaje), por tonelada o
- *   fijo, con su vigencia. Se ve solo en este modulo.
+ *   la empresa (la misma tarifa con que se cobra el viaje), por tonelada,
+ *   fijo o integro (fijo que se le paga completo, sin %), con su vigencia. Se
+ *   ve solo en este modulo.
  * - Producido conductor de cada viaje de la flota propia: el de la matriz, o
  *   el escrito a mano en su cuenta de viaje. Es lo que la nomina usa como
  *   producido del conductor (4 % salarial y 5 % de viaticos).
@@ -22,8 +23,18 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro } from "./cuadro";
-import { CONCEPTOS, liquidarConductor, nombreComparable, producidoConductor, saldoCuenta, saldoPrestamo, totalGastos } from "./calculoConductores";
-import type { Concepto, FleteConductor, GastosCuenta, LiquidacionConductor, NominaConductor } from "./calculoConductores";
+import {
+  CONCEPTOS,
+  esIntegro,
+  liquidarConductor,
+  nombreComparable,
+  producidoConductor,
+  saldoCuenta,
+  saldoPrestamo,
+  tipoFleteConductor,
+  totalGastos,
+} from "./calculoConductores";
+import type { Concepto, FleteConductor, TipoFleteConductor, GastosCuenta, LiquidacionConductor, NominaConductor } from "./calculoConductores";
 import { finDeMes } from "./calculoUtilidades";
 import { gastos } from "./gastos";
 import { mesesCongeladosConductores } from "./proteccion";
@@ -57,8 +68,8 @@ export interface TarifaConductor {
   razonSocial: string | null;
   valorEmpresa: number | null;
   tipoEmpresa: string;
-  vigente: { id: number; valor: number; tipo: "TON" | "FIJO"; desde: string } | null;
-  historial: Array<{ id: number; valor: number; tipo: "TON" | "FIJO"; desde: string }>;
+  vigente: { id: number; valor: number; tipo: TipoFleteConductor; desde: string } | null;
+  historial: Array<{ id: number; valor: number; tipo: TipoFleteConductor; desde: string }>;
   /** Viajes de los ultimos 90 dias con esta tarifa (para saber cuales importan). */
   viajesRecientes: number;
 }
@@ -85,6 +96,8 @@ export interface ViajeConductor {
   producido: number | null;
   producidoMatriz: number | null;
   producidoManual: boolean;
+  /** Flete conductor INTEGRO: se le paga completo (no va al %). */
+  integro: boolean;
   /** Lo que recibio: anticipos de la bomba (efectivo + combustible) y transferencia. */
   efectivo: number;
   combustible: number;
@@ -209,6 +222,7 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
       producido: manual ?? matriz,
       producidoMatriz: matriz,
       producidoManual: manual !== null,
+      integro: esIntegro(viaje, fletes),
       efectivo,
       combustible,
       transferencia,
@@ -221,7 +235,7 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
 /** Toda la matriz de fletes conductor. */
 async function fletesConductor(): Promise<FleteConductor[]> {
   const [filas] = await pool.query<RowDataPacket[]>("SELECT tarifaFleteId, valor, tipo, desde FROM fletes_conductor");
-  return filas.map((f) => ({ tarifaFleteId: f.tarifaFleteId, valor: Number(f.valor), tipo: f.tipo === "FIJO" ? "FIJO" : "TON", desde: dia(f.desde)! }));
+  return filas.map((f) => ({ tarifaFleteId: f.tarifaFleteId, valor: Number(f.valor), tipo: tipoFleteConductor(f.tipo), desde: dia(f.desde)! }));
 }
 
 /**
@@ -296,7 +310,7 @@ export const conductores = {
     return tarifas.map((t) => {
       const historial = fletes
         .filter((f) => f.tarifaFleteId === t.id)
-        .map((f) => ({ id: f.id as number, valor: Number(f.valor), tipo: (f.tipo === "FIJO" ? "FIJO" : "TON") as "TON" | "FIJO", desde: dia(f.desde)! }));
+        .map((f) => ({ id: f.id as number, valor: Number(f.valor), tipo: tipoFleteConductor(f.tipo), desde: dia(f.desde)! }));
       return {
         tarifaFleteId: t.id,
         nombre: t.nombre,
@@ -310,7 +324,7 @@ export const conductores = {
     });
   },
 
-  /** Guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }). */
+  /** Guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo TON/FIJO/INTEGRO, desde }). */
   async guardarFlete(d: Record<string, unknown>, usuarioId: number | null): Promise<void> {
     const tarifaFleteId = Number(d.tarifaFleteId);
     const [[t]] = await pool.query<RowDataPacket[]>("SELECT id FROM tarifas_flete WHERE id = ?", [tarifaFleteId]);
@@ -323,7 +337,7 @@ export const conductores = {
     await pool.query(
       `INSERT INTO fletes_conductor (tarifaFleteId, valor, tipo, desde, creadoPorId) VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE valor = VALUES(valor), tipo = VALUES(tipo)`,
-      [tarifaFleteId, valor, d.tipo === "FIJO" ? "FIJO" : "TON", desde, usuarioId],
+      [tarifaFleteId, valor, tipoFleteConductor(d.tipo), desde, usuarioId],
     );
   },
 
@@ -360,7 +374,7 @@ export const conductores = {
         continue;
       }
       const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(f.desde ?? "").slice(0, 10)) ? String(f.desde).slice(0, 10) : "1999-04-01";
-      const tipo = String(f.tipo ?? "").toUpperCase() === "FIJO" ? "FIJO" : "TON";
+      const tipo = tipoFleteConductor(f.tipo);
       // Igual a lo que ya esta: nada que hacer. Si cambiaria meses congelados, no se importa.
       const [[igual]] = await pool.query<RowDataPacket[]>(
         "SELECT 1 AS si FROM fletes_conductor WHERE tarifaFleteId = ? AND desde = ? AND valor = ? AND tipo = ?",
@@ -385,9 +399,9 @@ export const conductores = {
     return viajesEntre(`${m}-01`, finDeMes(m), empresa);
   },
 
-  /** Producido conductor por viaje entre dos fechas (lo usa la nomina). */
-  async producidoEntre(desde: string, hasta: string): Promise<Map<number, number | null>> {
-    return new Map((await viajesEntre(desde, hasta, null)).map((v) => [v.cuadroViajeId, v.producido]));
+  /** Producido conductor por viaje entre dos fechas y si es integro (lo usa la nomina). */
+  async producidoEntre(desde: string, hasta: string): Promise<Map<number, { valor: number | null; integro: boolean }>> {
+    return new Map((await viajesEntre(desde, hasta, null)).map((v) => [v.cuadroViajeId, { valor: v.producido, integro: v.integro }]));
   },
 
   /**
@@ -637,7 +651,7 @@ export const conductores = {
       const visibles = susPrestamos.filter((p) => p.saldo > 0 || descuento(p) !== null);
       if (!suyos.length && !linea && !visibles.length) continue;
       const liq = liquidarConductor({
-        viajes: suyos.map((v) => ({ producido: v.producido, saldo: v.cuenta?.saldo ?? null })),
+        viajes: suyos.map((v) => ({ producido: v.producido, saldo: v.cuenta?.saldo ?? null, integro: v.integro })),
         pctSalarial: Number(e.pctSalarial),
         pctViaticos: Number(e.pctViaticos),
         nomina: linea

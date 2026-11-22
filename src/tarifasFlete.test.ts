@@ -3,7 +3,13 @@ import { clienteSoloUrbano, deducirTarifa, fleteDeTarifa, parecido } from "./tar
 import type { TarifaMatriz, ViajeParaTarifa } from "./tarifasFlete";
 
 let id = 0;
-const tarifa = (nombre: string, razonSocial: string | null, valor: number | null, tipo: TarifaMatriz["tipo"] = "TON", pesoMinimoKg: number | null = null): TarifaMatriz => ({
+const tarifa = (
+  nombre: string,
+  razonSocial: string | null,
+  valor: number | null,
+  tipo: TarifaMatriz["tipo"] = "TON",
+  pesoMinimoKg: number | null = null,
+): TarifaMatriz => ({
   id: ++id,
   nombre,
   razonSocial,
@@ -66,7 +72,8 @@ describe("deducirTarifa: exactas", () => {
   });
 
   test("el producto de la remesa separa CARTON de ARCHIVO", () => {
-    const r = (empresa: string, producto: string | null) => deducirTarifa(viaje({ empresa, ruta: "SOACHA CUNDINAMARCA → CALI VALLE DEL CAUCA", producto }), MATRIZ);
+    const r = (empresa: string, producto: string | null) =>
+      deducirTarifa(viaje({ empresa, ruta: "SOACHA CUNDINAMARCA → CALI VALLE DEL CAUCA", producto }), MATRIZ);
     expect(r("RECICLAJES BOGOTA N.S. S.A.S.", "CARTON RECICLADO").exacta?.nombre).toBe("RECICLAJES CARTON");
     expect(r("BODEGAS DE RECICLAJES SAS", "CARTON RECICLADO").exacta?.nombre).toBe("BODEGAS CARTON");
     // Sin producto (viaje sin manifiesto): no se sabe; quedan las dos para elegir.
@@ -83,7 +90,10 @@ describe("deducirTarifa: manuales con sus posibles", () => {
     // Solo las de Duitama (no las de Pereira con adicionales).
     expect(d.posibles.map((p) => p.nombre)).toEqual(["TOLUA DUITAMA", "TOLUA DUITAMA 1 C. Y 1 CLI. ADIC"]);
     // El camion rigido sube la de VOLVO de primera.
-    const rigido = deducirTarifa(viaje({ empresa: "TOLUA MADERAS Y HERRAJES SAS", ruta: "YUMBO VALLE DEL CAUCA → PEREIRA RISARALDA", configuracion: "3" }), MATRIZ);
+    const rigido = deducirTarifa(
+      viaje({ empresa: "TOLUA MADERAS Y HERRAJES SAS", ruta: "YUMBO VALLE DEL CAUCA → PEREIRA RISARALDA", configuracion: "3" }),
+      MATRIZ,
+    );
     expect(rigido.posibles[0].nombre).toBe("TOLUA PEREIRA / VOLVO");
   });
 
@@ -97,7 +107,10 @@ describe("deducirTarifa: manuales con sus posibles", () => {
   });
 
   test("la tarifa nombra el origen pero no el destino: manual", () => {
-    const laminados = [tarifa("LAMINADOS B/VENTURA", "LAMINADOS Y ENCHAPADOS", 6300000, "FIJO"), tarifa("LAMINADOS YUMBO", "LAMINADOS Y ENCHAPADOS", 3000000, "FIJO")];
+    const laminados = [
+      tarifa("LAMINADOS B/VENTURA", "LAMINADOS Y ENCHAPADOS", 6300000, "FIJO"),
+      tarifa("LAMINADOS YUMBO", "LAMINADOS Y ENCHAPADOS", 3000000, "FIJO"),
+    ];
     const d = (ruta: string) => deducirTarifa(viaje({ empresa: "LAMINADOS Y ENCHAPADOS SAS", ruta }), laminados);
     expect(d("BUENAVENTURA VALLE DEL CAUCA → MEDELLIN ANTIOQUIA").exacta).toBeNull();
     // Hacia la ciudad de la tarifa si es exacta.
@@ -105,8 +118,13 @@ describe("deducirTarifa: manuales con sus posibles", () => {
   });
 
   test("empatada con una que se parece menos al cliente: gana la de su nombre", () => {
-    const empaques = [tarifa("EMPAQUES", "EMPAQUES INDUSTRIALES DE COLOMBIA S.A.S.", 4500000, "FIJO"), tarifa("EMPAQUES Y PAPELES WY SAS", "EMPAQUES Y PAPELES WY SAS", 165000)];
-    expect(deducirTarifa(viaje({ empresa: "EMPAQUES Y PAPELES WY SAS", ruta: "CALI VALLE DEL CAUCA → BOGOTA BOGOTA D. C." }), empaques).exacta?.nombre).toBe("EMPAQUES Y PAPELES WY SAS");
+    const empaques = [
+      tarifa("EMPAQUES", "EMPAQUES INDUSTRIALES DE COLOMBIA S.A.S.", 4500000, "FIJO"),
+      tarifa("EMPAQUES Y PAPELES WY SAS", "EMPAQUES Y PAPELES WY SAS", 165000),
+    ];
+    expect(deducirTarifa(viaje({ empresa: "EMPAQUES Y PAPELES WY SAS", ruta: "CALI VALLE DEL CAUCA → BOGOTA BOGOTA D. C." }), empaques).exacta?.nombre).toBe(
+      "EMPAQUES Y PAPELES WY SAS",
+    );
   });
 
   test("cliente sin tarifas: nada; las palabras de enlace no hacen parecido", () => {

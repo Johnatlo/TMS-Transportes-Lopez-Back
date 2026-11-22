@@ -215,7 +215,7 @@ describe("cartera", () => {
       [facturada(1), facturada(2, { valorFlete: 1_000_000 }), facturada(3, { facturaNumero: "FE-2" })],
       new Map([["CARTONES AMERICA", 45]]),
       new Map(),
-      HOY
+      HOY,
     );
     expect(facturas).toHaveLength(2);
     const fe1 = facturas.find((f) => f.facturaNumero === "FE-1")!;
@@ -240,18 +240,15 @@ describe("cartera", () => {
   });
 
   test("no entran los pagados, anulados ni los que no tienen numero o fecha", () => {
-    const filas = [
-      facturada(1, { facturaFechaPago: "2026-10-02" }),
-      facturada(2, { anulado: true }),
-      facturada(3, { facturaFecha: null }),
-      fila({ id: 4 }),
-    ];
+    const filas = [facturada(1, { facturaFechaPago: "2026-10-02" }), facturada(2, { anulado: true }), facturada(3, { facturaFecha: null }), fila({ id: 4 })];
     expect(agruparCartera(filas, new Map(), new Map(), HOY)).toHaveLength(0);
   });
 
   test("una gestion de cobro de hoy (hora Colombia) calla la factura; una de ayer no", () => {
     const gestion = (creadaEn: string) =>
-      new Map([["FE-1|CARTONES AMERICA", { id: 1, facturaNumero: "FE-1", empresa: "CARTONES AMERICA", texto: "llame", compromisoPago: null, autor: null, creadaEn }]]);
+      new Map([
+        ["FE-1|CARTONES AMERICA", { id: 1, facturaNumero: "FE-1", empresa: "CARTONES AMERICA", texto: "llame", compromisoPago: null, autor: null, creadaEn }],
+      ]);
     expect(agruparCartera([facturada(1)], new Map(), gestion("2026-10-10T15:00:00.000Z"), HOY)[0].alerta).toBeNull();
     // 2026-10-09 22:00 en Colombia: fue ayer.
     expect(agruparCartera([facturada(1)], new Map(), gestion("2026-10-10T03:00:00.000Z"), HOY)[0].alerta).not.toBeNull();
@@ -272,7 +269,7 @@ describe("cartera", () => {
       ],
       new Map(),
       new Map(),
-      HOY
+      HOY,
     );
     const [r] = resumirPorCliente(facturas);
     expect(r.facturas).toBe(3);
@@ -292,7 +289,7 @@ describe("cartera", () => {
       ],
       new Map([["CARTONES AMERICA", 45]]),
       new Map(),
-      HOY
+      HOY,
     );
     expect(facturas.map((f) => [f.facturaNumero, f.cliente, f.concepto, f.diasCredito]).sort()).toEqual([
       ["A", "CARTONES AMERICA", null, 45],
@@ -347,7 +344,9 @@ describe("anticipo que da la empresa (Zorro, Aburra Limpio, sin manifiesto)", ()
       fila({ id: 3, empresa: "CORPORACION ABURRA LIMPIO" }),
       fila({ id: 4, empresa: "CARTONES AMERICA" }),
     ]);
-    expect(resumen).toEqual([{ empresa: "CORPORACION ABURRA LIMPIO", faltaRegistrar: 1, viajesPorCobrar: 1, porCobrar: 1_000_000, pagado: 500_000, aBomba: false }]);
+    expect(resumen).toEqual([
+      { empresa: "CORPORACION ABURRA LIMPIO", faltaRegistrar: 1, viajesPorCobrar: 1, porCobrar: 1_000_000, pagado: 500_000, aBomba: false },
+    ]);
   });
 
   test("los urbanos de la matriz no llevan anticipo, aunque el cliente si lo de", () => {

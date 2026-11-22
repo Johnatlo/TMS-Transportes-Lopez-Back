@@ -537,14 +537,14 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1072 funciones, componentes, métodos y rutas en 72 archivos._
+_1079 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (36)
-- [`src/calculoConductores.ts`](#srccalculoconductorests) (9)
-- [`src/calculoNomina.ts`](#srccalculonominats) (13)
+- [`src/calculoConductores.ts`](#srccalculoconductorests) (11)
+- [`src/calculoNomina.ts`](#srccalculonominats) (14)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (9)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
@@ -554,6 +554,7 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 - [`src/contingencia.ts`](#srccontingenciats) (9)
 - [`src/correo.ts`](#srccorreots) (9)
 - [`src/cuadro.ts`](#srccuadrots) (43)
+- [`src/cuentasVehiculo.ts`](#srccuentasvehiculots) (2)
 - [`src/db.ts`](#srcdbts) (3)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (11)
@@ -563,7 +564,7 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
-- [`src/nomina.ts`](#srcnominats) (36)
+- [`src/nomina.ts`](#srcnominats) (37)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
 - [`src/prorrateo.ts`](#srcprorrateots) (12)
@@ -588,7 +589,7 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 - [`src/roles.ts`](#srcrolests) (7)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/conductores.ts`](#srcroutesconductorests) (17)
+- [`src/routes/conductores.ts`](#srcroutesconductorests) (18)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (50)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (26)
@@ -1043,7 +1044,9 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 >   matriz de fletes conductor (aparte de la de la empresa y mas baja): por
 >   tonelada (valor x toneladas reales) o fijo por viaje, con el valor vigente
 >   en la fecha del viaje. Sobre el sale el % del conductor (4 % salarial, que
->   genera prestaciones, y 5 % de viaticos, que no).
+>   genera prestaciones, y 5 % de viaticos, que no). INTEGRO: un valor por
+>   viaje que se le paga completo (los urbanos, que con el % quedarian muy
+>   bajos); no va al %.
 > - Cuenta de viaje (la hoja que llena el conductor): lo que recibio (anticipo
 >   de la bomba y transferencia) y lo que gasto por concepto. El saldo es
 >   gastos - recibido: positivo, la empresa le debe al conductor; negativo, el
@@ -1059,6 +1062,9 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 - **`suma(xs)`** · _función_
   Suma a centavos.
 
+- **`tipoFleteConductor(t)`** · _función_
+  El tipo de un texto (de la base o del Excel): por defecto TON.
+
 - **`fleteConductorEn(fletes, tarifaFleteId, fecha)`** · _función_
   El flete conductor vigente de una tarifa en una fecha (el ultimo que empezo antes o ese dia).
 
@@ -1066,6 +1072,9 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
   Producido conductor de un viaje: el escrito a mano (si lo hay) o el de la
   matriz (por tonelada: valor x toneladas reales; fijo: el valor). null si no
   hay valor (sin tarifa en la matriz o sin peso).
+
+- **`esIntegro(viaje, fletes)`** · _función_
+  true si el flete conductor del viaje es INTEGRO (se le paga completo, sin %).
 
 - **`totalGastos(g)`** · _función_
   Total de los gastos de una cuenta de viaje.
@@ -1098,6 +1107,9 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 > - Conductor: + % salarial del producido (4 %) y % de viaticos (5 %), que no
 >   es salario: no paga aportes ni genera prestaciones (salvo lo que pase del
 >   limite no salarial de la Ley 1393, 40 % del total, que entra al IBC).
+>   Los viajes con flete conductor INTEGRO (urbanos con valor fijo) no van al
+>   %: su valor se le paga completo, repartido entre salarial y viaticos en la
+>   misma proporcion de los porcentajes (4/9 y 5/9).
 > - Auxilio de transporte: si el empleado lo tiene y gana hasta 2 minimos.
 > - Aportes (salud y pension del empleado; pension, salud, ARL y caja del
 >   empleador) se redondean hacia arriba a la centena, como la PILA.
@@ -1125,6 +1137,11 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 
 - **`pct(v, p)`** · _función_
   Un porcentaje (en %) de un valor, a centavos.
+
+- **`pagoProducido(producido, integro, pctSalarial, pctViaticos)`** · _función_
+  Lo que el conductor gana por sus viajes: el % salarial y de viaticos del
+  producido, mas los viajes integros completos, repartidos entre salarial y
+  viaticos en la proporcion de los porcentajes (sin porcentajes, todo salarial).
 
 - **`calcularLinea(e, p)`** · _función_
   Calcula una linea de nomina.
@@ -1310,8 +1327,9 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 > Solo lo ven el rol total y M&C; M&C solo los vehiculos de su flota.
 >
 > - Matriz de fletes conductor: un valor por tarifa de la matriz de fletes de
->   la empresa (la misma tarifa con que se cobra el viaje), por tonelada o
->   fijo, con su vigencia. Se ve solo en este modulo.
+>   la empresa (la misma tarifa con que se cobra el viaje), por tonelada,
+>   fijo o integro (fijo que se le paga completo, sin %), con su vigencia. Se
+>   ve solo en este modulo.
 > - Producido conductor de cada viaje de la flota propia: el de la matriz, o
 >   el escrito a mano en su cuenta de viaje. Es lo que la nomina usa como
 >   producido del conductor (4 % salarial y 5 % de viaticos).
@@ -1365,7 +1383,7 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
     La matriz: cada tarifa de la empresa con su flete conductor vigente y su historial.
 
   - **`conductores.guardarFlete(d, usuarioId)`** · _método_
-    Guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }).
+    Guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo TON/FIJO/INTEGRO, desde }).
 
   - **`conductores.borrarFlete(id)`** · _método_
     Borra un valor de la matriz (no si cambiaria meses congelados).
@@ -1379,7 +1397,7 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
     Los viajes de la flota propia de un mes con su producido conductor y su cuenta de viaje.
 
   - **`conductores.producidoEntre(desde, hasta)`** · _método_
-    Producido conductor por viaje entre dos fechas (lo usa la nomina).
+    Producido conductor por viaje entre dos fechas y si es integro (lo usa la nomina).
 
   - **`conductores.guardarCuenta(cuadroViajeId, d, usuarioId, empresa)`** · _método_
     Guarda la cuenta de viaje de un viaje (los conceptos, el ACPM vacio = el
@@ -1820,6 +1838,31 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
   - **`bombas.actualizar(id, d)`** · _método_
     Cambia nombre, ciudad y/o si esta activa. Una bomba inactiva ya no se
     ofrece al registrar anticipos, pero sus anticipos viejos se conservan.
+
+### `src/cuentasVehiculo.ts`
+
+> Cuenta de cada vehiculo en el mes (como el cuadro SWK-973 de Excel): para
+> que cada dueno vea lo que produjo su carro, viaje por viaje, y lo que le
+> queda despues de los gastos.
+>
+> No calcula nada nuevo: junta lo que ya esta en el sistema.
+> - Por viaje (Rentabilidad): flete de la empresa, sus descuentos
+>   (retencion, ICA, anticipo de renta, 4 x 1000, Supertransporte, comision,
+>   T. Lopez, descargue, poliza), el producido (flete - descuentos), el
+>   anticipo y el saldo que se le liquida al dueno con su fecha de pago.
+> - Por viaje (Cuentas vehiculos): el conductor, su flete conductor (integro
+>   o no), lo que gana el conductor por el viaje (el % o el integro), lo que
+>   recibio, lo que gasto y el rojo (gastos - recibido).
+> - El resumen del mes es la cascada de Utilidades del vehiculo: ingresos -
+>   descuentos - anticipos y gastos directos (arreglos, cuentas de viaje...) -
+>   conductor (nomina) - gastos generales = lo que queda. Si el mes esta
+>   aprobado en Utilidades, es la foto aprobada.
+
+- **`c2(v)`** · _función_
+  Centavos exactos.
+
+- **`cuentasVehiculos(mes, empresa)`** · _función_
+  Las cuentas de los vehiculos de un mes (con viajes o gastos), con la marca de mes aprobado en Utilidades.
 
 ### `src/db.ts`
 
@@ -2306,6 +2349,9 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 
 - **`fechaDe(v, campo)`** · _función_
   Fecha "AAAA-MM-DD" valida.
+
+- **`c2(v)`** · _función_
+  Centavos exactos.
 
 - **`texto(v, max)`** · _función_
   Texto recortado, o null si queda vacio.
@@ -4480,6 +4526,9 @@ _1072 funciones, componentes, métodos y rutas en 72 archivos._
 
 - **`POST /fletes/importar`** · _ruta HTTP_
   POST /api/conductores/fletes/importar: importa la matriz del Excel ({ filas, aplicar }); sin aplicar solo dice cuales encontro.
+
+- **`GET /cuentas-vehiculos`** · _ruta HTTP_
+  GET /api/conductores/cuentas-vehiculos?mes=AAAA-MM: la cuenta de cada vehiculo en el mes (viajes, descuentos, conductor y lo que queda).
 
 - **`GET /viajes`** · _ruta HTTP_
   GET /api/conductores/viajes?mes=AAAA-MM: viajes de la flota propia con su producido conductor y su cuenta de viaje.

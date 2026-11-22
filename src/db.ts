@@ -1661,6 +1661,8 @@ export async function initSchema(): Promise<void> {
   // La vuelta de un anticipo de ida y vuelta no tiene viaje todavia, y un
   // anticipo solo en efectivo no tiene bomba.
   await pool.query("ALTER TABLE cuadro_anticipos MODIFY cuadroViajeId INT NULL, MODIFY bombaId INT NULL").catch(() => undefined);
+  // Fletes conductor: cabe INTEGRO (se le paga completo al conductor, sin %).
+  await pool.query("ALTER TABLE fletes_conductor MODIFY tipo VARCHAR(10) NOT NULL DEFAULT 'TON'").catch(() => undefined);
   // Los anticipos de antes eran solo de bomba (combustible): se marcan asi.
   await pool.query(
     "UPDATE cuadro_anticipos SET combustible = valor, efectivo = 0 WHERE combustible IS NULL AND efectivo IS NULL"

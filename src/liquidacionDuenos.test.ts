@@ -7,7 +7,11 @@ import { totalesLiquidacion } from "./liquidacionDuenos";
 describe("totalesLiquidacion", () => {
   // Como "Miller 01-07-26": viajes, conceptos y saldo pendiente.
   test("suma los viajes y los conceptos con su signo", () => {
-    const t = totalesLiquidacion([{ saldo: 2_897_003 }, { saldo: 2_640_869 }, { saldo: 447_599 }], [{ valor: -1_085_576 }, { valor: 3_999_999.47 }, { valor: -3_400_000 }], null);
+    const t = totalesLiquidacion(
+      [{ saldo: 2_897_003 }, { saldo: 2_640_869 }, { saldo: 447_599 }],
+      [{ valor: -1_085_576 }, { valor: 3_999_999.47 }, { valor: -3_400_000 }],
+      null,
+    );
     expect(t.totalViajes).toBe(5_985_471);
     expect(t.total).toBe(5_499_894);
     expect([t.pagado, t.saldoPendiente]).toEqual([5_499_894, 0]);

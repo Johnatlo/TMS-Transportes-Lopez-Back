@@ -1,5 +1,17 @@
 import { describe, expect, test } from "vitest";
-import { aCentavos, amortizar, aPesos, causaciones, causacionesPorDias, gmfDe, tasaImplicita, ErrorReparto, repartir, repartirGasto, sumarMeses } from "./prorrateo";
+import {
+  aCentavos,
+  amortizar,
+  aPesos,
+  causaciones,
+  causacionesPorDias,
+  gmfDe,
+  tasaImplicita,
+  ErrorReparto,
+  repartir,
+  repartirGasto,
+  sumarMeses,
+} from "./prorrateo";
 import type { Destino } from "./prorrateo";
 
 /** N vehiculos marcados (una parte cada uno), con ids desde `desde`. */

@@ -96,9 +96,11 @@ export interface LineaNomina {
   producido: number;
   /** true = se escribio a mano. */
   producidoManual: boolean;
-  /** El que sale de los viajes del sistema y cuanto en cada vehiculo. */
+  /** El que sale de los viajes del sistema (sin los integros) y cuanto en cada vehiculo. */
   producidoSistema: number;
-  porVehiculo: Array<{ vehiculoId: number; placa: string; producido: number; viajes: number; sinTarifa: number }>;
+  /** Viajes con flete conductor INTEGRO: se pagan completos, no van al %. */
+  integro: number;
+  porVehiculo: Array<{ vehiculoId: number; placa: string; producido: number; integro?: number; viajes: number; sinTarifa: number }>;
   ajuste: number;
   notaAjuste: string | null;
   /** Lo que entro al calculo (salario, porcentajes, riesgo...). */
@@ -153,6 +155,9 @@ function fechaDe(v: unknown, campo: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || Number.isNaN(Date.parse(f))) throw new ErrorCuadro(`Escribe ${campo}.`);
   return f;
 }
+/** Centavos exactos. */
+const c2 = (v: number) => Math.round(v * 100 + Number.EPSILON) / 100;
+
 /** Texto recortado, o null si queda vacio. */
 const texto = (v: unknown, max: number) =>
   String(v ?? "")
@@ -206,7 +211,7 @@ async function parametrosDelAnio(anio: number): Promise<ParametrosNomina> {
 }
 
 /** Lo que entra al calculo de una linea a partir del empleado. */
-function entradaDe(e: Empleado, l: { dias: number; producido: number; ajuste: number; upcAdicional?: number }): EntradaLinea {
+function entradaDe(e: Empleado, l: { dias: number; producido: number; integro?: number; ajuste: number; upcAdicional?: number }): EntradaLinea {
   return {
     salarioBase: e.salarioBase,
     salarioAdicional: e.salarioAdicional,
@@ -216,6 +221,7 @@ function entradaDe(e: Empleado, l: { dias: number; producido: number; ajuste: nu
     riesgoArl: e.riesgoArl,
     dias: l.dias,
     producido: l.producido,
+    integro: l.integro ?? 0,
     ajuste: l.ajuste,
     upcAdicional: l.upcAdicional ?? 0,
   };
@@ -462,9 +468,12 @@ export const nomina = {
               ? json<ProducidoConductor>(l.detalleProducido, { total: 0, porVehiculo: [], viajes: [] })
               : (producidos.get(n.id)?.get(e.id) ?? { total: 0, porVehiculo: [], viajes: [] });
         const manual = !!l.producidoManual;
+        // Los viajes integros se pagan completos: no van al producido del % (el escrito a mano tampoco los incluye).
+        const integro = e.tipo === "CONDUCTOR" ? (sistema.integro ?? 0) : 0;
         const valores = {
           dias: Number(l.dias),
-          producido: manual || e.tipo !== "CONDUCTOR" ? Number(l.producido) : sistema.total,
+          producido: manual || e.tipo !== "CONDUCTOR" ? Number(l.producido) : c2(sistema.total - integro),
+          integro,
           ajuste: Number(l.ajuste),
           upcAdicional: Number(l.upcAdicional ?? 0),
         };
@@ -503,7 +512,8 @@ export const nomina = {
           placa: l.placa ?? null,
           ...valores,
           producidoManual: manual,
-          producidoSistema: sistema.total,
+          producidoSistema: c2(sistema.total - integro),
+          integro: entrada.integro ?? 0,
           porVehiculo: sistema.porVehiculo.map((v) => ({ ...v, placa: placas.get(v.vehiculoId) ?? "?" })),
           notaAjuste: l.notaAjuste ?? null,
           entrada,
@@ -698,7 +708,9 @@ export const nomina = {
       /** Flete de la empresa (referencia). */
       fleteEmpresa: v.flete === null ? null : Math.round(Number(v.flete) * 100) / 100,
       /** Producido conductor: lo que suma al producido de la nomina. */
-      flete: producido.get(v.id) ?? null,
+      flete: producido.get(v.id)?.valor ?? null,
+      /** INTEGRO: se le paga completo (no va al %). */
+      integro: producido.get(v.id)?.integro ?? false,
     }));
   },
 
@@ -754,7 +766,12 @@ export const nomina = {
     const detalleDe = (l: LineaNomina): ProducidoConductor =>
       l.tipo !== "CONDUCTOR"
         ? { total: 0, porVehiculo: [], viajes: [] }
-        : { total: l.producido, porVehiculo: l.porVehiculo.map(({ placa: _placa, ...v }) => v), viajes: viajesPor.get(l.empleadoId)?.viajes ?? [] };
+        : {
+            total: c2(l.producido + l.integro),
+            integro: l.integro,
+            porVehiculo: l.porVehiculo.map(({ placa: _placa, ...v }) => v),
+            viajes: viajesPor.get(l.empleadoId)?.viajes ?? [],
+          };
     for (const l of conCosto) await gastos.revisarCausaciones({ monto: l.gasto.total, causaDesde: n.desde, causaHasta: n.hasta });
     try {
       for (const l of conCosto) {
@@ -881,7 +898,15 @@ async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProdu
     [desde, hasta],
   );
   const producido = await conductores.producidoEntre(desde, hasta);
-  return filas.filter((f) => f.vehiculoId).map((f) => ({ id: f.id, fecha: dia(f.fecha)!, vehiculoId: f.vehiculoId, flete: producido.get(f.id) ?? null }));
+  return filas
+    .filter((f) => f.vehiculoId)
+    .map((f) => ({
+      id: f.id,
+      fecha: dia(f.fecha)!,
+      vehiculoId: f.vehiculoId,
+      flete: producido.get(f.id)?.valor ?? null,
+      integro: producido.get(f.id)?.integro ?? false,
+    }));
 }
 
 /**
@@ -898,7 +923,9 @@ function repartoAutomatico(
   hasta: string,
   vehiculoId: number | null,
 ): Array<{ vehiculoId: number; porcentaje: number }> {
-  const producido = new Map(sistema.porVehiculo.map((v) => [v.vehiculoId, v.producido]));
+  // Lo que gano en cada carro: el % de lo que va al % y los integros completos.
+  const pctTotal = (e.pctSalarial + e.pctViaticos) / 100;
+  const producido = new Map(sistema.porVehiculo.map((v) => [v.vehiculoId, (v.producido - (v.integro ?? 0)) * pctTotal + (v.integro ?? 0)]));
   // Los carros que tuvo en el periodo (aunque no haya hecho viajes en alguno) pagan su parte por dias.
   const dias = diasPorVehiculo(e.vehiculos, desde, hasta);
   if (!dias.size && vehiculoId) dias.set(vehiculoId, 1);

@@ -167,12 +167,23 @@ describe("manifiesto anulado y vuelto a expedir: que hereda la fila nueva", () =
 
   test("pasa lo diligenciado en la anulada a los campos vacios de la nueva", () => {
     const anulada = {
-      remision: "1300", tipoFlete: "FIJO", valorFijo: 945_900, tarifaKilo: null, estadoPapeles: "OFICINA",
-      facturado: 1, facturaNumero: "7400", facturaFecha: "2026-10-07",
+      remision: "1300",
+      tipoFlete: "FIJO",
+      valorFijo: 945_900,
+      tarifaKilo: null,
+      estadoPapeles: "OFICINA",
+      facturado: 1,
+      facturaNumero: "7400",
+      facturaFecha: "2026-10-07",
     };
     expect(datosAHeredar(anulada, nueva)).toEqual({
-      remision: "1300", valorFijo: 945_900, tipoFlete: "FIJO", estadoPapeles: "OFICINA",
-      facturado: 1, facturaNumero: "7400", facturaFecha: "2026-10-07",
+      remision: "1300",
+      valorFijo: 945_900,
+      tipoFlete: "FIJO",
+      estadoPapeles: "OFICINA",
+      facturado: 1,
+      facturaNumero: "7400",
+      facturaFecha: "2026-10-07",
     });
   });
 

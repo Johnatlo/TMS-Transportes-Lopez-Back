@@ -60,7 +60,9 @@ describe("liquidar", () => {
   });
 
   test("la transferencia es un tercer anticipo", () => {
-    expect(liquidar(viaje({ valorTerceroFijo: 5_000_000, anticipoTransferencia: 400_000 }), { efectivo: 1_000_000, combustible: 0 }).valorAPagar).toBe(3_600_000);
+    expect(liquidar(viaje({ valorTerceroFijo: 5_000_000, anticipoTransferencia: 400_000 }), { efectivo: 1_000_000, combustible: 0 }).valorAPagar).toBe(
+      3_600_000,
+    );
   });
 
   test("el ICA del viaje manda sobre el sugerido", () => {

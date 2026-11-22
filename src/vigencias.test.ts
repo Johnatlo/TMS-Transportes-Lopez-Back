@@ -14,11 +14,24 @@ describe("vigentesEn", () => {
   const valores = (fecha: string) => vigentesEn(historial, (f) => f.cliente, fecha).map((f) => [f.cliente, f.valor]);
 
   test("cada viaje usa el valor de su fecha", () => {
-    expect(valores("2026-10-20")).toEqual([["CORAME", 130_000], ["TOLUA", 100_000]]);
-    expect(valores("2026-11-01")).toEqual([["CORAME", 150_000], ["TOLUA", 100_000]]);
-    expect(valores("2026-11-20")).toEqual([["CORAME", 150_000], ["TOLUA", 100_000], ["NUEVO", 50_000]]);
+    expect(valores("2026-10-20")).toEqual([
+      ["CORAME", 130_000],
+      ["TOLUA", 100_000],
+    ]);
+    expect(valores("2026-11-01")).toEqual([
+      ["CORAME", 150_000],
+      ["TOLUA", 100_000],
+    ]);
+    expect(valores("2026-11-20")).toEqual([
+      ["CORAME", 150_000],
+      ["TOLUA", 100_000],
+      ["NUEVO", 50_000],
+    ]);
     // Desde el 1 de diciembre TOLUA ya no esta.
-    expect(valores("2026-12-05")).toEqual([["CORAME", 150_000], ["NUEVO", 50_000]]);
+    expect(valores("2026-12-05")).toEqual([
+      ["CORAME", 150_000],
+      ["NUEVO", 50_000],
+    ]);
   });
 
   test("si dos cambios rigen el mismo dia, vale el ultimo guardado", () => {
@@ -34,7 +47,13 @@ describe("cambiosDeMatriz", () => {
       { cliente: "CORAME", valor: 130_000 },
       { cliente: "NUEVO", valor: 1 },
     ];
-    const c = cambiosDeMatriz(actuales, nuevas, (a) => a.cliente, (n) => n.cliente, (a, n) => a.valor === n.valor);
+    const c = cambiosDeMatriz(
+      actuales,
+      nuevas,
+      (a) => a.cliente,
+      (n) => n.cliente,
+      (a, n) => a.valor === n.valor,
+    );
     expect(c.guardar).toEqual([{ cliente: "NUEVO", valor: 1 }]);
     expect(c.quitar).toEqual(["TOLUA"]);
   });

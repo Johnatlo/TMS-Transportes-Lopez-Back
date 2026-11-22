@@ -1,5 +1,15 @@
 import { describe, expect, test } from "vitest";
-import { fleteConductorEn, liquidarConductor, nombreComparable, producidoConductor, saldoCuenta, saldoPrestamo, totalGastos } from "./calculoConductores";
+import {
+  esIntegro,
+  fleteConductorEn,
+  liquidarConductor,
+  nombreComparable,
+  producidoConductor,
+  saldoCuenta,
+  saldoPrestamo,
+  tipoFleteConductor,
+  totalGastos,
+} from "./calculoConductores";
 
 const fletes = [
   { tarifaFleteId: 9, valor: 100_000, tipo: "TON" as const, desde: "1999-04-01" }, // BODEGAS
@@ -80,5 +90,33 @@ describe("prestamos y liquidacion del mes", () => {
   });
   test("nombres de la matriz comparables (CORAME = corame)", () => {
     expect(nombreComparable("Porcelatino B/Ventura Bgta")).toBe("PORCELATINO B VENTURA BGTA");
+  });
+});
+
+describe("flete conductor INTEGRO", () => {
+  const conUrbano = [...fletes, { tarifaFleteId: 40, valor: 200_000, tipo: "INTEGRO" as const, desde: "1999-04-01" }]; // ABURRA URBANO
+  test("vale el valor por viaje (como fijo) y se marca integro", () => {
+    expect(producidoConductor({ fecha: "2026-10-05", tarifaFleteId: 40, pesoKg: 8_000 }, conUrbano)).toBe(200_000);
+    expect(esIntegro({ fecha: "2026-10-05", tarifaFleteId: 40 }, conUrbano)).toBe(true);
+    expect(esIntegro({ fecha: "2026-10-05", tarifaFleteId: 17 }, conUrbano)).toBe(false);
+  });
+
+  test("el tipo se lee del Excel con o sin tilde", () => {
+    expect(["integro", "Íntegro", "FIJO", "ton", ""].map(tipoFleteConductor)).toEqual(["INTEGRO", "INTEGRO", "FIJO", "TON", "TON"]);
+  });
+
+  test("liquidacion: el integro no va al %, se paga completo", () => {
+    const l = liquidarConductor({
+      viajes: [
+        { producido: 4_200_000, saldo: null },
+        { producido: 200_000, saldo: null, integro: true },
+      ],
+      pctSalarial: 4,
+      pctViaticos: 5,
+      nomina: null,
+      prestamos: 0,
+    });
+    expect([l.producido, l.integro]).toEqual([4_200_000, 200_000]);
+    expect(l.salarial + l.viaticos).toBeCloseTo(4_200_000 * 0.09 + 200_000, 2);
   });
 });
