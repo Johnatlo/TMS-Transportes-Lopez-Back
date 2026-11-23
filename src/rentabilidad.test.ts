@@ -207,3 +207,14 @@ describe("buscarEnMatriz", () => {
     expect(buscarEnMatriz(matriz, "RECOLAM S.EN C.")).toBeNull();
   });
 });
+
+describe("reconocidos: son de la empresa", () => {
+  test("en un carro de socio no se le pagan al dueno: la empresa recibe el flete menos retencion, ReteICA y Supertransporte", () => {
+    const c = calcular(entrada({ valorEmpresa: 1_000_000, reconocido: true, combustible: 0 }));
+    expect(c.saldoBeneficiario).toBe(0);
+    expect([c.comision, c.tLopez, c.descargue, c.poliza, c.bancaria]).toEqual([0, 0, 0, 0, 0]);
+    expect(c.rentabilidad).toBe(1_000_000 - c.retencion - c.reteIca - c.supertransporte);
+    // El anticipo de renta lo asume la empresa (impuesto adelantado): la ganancia es la plata que queda.
+    expect(c.ganancia).toBe(c.rentabilidad - c.anticipoRenta);
+  });
+});

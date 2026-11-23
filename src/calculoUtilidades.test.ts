@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { cascadas, cuentaSocio, finDeMes, participacionesEn, participacionPonderada, pasoDe, repartoMes } from "./calculoUtilidades";
+import { cascadas, cuentaSocio, estadoEmpresa, finDeMes, participacionesEn, participacionPonderada, pasoDe, repartoMes } from "./calculoUtilidades";
 import type { Participacion, PartidaGasto, ViajeCascada } from "./calculoUtilidades";
 
 const SZX880 = 1;
@@ -198,5 +198,24 @@ describe("cuenta del socio: lo que no alcanza se acumula para el mes siguiente",
   });
   test("la parte que va a la empresa es de la empresa", () => {
     expect(pasoDe({ esNominaConductor: false, destinosVehiculo: 3, destinosSocio: 0, aLaEmpresa: true })).toBe("EMPRESA");
+  });
+});
+
+describe("estado de resultados de la empresa", () => {
+  test("terceros (antes del anticipo) + reconocidos + T. Lopez - gastos; el anticipo de renta va aparte", () => {
+    const e = estadoEmpresa({
+      terceros: [
+        { rentabilidad: 500_000, anticipoRenta: 17_500 },
+        { rentabilidad: 300_000, anticipoRenta: 10_500 },
+      ],
+      reconocidos: [{ ingreso: 1_000_000, anticipoRenta: 35_000 }],
+      tLopez: [{ total: 150_000 }, { total: 50_000 }],
+      anticipoSocios: 200_000,
+      totalGastos: 400_000,
+    });
+    expect([e.gananciaTerceros, e.reconocidos, e.tLopez, e.ingresos]).toEqual([800_000, 1_000_000, 200_000, 2_000_000]);
+    expect(e.utilidad).toBe(1_600_000);
+    expect(e.anticipoRenta).toEqual({ asumido: 63_000, descontadoSocios: 200_000, total: 263_000 });
+    expect(e.despuesDeAnticipo).toBe(1_537_000);
   });
 });

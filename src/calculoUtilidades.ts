@@ -37,6 +37,16 @@
  * Gastos de la empresa: los que van a la empresa (no a un carro ni a un
  * socio) bajan la rentabilidad de la empresa, que no se reparte.
  *
+ * Estado de resultados de la empresa (ver estadoEmpresa):
+ *   + rentabilidad de los viajes de terceros (antes del anticipo de renta)
+ *   + reconocidos (de todos los carros: son de la empresa)
+ *   + T. Lopez cobrado en los viajes
+ *   - gastos de la empresa
+ *   = utilidad de la empresa.
+ * El anticipo de renta no es gasto: es impuesto pagado por adelantado que se
+ * cruza en la declaracion. Va aparte: el que asume la empresa (terceros y
+ * reconocidos) y el que se les descuenta a los socios.
+ *
  * Todo en pesos con dos decimales; las partes se reparten en centavos para que
  * sumen exacto (ver prorrateo.ts).
  */
@@ -384,4 +394,79 @@ export function pasoDe(g: { esNominaConductor: boolean; destinosVehiculo: number
 export function finDeMes(mes: string): string {
   const [a, m] = mes.split("-").map(Number);
   return `${mes}-${String(new Date(Date.UTC(a, m, 0)).getUTCDate()).padStart(2, "0")}`;
+}
+
+/** Un reconocido en el estado de resultados de la empresa. */
+export interface ReconocidoEmpresa {
+  id: number;
+  fecha: string;
+  placa: string;
+  /** De la flota propia (M&C lo ve) o de un tercero. */
+  propio: boolean;
+  cliente: string;
+  manifiesto: string | null;
+  remisionUrl: string | null;
+  facturaUrl: string | null;
+  flete: number;
+  /** Retencion, ReteICA y Supertransporte (y otros descuentos escritos). */
+  descuentos: number;
+  /** Lo que le queda a la empresa (antes del anticipo de renta). */
+  ingreso: number;
+  anticipoRenta: number;
+}
+
+/** Lo cobrado de T. Lopez en los viajes de un carro en el mes. */
+export interface TLopezVehiculo {
+  placa: string;
+  propio: boolean;
+  viajes: number;
+  total: number;
+}
+
+/** Los totales del estado de resultados de la empresa en el mes. */
+export interface EstadoEmpresa {
+  viajesTerceros: number;
+  /** Rentabilidad de los viajes de terceros, antes del anticipo de renta. */
+  gananciaTerceros: number;
+  reconocidos: number;
+  tLopez: number;
+  ingresos: number;
+  totalGastos: number;
+  /** Ingresos - gastos de la empresa. */
+  utilidad: number;
+  /** Impuesto pagado por adelantado (se cruza en la declaracion): no es gasto. */
+  anticipoRenta: { asumido: number; descontadoSocios: number; total: number };
+  /** Utilidad - el anticipo de renta que asume la empresa (la plata que queda). */
+  despuesDeAnticipo: number;
+}
+
+/**
+ * Estado de resultados de la empresa: rentabilidad de terceros + reconocidos +
+ * T. Lopez - gastos de la empresa. El anticipo de renta va aparte (no es gasto).
+ */
+export function estadoEmpresa(e: {
+  terceros: Array<{ rentabilidad: number; anticipoRenta: number }>;
+  reconocidos: Array<{ ingreso: number; anticipoRenta: number }>;
+  tLopez: Array<{ total: number }>;
+  anticipoSocios: number;
+  totalGastos: number;
+}): EstadoEmpresa {
+  const gananciaTerceros = sumar(e.terceros.map((t) => t.rentabilidad));
+  const reconocidos = sumar(e.reconocidos.map((r) => r.ingreso));
+  const tLopez = sumar(e.tLopez.map((t) => t.total));
+  const ingresos = sumar([gananciaTerceros, reconocidos, tLopez]);
+  const utilidad = c2(ingresos - e.totalGastos);
+  const asumido = sumar([...e.terceros, ...e.reconocidos].map((x) => x.anticipoRenta));
+  const descontadoSocios = c2(e.anticipoSocios);
+  return {
+    viajesTerceros: e.terceros.length,
+    gananciaTerceros,
+    reconocidos,
+    tLopez,
+    ingresos,
+    totalGastos: c2(e.totalGastos),
+    utilidad,
+    anticipoRenta: { asumido, descontadoSocios, total: c2(asumido + descontadoSocios) },
+    despuesDeAnticipo: c2(utilidad - asumido),
+  };
 }

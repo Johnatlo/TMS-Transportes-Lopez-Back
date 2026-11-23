@@ -537,7 +537,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1079 funciones, componentes, métodos y rutas en 73 archivos._
+_1081 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -545,7 +545,7 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/auth.ts`](#srcauthts) (36)
 - [`src/calculoConductores.ts`](#srccalculoconductorests) (11)
 - [`src/calculoNomina.ts`](#srccalculonominats) (14)
-- [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (9)
+- [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (10)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
 - [`src/conductores.ts`](#srcconductorests) (29)
@@ -610,7 +610,7 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
-- [`src/utilidades.ts`](#srcutilidadests) (28)
+- [`src/utilidades.ts`](#srcutilidadests) (29)
 - [`src/vigencias.ts`](#srcvigenciasts) (3)
 
 ### `src/accesos.ts`
@@ -1228,6 +1228,16 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 > Gastos de la empresa: los que van a la empresa (no a un carro ni a un
 > socio) bajan la rentabilidad de la empresa, que no se reparte.
 >
+> Estado de resultados de la empresa (ver estadoEmpresa):
+>   + rentabilidad de los viajes de terceros (antes del anticipo de renta)
+>   + reconocidos (de todos los carros: son de la empresa)
+>   + T. Lopez cobrado en los viajes
+>   - gastos de la empresa
+>   = utilidad de la empresa.
+> El anticipo de renta no es gasto: es impuesto pagado por adelantado que se
+> cruza en la declaracion. Va aparte: el que asume la empresa (terceros y
+> reconocidos) y el que se les descuenta a los socios.
+>
 > Todo en pesos con dos decimales; las partes se reparten en centavos para que
 > sumen exacto (ver prorrateo.ts).
 
@@ -1267,6 +1277,10 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 
 - **`finDeMes(mes)`** · _función_
   Ultimo dia de un mes "AAAA-MM".
+
+- **`estadoEmpresa(e)`** · _función_
+  Estado de resultados de la empresa: rentabilidad de terceros + reconocidos +
+  T. Lopez - gastos de la empresa. El anticipo de renta va aparte (no es gasto).
 
 ### `src/cifrado.ts`
 
@@ -2799,6 +2813,13 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 >   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
 >   el anticipo = lo que se le paga al dueno. La comision y T. Lopez son
 >   gastos del dueno: estos carros no le dejan rentabilidad a la empresa.
+> - Reconocidos (convenio entre empresas): son de la empresa, sea el carro
+>   propio, de socio o de tercero; no se le pagan al dueno ni al tercero. Llevan
+>   los descuentos de una factura que entra al banco (retencion, ReteICA y
+>   Supertransporte); sin comision, T. Lopez, descargue, poliza ni anticipo.
+> - Anticipo de renta: es un impuesto pagado por adelantado que se cruza en la
+>   declaracion. A los socios se les descuenta de su saldo; en terceros y
+>   reconocidos lo asume la empresa (`ganancia` = rentabilidad - anticipo).
 
 - **`grupoDe(placa, flota, dueno, esSociedad)`** · _función_
   Grupo de un viaje: los carros con hoja propia (JTY-221, SWK-973, XGJ-197);
@@ -6032,8 +6053,11 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 >   aprobado (el saldo de cada fondo sale de ahi). Se guarda la foto
 >   (repartos_utilidades) con lo que se decidio repartir de cada vehiculo.
 >   Solo se anula el ultimo mes aprobado.
-> - Empresa: la ganancia de los viajes de terceros (de Rentabilidad) menos
->   los gastos que asume la empresa. No se reparte.
+> - Empresa (estado de resultados, ver estadoEmpresa): la rentabilidad de los
+>   viajes de terceros + los reconocidos (de todos los carros) + T. Lopez
+>   cobrado en los viajes - los gastos que asume la empresa. El anticipo de
+>   renta va aparte (impuesto pagado por adelantado). No se reparte.
+> - Los reconocidos no entran a la cascada de los carros: son de la empresa.
 > - Socios: los de la empresa y los externos. La cuenta de cada socio arranca
 >   en su saldo inicial, suma el neto de cada mes aprobado y resta los pagos
 >   (pagos_socios); lo que no le alcanza se acumula para el mes siguiente.
@@ -6064,6 +6088,9 @@ _1079 funciones, componentes, métodos y rutas en 73 archivos._
 
 - **`repartimosDe(x)`** · _función_
   Lo que se decidio repartir de cada vehiculo ({ vehiculoId: monto }), validado.
+
+- **`armarEmpresa(d)`** · _función_
+  El estado de resultados de la empresa con su detalle.
 
 - **`utilidades`** · _módulo_
   Utilidades, fondos, participaciones y socios.

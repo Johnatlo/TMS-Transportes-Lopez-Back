@@ -20,6 +20,13 @@
  *   SWK-973, XGJ-197...): lo que paga el cliente menos todos los descuentos y
  *   el anticipo = lo que se le paga al dueno. La comision y T. Lopez son
  *   gastos del dueno: estos carros no le dejan rentabilidad a la empresa.
+ * - Reconocidos (convenio entre empresas): son de la empresa, sea el carro
+ *   propio, de socio o de tercero; no se le pagan al dueno ni al tercero. Llevan
+ *   los descuentos de una factura que entra al banco (retencion, ReteICA y
+ *   Supertransporte); sin comision, T. Lopez, descargue, poliza ni anticipo.
+ * - Anticipo de renta: es un impuesto pagado por adelantado que se cruza en la
+ *   declaracion. A los socios se les descuenta de su saldo; en terceros y
+ *   reconocidos lo asume la empresa (`ganancia` = rentabilidad - anticipo).
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
@@ -101,7 +108,13 @@ export interface RetencionCliente {
 
 /** Texto sin tildes ni signos, en mayuscula, para comparar nombres de clientes. */
 export const normalizar = (s: string) =>
-  s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
 /** Otros nombres con que aparece un cliente en las matrices. */
 const SINONIMOS: Array<[RegExp, string[]]> = [[/CORAME|CARTONES AMERICA/, ["CORAME", "CARTONES AMERICA"]]];
@@ -272,7 +285,7 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
   /** La retencion con lo escrito en el viaje: desmarcada 0; si no, su valor o el calculado. */
   const aplicada = (clave: ClaveRetencion) => {
     const a = e.rentRetenciones[clave];
-    return a && !a.aplica ? 0 : a?.valor ?? calculadas[clave];
+    return a && !a.aplica ? 0 : (a?.valor ?? calculadas[clave]);
   };
   /**
    * Comision, T. Lopez, descargue y poliza: el valor sale de su campo o de la
@@ -289,9 +302,39 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
   const otrosDescuentos = e.rentOtrosDescuentos ?? 0;
   const anticipo = e.efectivo + e.combustible + e.transferencia;
 
+  if (e.reconocido) {
+    // Convenio entre empresas: todo para la empresa, con los descuentos de la factura.
+    const anticipoRenta = aplicada("anticipoRenta");
+    const saldoEmpresa = v - retencion - reteIca - supertransporte;
+    const rentabilidad = saldoEmpresa - otrosDescuentos;
+    return {
+      retencion,
+      icaPorMil,
+      reteIca,
+      bancaria: 0,
+      supertransporte,
+      retencionesCalculadas: { ...calculadas, bancaria: 0 },
+      comision: 0,
+      tLopez: 0,
+      descargue: 0,
+      poliza: 0,
+      anticipo,
+      anticipoRenta,
+      saldoEmpresa,
+      fleteTercero: 0,
+      retencionTercero: 0,
+      reteIcaTercero: 0,
+      supertransporteTercero: 0,
+      otrosDescuentos,
+      saldoBeneficiario: 0,
+      rentabilidad,
+      ganancia: rentabilidad - anticipoRenta,
+    };
+  }
+
   if (terceros) {
     // La comision de la matriz, como en los demas carros: una vez por remision y con flete.
-    const comision = desmarcable("comision", e.rentComision ?? (e.primeraDeRemision && v > 0 ? e.comisionMatriz?.comision ?? 0 : 0));
+    const comision = desmarcable("comision", e.rentComision ?? (e.primeraDeRemision && v > 0 ? (e.comisionMatriz?.comision ?? 0) : 0));
     const tLopez = desmarcable("tLopez", e.rentTLopez ?? 0);
     // Los urbanos no llevan poliza RCE.
     const poliza = desmarcable("poliza", e.rentPoliza ?? (e.primeraDeManifiesto && !e.urbano && p > 0 ? POLIZA_RCE : 0));
@@ -333,8 +376,8 @@ export function calcular(e: EntradaRentabilidad): CalculoRentabilidad {
   const sinExtras = SIN_DESCARGUE_NI_POLIZA.has(e.grupo) || e.reconocido || e.urbano || v <= 0;
   // Comision y T. Lopez una vez por remision, y solo cuando el viaje ya tiene flete.
   const cobra = e.primeraDeRemision && v > 0;
-  const comision = desmarcable("comision", e.rentComision ?? (cobra ? e.comisionMatriz?.comision ?? 0 : 0));
-  const tLopez = desmarcable("tLopez", e.rentTLopez ?? (cobra ? e.comisionMatriz?.tLopez ?? 0 : 0));
+  const comision = desmarcable("comision", e.rentComision ?? (cobra ? (e.comisionMatriz?.comision ?? 0) : 0));
+  const tLopez = desmarcable("tLopez", e.rentTLopez ?? (cobra ? (e.comisionMatriz?.tLopez ?? 0) : 0));
   const corame = /CORAME|CARTONES\s+AMERICA/i.test(e.empresa);
   const descargue = desmarcable("descargue", e.rentDescargue ?? (corame && !sinExtras && e.primeraDeManifiesto ? DESCARGUE_CAME : 0));
   const poliza = desmarcable("poliza", e.rentPoliza ?? (!sinExtras && e.primeraDeManifiesto ? POLIZA_RCE : 0));
@@ -442,14 +485,14 @@ export const rentabilidad = {
         `SELECT c.id, c.rentComision, c.rentTLopez, c.rentDescargue, c.rentPoliza, c.rentIcaPorMil, c.fechaPagoRentabilidad,
                 c.rentRetenciones, c.rentOtrosDescuentos, c.rentOtrosConcepto, c.rentRevisadoEn, u.nombre AS rentRevisadoPor
            FROM cuadro_viajes c LEFT JOIN usuarios u ON u.id = c.rentRevisadoPorId
-          WHERE c.anulado = 0`
+          WHERE c.anulado = 0`,
       ),
       pool.query<RowDataPacket[]>(
         `SELECT cuadroViajeId, SUM(COALESCE(efectivo, 0)) AS efectivo,
                 SUM(COALESCE(combustible, valor - COALESCE(efectivo, 0))) AS combustible,
                 GROUP_CONCAT(DISTINCT CASE WHEN efectivo > 0 THEN DATE_FORMAT(fecha, '%Y-%m-%d') END ORDER BY fecha) AS fechasEfectivo,
                 GROUP_CONCAT(DISTINCT CASE WHEN COALESCE(combustible, valor - COALESCE(efectivo, 0)) > 0 THEN DATE_FORMAT(fecha, '%Y-%m-%d') END ORDER BY fecha) AS fechasCombustible
-           FROM cuadro_anticipos GROUP BY cuadroViajeId`
+           FROM cuadro_anticipos GROUP BY cuadroViajeId`,
       ),
       this.historialMatrices(),
     ]);
@@ -469,15 +512,27 @@ export const rentabilidad = {
     const bombaPor = new Map(
       bomba.map((b) => [
         Number(b.cuadroViajeId),
-        { efectivo: Number(b.efectivo), combustible: Number(b.combustible), fechasEfectivo: dias(b.fechasEfectivo), fechasCombustible: dias(b.fechasCombustible) },
-      ])
+        {
+          efectivo: Number(b.efectivo),
+          combustible: Number(b.combustible),
+          fechasEfectivo: dias(b.fechasEfectivo),
+          fechasCombustible: dias(b.fechasCombustible),
+        },
+      ]),
     );
     const vivos = filas.filter((f) => !f.anulado).sort((a, b) => a.id - b.id);
     const remisiones = new Set<string>();
     // Varias remesas en un manifiesto: descargue, poliza y todos sus anticipos van
     // a la fila de flete mas alto (las demas quedan sin ellos).
     const principal = filaPrincipalPorManifiesto(vivos);
-    const sinAnticipo = { efectivo: 0, combustible: 0, transferencia: 0, fechasEfectivo: [] as string[], fechasCombustible: [] as string[], fechaTransferencia: null as string | null };
+    const sinAnticipo = {
+      efectivo: 0,
+      combustible: 0,
+      transferencia: 0,
+      fechasEfectivo: [] as string[],
+      fechasCombustible: [] as string[],
+      fechaTransferencia: null as string | null,
+    };
     const anticipoManifiesto = new Map<string, typeof sinAnticipo>();
     const anticipoDe = (f: FilaCuadro) => {
       const b = bombaPor.get(f.id);
@@ -516,7 +571,7 @@ export const rentabilidad = {
       const primeraDeRemision = !remisiones.has(claveRemision);
       remisiones.add(claveRemision);
       const primeraDeManifiesto = !f.manifiesto || principal.get(f.manifiesto) === f.id;
-      const b = !f.manifiesto ? anticipoDe(f) : primeraDeManifiesto ? anticipoManifiesto.get(f.manifiesto) ?? sinAnticipo : sinAnticipo;
+      const b = !f.manifiesto ? anticipoDe(f) : primeraDeManifiesto ? (anticipoManifiesto.get(f.manifiesto) ?? sinAnticipo) : sinAnticipo;
       const a = ajustePor.get(f.id);
       const num = (x: unknown) => (x === null || x === undefined ? null : Number(x));
       const ajustes: AjustesRentabilidad = {
@@ -624,12 +679,20 @@ export const rentabilidad = {
       if (!Number.isFinite(n) || n < 0) throw new ErrorCuadro(`"${campo}" no es un numero valido.`);
       return n;
     };
-    const texto = (x: unknown) => String(x ?? "").trim().toUpperCase().slice(0, 160);
+    const texto = (x: unknown) =>
+      String(x ?? "")
+        .trim()
+        .toUpperCase()
+        .slice(0, 160);
     const nuevasC: ComisionCliente[] | null = comisiones
-      ? comisiones.filter((x) => texto(x.cliente)).map((c) => ({ cliente: texto(c.cliente), comision: numero(c.comision, "comision"), tLopez: numero(c.tLopez, "T. Lopez") }))
+      ? comisiones
+          .filter((x) => texto(x.cliente))
+          .map((c) => ({ cliente: texto(c.cliente), comision: numero(c.comision, "comision"), tLopez: numero(c.tLopez, "T. Lopez") }))
       : null;
     const nuevasR: RetencionCliente[] | null = retenciones
-      ? retenciones.filter((x) => texto(x.cliente)).map((r) => ({ cliente: texto(r.cliente), reteicaPorMil: numero(r.reteicaPorMil, "ReteICA"), ciudad: texto(r.ciudad) || null }))
+      ? retenciones
+          .filter((x) => texto(x.cliente))
+          .map((r) => ({ cliente: texto(r.cliente), reteicaPorMil: numero(r.reteicaPorMil, "ReteICA"), ciudad: texto(r.ciudad) || null }))
       : null;
     const historial = await this.historialMatrices();
     const con = await pool.getConnection();
@@ -637,15 +700,24 @@ export const rentabilidad = {
       await con.beginTransaction();
       if (nuevasC) {
         const actuales = vigentesEn(historial.comisiones, claveComision, desde);
-        const { guardar, quitar } = cambiosDeMatriz(actuales, nuevasC, claveComision, claveComision, (a, n) => a.comision === n.comision && a.tLopez === n.tLopez);
+        const { guardar, quitar } = cambiosDeMatriz(
+          actuales,
+          nuevasC,
+          claveComision,
+          claveComision,
+          (a, n) => a.comision === n.comision && a.tLopez === n.tLopez,
+        );
         const quitados = actuales.filter((a) => quitar.includes(claveComision(a))).map((a) => ({ ...a, eliminado: true }));
         for (const c of [...guardar.map((g) => ({ ...g, eliminado: false })), ...quitados]) {
           // Un segundo cambio el mismo dia reemplaza al primero.
           await con.query("DELETE FROM rentabilidad_comisiones WHERE cliente = ? AND vigenteDesde = ?", [c.cliente, desde]);
-          await con.query<ResultSetHeader>(
-            "INSERT INTO rentabilidad_comisiones (cliente, comision, tLopez, vigenteDesde, eliminado) VALUES (?, ?, ?, ?, ?)",
-            [c.cliente, c.comision, c.tLopez, desde, c.eliminado]
-          );
+          await con.query<ResultSetHeader>("INSERT INTO rentabilidad_comisiones (cliente, comision, tLopez, vigenteDesde, eliminado) VALUES (?, ?, ?, ?, ?)", [
+            c.cliente,
+            c.comision,
+            c.tLopez,
+            desde,
+            c.eliminado,
+          ]);
         }
       }
       if (nuevasR) {
@@ -660,7 +732,7 @@ export const rentabilidad = {
           ]);
           await con.query<ResultSetHeader>(
             "INSERT INTO rentabilidad_retenciones (cliente, reteicaPorMil, ciudad, vigenteDesde, eliminado) VALUES (?, ?, ?, ?, ?)",
-            [rt.cliente, rt.reteicaPorMil, rt.ciudad, desde, rt.eliminado]
+            [rt.cliente, rt.reteicaPorMil, rt.ciudad, desde, rt.eliminado],
           );
         }
       }

@@ -17,8 +17,11 @@
  *   aprobado (el saldo de cada fondo sale de ahi). Se guarda la foto
  *   (repartos_utilidades) con lo que se decidio repartir de cada vehiculo.
  *   Solo se anula el ultimo mes aprobado.
- * - Empresa: la ganancia de los viajes de terceros (de Rentabilidad) menos
- *   los gastos que asume la empresa. No se reparte.
+ * - Empresa (estado de resultados, ver estadoEmpresa): la rentabilidad de los
+ *   viajes de terceros + los reconocidos (de todos los carros) + T. Lopez
+ *   cobrado en los viajes - los gastos que asume la empresa. El anticipo de
+ *   renta va aparte (impuesto pagado por adelantado). No se reparte.
+ * - Los reconocidos no entran a la cascada de los carros: son de la empresa.
  * - Socios: los de la empresa y los externos. La cuenta de cada socio arranca
  *   en su saldo inicial, suma el neto de cada mes aprobado y resta los pagos
  *   (pagos_socios); lo que no le alcanza se acumula para el mes siguiente.
@@ -27,8 +30,19 @@ import type { RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
 import { rentabilidad } from "./rentabilidad";
-import { cascadas, cuentaSocio, finDeMes, participacionPonderada, pasoDe, repartoMes } from "./calculoUtilidades";
-import type { Cascada, FondoVehiculo, MesCuenta, Participacion, PartidaGasto, RepartoSocio, ViajeCascada } from "./calculoUtilidades";
+import { cascadas, cuentaSocio, estadoEmpresa, finDeMes, participacionPonderada, pasoDe, repartoMes } from "./calculoUtilidades";
+import type {
+  Cascada,
+  EstadoEmpresa,
+  FondoVehiculo,
+  MesCuenta,
+  Participacion,
+  PartidaGasto,
+  ReconocidoEmpresa,
+  RepartoSocio,
+  TLopezVehiculo,
+  ViajeCascada,
+} from "./calculoUtilidades";
 import type { EmpresaVehiculo } from "./roles";
 
 /** Un viaje de terceros en la rentabilidad de la empresa. */
@@ -79,14 +93,12 @@ export interface UtilidadesMes {
   socios: Array<RepartoSocio & { nombre: string; externo: boolean }>;
   /** Vehiculos que reparten o liquidan algo sin participacion que sume 100 %. */
   sinParticipacion: string[];
-  /** Rentabilidad de la empresa (no se reparte). */
-  empresa: {
-    viajesTerceros: number;
-    gananciaTerceros: number;
+  /** Estado de resultados de la empresa (no se reparte). */
+  empresa: EstadoEmpresa & {
     detalleTerceros: ViajeTercero[];
+    detalleReconocidos: ReconocidoEmpresa[];
+    detalleTLopez: TLopezVehiculo[];
     gastos: PartidaGasto[];
-    totalGastos: number;
-    utilidad: number;
   };
 }
 
@@ -184,6 +196,30 @@ function repartimosDe(x: unknown): Map<number, number> {
   return r;
 }
 
+/** El estado de resultados de la empresa con su detalle. */
+function armarEmpresa(d: {
+  detalleTerceros: ViajeTercero[];
+  detalleReconocidos: ReconocidoEmpresa[];
+  detalleTLopez: TLopezVehiculo[];
+  anticipoSocios: number;
+  gastos: PartidaGasto[];
+  totalGastos: number;
+}): UtilidadesMes["empresa"] {
+  return {
+    ...estadoEmpresa({
+      terceros: d.detalleTerceros,
+      reconocidos: d.detalleReconocidos,
+      tLopez: d.detalleTLopez,
+      anticipoSocios: d.anticipoSocios,
+      totalGastos: d.totalGastos,
+    }),
+    detalleTerceros: d.detalleTerceros,
+    detalleReconocidos: d.detalleReconocidos,
+    detalleTLopez: d.detalleTLopez,
+    gastos: d.gastos,
+  };
+}
+
 /** Utilidades, fondos, participaciones y socios. */
 export const utilidades = {
   /** Cascada, fondo y reparto del mes, segun lo que ve el rol. Con `repartimos`, simula (aunque este aprobado). */
@@ -209,8 +245,19 @@ export const utilidades = {
     let r = u;
     if (!vista.reparto) r = { ...r, vehiculos: r.vehiculos.map((v) => ({ ...v, fondo: null })), socios: [], sinParticipacion: [] };
     if (!vista.terceros) {
-      const totalGastos = r.empresa.totalGastos;
-      r = { ...r, empresa: { viajesTerceros: 0, gananciaTerceros: 0, detalleTerceros: [], gastos: r.empresa.gastos, totalGastos, utilidad: c2(-totalGastos) } };
+      // Sin los viajes de terceros ni lo cobrado en ellos (reconocidos y T. Lopez de carros de terceros).
+      const e = r.empresa;
+      r = {
+        ...r,
+        empresa: armarEmpresa({
+          detalleTerceros: [],
+          detalleReconocidos: (e.detalleReconocidos ?? []).filter((x) => x.propio),
+          detalleTLopez: (e.detalleTLopez ?? []).filter((x) => x.propio),
+          anticipoSocios: e.anticipoRenta?.descontadoSocios ?? 0,
+          gastos: e.gastos,
+          totalGastos: e.totalGastos,
+        }),
+      };
     }
     return r;
   },
@@ -229,9 +276,10 @@ export const utilidades = {
     // como gasto directo del vehiculo; su anticipo ya no se cuenta (seria contar dos veces la plata del viaje).
     const [conCuenta] = await pool.query<RowDataPacket[]>("SELECT cuadroViajeId FROM cuentas_viaje WHERE gastoId IS NOT NULL");
     const viajesConCuenta = new Set(conCuenta.map((c) => c.cuadroViajeId as number));
-    // 1 y 2 (y los anticipos del 3): los viajes de Rentabilidad de la flota propia en el mes.
-    const viajes: ViajeCascada[] = filasRent
-      .filter((f) => f.fecha >= desde && f.fecha <= hasta && porPlaca.has(placaClave(f.placa)))
+    const delMes = filasRent.filter((f) => f.fecha >= desde && f.fecha <= hasta);
+    // 1 y 2 (y los anticipos del 3): los viajes de Rentabilidad de la flota propia en el mes (sin los reconocidos: son de la empresa).
+    const viajes: ViajeCascada[] = delMes
+      .filter((f) => !f.concepto && porPlaca.has(placaClave(f.placa)))
       .map((f) => ({
         id: f.id,
         vehiculoId: porPlaca.get(placaClave(f.placa))!,
@@ -265,9 +313,9 @@ export const utilidades = {
       if (!id || !f.fechaPagoBeneficiario || f.fechaPagoBeneficiario < desde || f.fechaPagoBeneficiario > hasta) continue;
       liquidado.set(id, c2((liquidado.get(id) ?? 0) + f.saldoBeneficiario));
     }
-    // Empresa: la ganancia de los viajes de terceros del mes.
-    const detalleTerceros: ViajeTercero[] = filasRent
-      .filter((f) => f.grupo === "TERCEROS" && f.fecha >= desde && f.fecha <= hasta)
+    // Empresa: los viajes de terceros del mes (sin reconocidos), los reconocidos de todos los carros y T. Lopez cobrado.
+    const detalleTerceros: ViajeTercero[] = delMes
+      .filter((f) => f.grupo === "TERCEROS" && !f.concepto)
       .map((f) => ({
         id: f.id,
         fecha: f.fecha,
@@ -285,6 +333,33 @@ export const utilidades = {
         anticipoRenta: f.anticipoRenta,
         ganancia: f.ganancia,
       }));
+    const detalleReconocidos: ReconocidoEmpresa[] = delMes
+      .filter((f) => !!f.concepto)
+      .map((f) => ({
+        id: f.id,
+        fecha: f.fecha,
+        placa: f.placa,
+        propio: porPlaca.has(placaClave(f.placa)),
+        cliente: f.empresa,
+        manifiesto: f.manifiesto,
+        remisionUrl: f.remisionUrl,
+        facturaUrl: f.facturaUrl,
+        flete: f.valorEmpresa,
+        descuentos: c2(f.valorEmpresa - f.rentabilidad),
+        ingreso: f.rentabilidad,
+        anticipoRenta: f.anticipoRenta,
+      }));
+    const tl = new Map<string, TLopezVehiculo>();
+    for (const f of delMes.filter((x) => x.tLopez > 0)) {
+      const k = placaClave(f.placa);
+      const x = tl.get(k) ?? { placa: f.placa, propio: porPlaca.has(k), viajes: 0, total: 0 };
+      x.viajes += 1;
+      x.total = c2(x.total + f.tLopez);
+      tl.set(k, x);
+    }
+    const detalleTLopez = [...tl.values()].sort((a, b) => b.total - a.total);
+    // El anticipo de renta que se les descuenta a los socios (viajes de la flota propia, sin reconocidos).
+    const anticipoSocios = c2(viajes.reduce((t, v) => t + v.anticipoRenta, 0));
     // 3, 4, 5 y lo de la empresa: lo que le toco a cada vehiculo, socio o a la empresa del libro de gastos.
     const [filas] = await pool.query<RowDataPacket[]>(
       `SELECT r.gastoId, r.vehiculoId, r.socioId, SUM(r.monto) AS monto, g.descripcion, g.categoria, g.tipo, g.destinos, g.empresa,
@@ -353,7 +428,6 @@ export const utilidades = {
     const reparto = repartoMes({ lista, fondos, liquidado, repartimos, participaciones, partidas, desde, hasta, receptor, gmfPorMil });
     const gastosEmpresa = partidas.filter((p) => p.paso === "EMPRESA");
     const totalGastosEmpresa = c2(gastosEmpresa.reduce((t, p) => t + p.monto, 0));
-    const gananciaTerceros = c2(detalleTerceros.reduce((t, v) => t + v.ganancia, 0));
     const conFondo = mes >= inicio;
     return {
       mes,
@@ -376,14 +450,7 @@ export const utilidades = {
             .sort((a, b) => a.nombre.localeCompare(b.nombre))
         : [],
       sinParticipacion: conFondo ? reparto.sinParticipacion.map((id) => flota.find((v) => v.id === id)?.placa ?? "?") : [],
-      empresa: {
-        viajesTerceros: detalleTerceros.length,
-        gananciaTerceros,
-        detalleTerceros,
-        gastos: gastosEmpresa,
-        totalGastos: totalGastosEmpresa,
-        utilidad: c2(gananciaTerceros - totalGastosEmpresa),
-      },
+      empresa: armarEmpresa({ detalleTerceros, detalleReconocidos, detalleTLopez, anticipoSocios, gastos: gastosEmpresa, totalGastos: totalGastosEmpresa }),
     };
   },
 
