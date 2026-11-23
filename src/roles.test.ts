@@ -1,16 +1,30 @@
 import { describe, expect, test } from "vitest";
-import { correosSiempreTotal, placaClave, puede, rolDe, veCuentasDe, veRentabilidadTerceros, veVehiculo } from "./roles";
+import {
+  correosSiempreTotal,
+  placaClave,
+  puede,
+  rolDe,
+  soloGastosConductores,
+  veCuentasDe,
+  veRentabilidadEmpresa,
+  veRentabilidadTerceros,
+  veVehiculo,
+} from "./roles";
 
 describe("roles", () => {
   test("cada rol entra a sus areas", () => {
-    const todas = ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"];
+    const todas = ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"];
     expect(todas.every((a) => puede("TOTAL", a as never))).toBe(true);
     // Administrativas: todo menos el reparto de los socios y el cambio de roles (17/11/2026).
-    // Y el modulo de conductores (cuentas de viaje y liquidacion): solo total y M&C (21/11/2026).
-    expect(todas.filter((a) => !puede("ADMINISTRATIVO", a as never))).toEqual(["REPARTO", "CONDUCTORES", "USUARIOS"]);
+    // Rentabilidad: solo total y M&C; Cuentas conductores: si, pero solo las cuentas de viaje (23/11/2026).
+    expect(todas.filter((a) => !puede("ADMINISTRATIVO", a as never))).toEqual(["REPARTO", "RENTABILIDAD", "USUARIOS"]);
     // M&C: todo menos el cambio de roles (la rentabilidad de terceros se filtra por vehiculo).
     expect(todas.filter((a) => !puede("MYC", a as never))).toEqual(["USUARIOS"]);
     expect([veRentabilidadTerceros("TOTAL"), veRentabilidadTerceros("ADMINISTRATIVO"), veRentabilidadTerceros("MYC")]).toEqual([true, true, false]);
+    // La rentabilidad de la empresa (estado de resultados, consolidado, cascada de todos): solo el rol total.
+    expect([veRentabilidadEmpresa("TOTAL"), veRentabilidadEmpresa("ADMINISTRATIVO"), veRentabilidadEmpresa("MYC")]).toEqual([true, false, false]);
+    // Sin producido ni saldo del conductor: las administrativas.
+    expect([soloGastosConductores("TOTAL"), soloGastosConductores("ADMINISTRATIVO"), soloGastosConductores("MYC")]).toEqual([false, true, false]);
   });
 
   test("un rol desconocido queda con los permisos de administrativo", () => {

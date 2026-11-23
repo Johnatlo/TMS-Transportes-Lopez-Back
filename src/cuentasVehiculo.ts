@@ -92,7 +92,7 @@ export async function cuentasVehiculos(
   mes: unknown,
   empresa: EmpresaVehiculo | null,
 ): Promise<{ mes: string; aprobado: boolean; cerrado: boolean; vehiculos: CuentaVehiculo[] }> {
-  const u = await utilidades.mes(mes, { reparto: false, terceros: false });
+  const u = await utilidades.mes(mes, { reparto: false, terceros: false, empresa: false });
   const [viajesConductor, filasRent, [empleados]] = await Promise.all([
     conductores.viajes(u.mes, empresa),
     rentabilidad.listar(),

@@ -537,7 +537,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1081 funciones, componentes, métodos y rutas en 73 archivos._
+_1086 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -586,10 +586,10 @@ _1081 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/rndc/remesa-impresion.ts`](#srcrndcremesaimpresionts) (7)
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
-- [`src/roles.ts`](#srcrolests) (7)
+- [`src/roles.ts`](#srcrolests) (9)
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/conductores.ts`](#srcroutesconductorests) (18)
+- [`src/routes/conductores.ts`](#srcroutesconductorests) (19)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (50)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (26)
@@ -597,7 +597,7 @@ _1081 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
-- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (20)
+- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (22)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
 - [`src/scripts/crear-usuario.ts`](#srcscriptscrearusuariots) (1)
@@ -4265,12 +4265,24 @@ _1081 funciones, componentes, métodos y rutas en 73 archivos._
 >   rentabilidad de los terceros y el cambio de roles (17/11/2026). Registra
 >   y cambia los gastos y empleados de su empresa.
 >
+> Rentabilidad (23/11/2026): solo TOTAL y MYC. El estado de resultados de la
+> empresa, el consolidado y la cascada de todos los carros, solo TOTAL; M&C
+> solo la cuenta de sus vehiculos. Las administrativas entran a Cuentas
+> conductores solo a registrar las cuentas de viaje (los gastos de los
+> vehiculos), sin ver el producido ni el saldo del conductor.
+>
 > Que vehiculos ve cada rol lo dice vehiculos.empresa (LOPEZ o MYC) y
 > vehiculos.visibleTodos (los que ven todos, como el Volvo XGJ-197).
 > Sin dependencias de Express ni de la base: se prueba aparte (roles.test.ts).
 
 - **`rolDe(r)`** · _función_
   Rol valido o el de menos permisos cuando no se reconoce.
+
+- **`veRentabilidadEmpresa(rol)`** · _función_
+  Ve el estado de resultados de la empresa, el consolidado y la cascada de todos los carros (solo el rol total).
+
+- **`soloGastosConductores(rol)`** · _función_
+  En Cuentas conductores solo registra las cuentas de viaje, sin ver el producido ni el saldo del conductor (administrativas).
 
 - **`puede(rol, area)`** · _función_
   El rol tiene acceso a esa area.
@@ -4528,7 +4540,7 @@ _1081 funciones, componentes, métodos y rutas en 73 archivos._
 
 ### `src/routes/conductores.ts`
 
-> Rutas del modulo Cuentas vehiculos (/api/conductores): matriz de fletes conductor,
+> Rutas del modulo Cuentas conductores (/api/conductores): matriz de fletes conductor,
 > cuentas de viaje, prestamos y liquidacion de los conductores (ver
 > src/conductores.ts). Solo el rol total y M&C; M&C solo su flota.
 
@@ -4537,6 +4549,12 @@ _1081 funciones, componentes, métodos y rutas en 73 archivos._
 
 - **`usuario(req)`** · _función_
   Id del usuario de la sesion.
+
+- **`soloGastos(req)`** · _función_
+  Las administrativas solo registran las cuentas de viaje (sin producido ni saldo del conductor).
+
+- **`sinPagoConductor(v)`** · _función_
+  Un viaje sin lo que gana el conductor ni su saldo (para las administrativas).
 
 - **`GET /fletes`** · _ruta HTTP_
   GET /api/conductores/fletes: la matriz de fletes conductor (cada tarifa de la empresa con su valor e historial).
@@ -4549,9 +4567,6 @@ _1081 funciones, componentes, métodos y rutas en 73 archivos._
 
 - **`POST /fletes/importar`** · _ruta HTTP_
   POST /api/conductores/fletes/importar: importa la matriz del Excel ({ filas, aplicar }); sin aplicar solo dice cuales encontro.
-
-- **`GET /cuentas-vehiculos`** · _ruta HTTP_
-  GET /api/conductores/cuentas-vehiculos?mes=AAAA-MM: la cuenta de cada vehiculo en el mes (viajes, descuentos, conductor y lo que queda).
 
 - **`GET /viajes`** · _ruta HTTP_
   GET /api/conductores/viajes?mes=AAAA-MM: viajes de la flota propia con su producido conductor y su cuenta de viaje.
@@ -5384,6 +5399,14 @@ _1081 funciones, componentes, métodos y rutas en 73 archivos._
 
 - **`vistaDe(req)`** · _función_
   Lo que ve el rol de la peticion.
+
+- **`exigirRentabilidad(req)`** · _función_
+  Rentabilidad (o el reparto, que usa la cascada del mes): no las administrativas.
+
+- **`GET /cuentas-vehiculos/:mes`** · _ruta HTTP_
+  GET /api/utilidades/cuentas-vehiculos/:mes: la cuenta de cada vehiculo en el
+  mes (Rentabilidad > Cuenta del vehiculo). M&C solo sus vehiculos y los
+  visibles para todos (XGJ-197).
 
 - **`exigirTotal(req)`** · _función_
   Solo el rol total.

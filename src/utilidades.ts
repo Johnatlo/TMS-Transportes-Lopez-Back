@@ -65,6 +65,8 @@ export interface ViajeTercero {
   rentabilidad: number;
   anticipoRenta: number;
   ganancia: number;
+  /** Sin valor pactado con el tercero en Pago a terceros: su rentabilidad no es real (sale todo el flete). */
+  sinPactar: boolean;
 }
 
 /** La cascada, el fondo y el reparto de un mes. */
@@ -108,6 +110,8 @@ export interface VistaUtilidades {
   reparto: boolean;
   /** Rentabilidad de los viajes de terceros (M&C: no). */
   terceros: boolean;
+  /** Estado de resultados de la empresa (solo el rol total); sin el, la empresa va en cero. */
+  empresa: boolean;
 }
 
 /** Configuracion del fondo de un vehiculo. */
@@ -244,7 +248,13 @@ export const utilidades = {
   recortar(u: UtilidadesMes, vista: VistaUtilidades): UtilidadesMes {
     let r = u;
     if (!vista.reparto) r = { ...r, vehiculos: r.vehiculos.map((v) => ({ ...v, fondo: null })), socios: [], sinParticipacion: [] };
-    if (!vista.terceros) {
+    if (!vista.empresa) {
+      // Sin nada de la empresa (ni terceros, ni reconocidos, ni T. Lopez, ni sus gastos).
+      r = {
+        ...r,
+        empresa: armarEmpresa({ detalleTerceros: [], detalleReconocidos: [], detalleTLopez: [], anticipoSocios: 0, gastos: [], totalGastos: 0 }),
+      };
+    } else if (!vista.terceros) {
       // Sin los viajes de terceros ni lo cobrado en ellos (reconocidos y T. Lopez de carros de terceros).
       const e = r.empresa;
       r = {
@@ -332,6 +342,7 @@ export const utilidades = {
         rentabilidad: f.rentabilidad,
         anticipoRenta: f.anticipoRenta,
         ganancia: f.ganancia,
+        sinPactar: f.fleteTercero <= 0 && f.valorEmpresa > 0,
       }));
     const detalleReconocidos: ReconocidoEmpresa[] = delMes
       .filter((f) => !!f.concepto)

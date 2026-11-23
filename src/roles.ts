@@ -9,6 +9,12 @@
  *   rentabilidad de los terceros y el cambio de roles (17/11/2026). Registra
  *   y cambia los gastos y empleados de su empresa.
  *
+ * Rentabilidad (23/11/2026): solo TOTAL y MYC. El estado de resultados de la
+ * empresa, el consolidado y la cascada de todos los carros, solo TOTAL; M&C
+ * solo la cuenta de sus vehiculos. Las administrativas entran a Cuentas
+ * conductores solo a registrar las cuentas de viaje (los gastos de los
+ * vehiculos), sin ver el producido ni el saldo del conductor.
+ *
  * Que vehiculos ve cada rol lo dice vehiculos.empresa (LOPEZ o MYC) y
  * vehiculos.visibleTodos (los que ven todos, como el Volvo XGJ-197).
  * Sin dependencias de Express ni de la base: se prueba aparte (roles.test.ts).
@@ -36,12 +42,15 @@ export type Area =
   | "LIQUIDACION"
   /** Reparto de los socios: fondos de los vehiculos, reparto mensual y cuentas de socios. */
   | "REPARTO"
+  /** Rentabilidad: cuenta de cada vehiculo (M&C solo los suyos), cascada y estado de resultados de la empresa (solo total). */
+  | "RENTABILIDAD"
   /** Libro de gastos, creditos y nomina (M&C los ve todos; registra los de su empresa). */
   | "GASTOS"
   /**
-   * Conductores: matriz de fletes conductor, cuentas de viaje, prestamos y
-   * liquidacion de los conductores. Solo acceso total y M&C (M&C solo los
-   * vehiculos de su flota).
+   * Cuentas conductores: matriz de fletes conductor, cuentas de viaje,
+   * prestamos y liquidacion de los conductores. Total y M&C (M&C solo los
+   * vehiculos de su flota); las administrativas solo las cuentas de viaje, sin
+   * producido ni saldo del conductor (ver soloGastosConductores).
    */
   | "CONDUCTORES"
   /** Configuracion de la empresa y la empresa de cada vehiculo. */
@@ -50,10 +59,16 @@ export type Area =
   | "USUARIOS";
 
 const AREAS: Record<Rol, Area[]> = {
-  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"],
-  ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "ADMINISTRACION"],
-  MYC: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "GASTOS", "CONDUCTORES", "ADMINISTRACION"],
+  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"],
+  ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "CONDUCTORES", "ADMINISTRACION"],
+  MYC: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION"],
 };
+
+/** Ve el estado de resultados de la empresa, el consolidado y la cascada de todos los carros (solo el rol total). */
+export const veRentabilidadEmpresa = (rol: Rol) => rol === "TOTAL";
+
+/** En Cuentas conductores solo registra las cuentas de viaje, sin ver el producido ni el saldo del conductor (administrativas). */
+export const soloGastosConductores = (rol: Rol) => rol === "ADMINISTRATIVO";
 
 /** El rol tiene acceso a esa area. */
 export const puede = (rol: Rol, area: Area) => AREAS[rol].includes(area);
@@ -88,7 +103,10 @@ export function veVehiculo(rol: Rol, v: VisibilidadVehiculo | null | undefined):
 }
 
 /** Placa comparable (sin guion ni espacios, en mayuscula). */
-export const placaClave = (p: unknown) => String(p ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+export const placaClave = (p: unknown) =>
+  String(p ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 
 /**
  * Empresa de los vehiculos al crear la columna (lo que dijo la gerencia el

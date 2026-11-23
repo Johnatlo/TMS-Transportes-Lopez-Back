@@ -39,7 +39,10 @@ import { sqlFlota } from "./flota";
 export type Tramo = "IDA" | "VUELTA";
 
 /** Placa comparable: mayusculas sin guion ni espacios ("SZP-339" -> "SZP339"). */
-export const placaNormal = (p: unknown) => String(p ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+export const placaNormal = (p: unknown) =>
+  String(p ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 
 /** Valor en pesos >= 0; vacio -> 0. Lanza ErrorCuadro si no es numero. */
 function pesos(v: unknown, campo: string): number {
@@ -122,7 +125,10 @@ export function validarAnticipo(d: Record<string, unknown>): NuevoAnticipo {
     throw new ErrorCuadro("Es de ida y vuelta: escribe el valor del anticipo de vuelta.");
   }
   if ((combustible > 0 || combustibleVuelta > 0) && !bombaId) throw new ErrorCuadro("Elige la bomba donde tanqueo.");
-  const texto = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max) || null;
+  const texto = (v: unknown, max: number) =>
+    String(v ?? "")
+      .trim()
+      .slice(0, max) || null;
   return {
     fecha: fecha(d.fecha, "la fecha del anticipo"),
     bombaId,
@@ -199,6 +205,8 @@ export interface FilaAnticipo {
   bomba: string | null;
   facturaBomba: string | null;
   fechaFacturaBomba: string | null;
+  /** Vencimiento de la factura de la bomba (de la relacion con que se cruzo o de la factura con ese numero). */
+  fechaVencimientoBomba: string | null;
   idaYVuelta: boolean;
   /** LOPEZ, MYC o TERCERO (del catalogo de vehiculos). */
   flota: string | null;
@@ -248,6 +256,10 @@ const SELECT_ANTICIPOS = `
   SELECT a.id, a.tanqueoId, a.tramo, a.fecha, COALESCE(a.placa, c.placa) AS placa, a.cuadroViajeId,
          c.empresa, c.manifiesto, c.remision, c.remisionUrl, c.facturaUrl, a.efectivo, a.combustible, a.valor, a.bombaId, b.nombre AS bomba,
          t.facturaBomba, t.fechaFacturaBomba, COALESCE(t.idaYVuelta, 0) AS idaYVuelta,
+         COALESCE(
+           (SELECT x.fechaVencimiento FROM bomba_relaciones x WHERE x.id = COALESCE(rv.relacionId, re.relacionId)),
+           (SELECT x.fechaVencimiento FROM bomba_relaciones x WHERE x.numero = t.facturaBomba)
+         ) AS fechaVencimientoBomba,
          (SELECT ${sqlFlota()} FROM vehiculos ve
            WHERE REPLACE(ve.placa, '-', '') = REPLACE(COALESCE(a.placa, c.placa), '-', '') LIMIT 1) AS flota,
          a.fechaPago, a.nota, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
@@ -281,6 +293,7 @@ const mapear = (r: RowDataPacket): FilaAnticipo => ({
   bomba: r.bomba ?? null,
   facturaBomba: r.facturaBomba ?? null,
   fechaFacturaBomba: dia(r.fechaFacturaBomba),
+  fechaVencimientoBomba: dia(r.fechaVencimientoBomba),
   idaYVuelta: !!r.idaYVuelta,
   flota: r.flota ?? null,
   fechaPago: dia(r.fechaPago),
@@ -330,7 +343,7 @@ export function elegirIdaYVuelta(a: TanqueoSuelto, b: TanqueoSuelto): { ida: Tan
       distancia(x.fecha, x.fechaViaje) - distancia(y.fecha, y.fechaViaje) ||
       Number(y.saleDeBogota) - Number(x.saleDeBogota) ||
       (x.fechaViaje ?? "9999").localeCompare(y.fechaViaje ?? "9999") ||
-      x.tramoId - y.tramoId
+      x.tramoId - y.tramoId,
   );
   return { ida: orden[0], vuelta: orden[1] };
 }
@@ -369,8 +382,7 @@ export const descuentoSugerido = (galones: number, descuentoPorGalon: number) =>
  * columna COMBUST. del Excel): round(galones x precio - descuento).
  * Ej.: 100,182 galones x 11.230 - 25.044 = 1.100.000.
  */
-export const combustibleSegunFormula = (galones: number, precioGalon: number, descuento: number) =>
-  Math.round(galones * precioGalon - descuento);
+export const combustibleSegunFormula = (galones: number, precioGalon: number, descuento: number) => Math.round(galones * precioGalon - descuento);
 
 /** Cuentas con la bomba. */
 export interface ResumenBomba extends ParametrosBomba {
@@ -402,7 +414,7 @@ export function resumirBomba(
   abonadoSocio: number,
   p: ParametrosBomba,
   abonosSinUsar = abonadoSocio,
-  abonadoPorCruzar = 0
+  abonadoPorCruzar = 0,
 ): ResumenBomba {
   const conBomba = tramos.filter((t) => t.bombaId !== null);
   const deuda = conBomba.reduce((s, t) => s + t.valor, 0);
@@ -471,7 +483,7 @@ export const anticipos = {
       const [t] = await conexion.query<ResultSetHeader>(
         `INSERT INTO anticipos_tanqueo (placa, fecha, bombaId, idaYVuelta, facturaBomba, nota, creadoPorId)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [placa, a.fecha, a.bombaId, a.idaYVuelta ? 1 : 0, a.facturaBomba, a.nota, usuarioId]
+        [placa, a.fecha, a.bombaId, a.idaYVuelta ? 1 : 0, a.facturaBomba, a.nota, usuarioId],
       );
       // Los galones (si se escribieron) quedan en el tramo; no lo dan por cruzado con la bomba (eso lo hacen sus vales).
       const tramo = (viaje: number | null, tipo: Tramo, efectivo: number, combustible: number, g: GalonesTramo | null) =>
@@ -494,7 +506,7 @@ export const anticipos = {
             g?.galones ?? null,
             g?.precioGalon ?? null,
             g?.descuento ?? null,
-          ]
+          ],
         );
       await tramo(cuadroViajeId, "IDA", a.efectivo, a.combustible, a.galonesIda);
       if (a.idaYVuelta) await tramo(null, "VUELTA", a.efectivoVuelta, a.combustibleVuelta, a.galonesVuelta);
@@ -520,9 +532,13 @@ export const anticipos = {
       `SELECT a.tramo, COALESCE(a.efectivo, 0) + COALESCE(a.combustible, 0) AS total, c.manifiesto
          FROM cuadro_anticipos a LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId
         WHERE REPLACE(COALESCE(a.placa, c.placa), '-', '') = ? AND a.fecha = ?`,
-      [placaNormal(viajes[0].placa), a.fecha]
+      [placaNormal(viajes[0].placa), a.fecha],
     );
-    const existentes = filas.map((f) => ({ tramo: (f.tramo === "VUELTA" ? "VUELTA" : "IDA") as Tramo, total: Number(f.total), manifiesto: f.manifiesto ?? null }));
+    const existentes = filas.map((f) => ({
+      tramo: (f.tramo === "VUELTA" ? "VUELTA" : "IDA") as Tramo,
+      total: Number(f.total),
+      manifiesto: f.manifiesto ?? null,
+    }));
     return avisosRepetido([a.efectivo + a.combustible, a.idaYVuelta ? a.efectivoVuelta + a.combustibleVuelta : 0], existentes);
   },
 
@@ -537,7 +553,7 @@ export const anticipos = {
          FROM cuadro_anticipos v
          JOIN cuadro_anticipos ida ON ida.tanqueoId = v.tanqueoId AND ida.tramo = 'IDA'
          JOIN cuadro_viajes c ON c.id = ida.cuadroViajeId
-        WHERE v.tramo = 'VUELTA' AND v.cuadroViajeId IS NULL`
+        WHERE v.tramo = 'VUELTA' AND v.cuadroViajeId IS NULL`,
     );
     let asignadas = 0;
     for (const p of pendientes) {
@@ -546,13 +562,10 @@ export const anticipos = {
           WHERE anulado = 0 AND REPLACE(placa, '-', '') = ? AND id <> ?
             AND (fecha > ? OR (fecha = ? AND id > ?))
           ORDER BY fecha, id LIMIT 1`,
-        [p.placa, p.viajeIda, p.fechaIda, p.fechaIda, p.viajeIda]
+        [p.placa, p.viajeIda, p.fechaIda, p.fechaIda, p.viajeIda],
       );
       if (!siguiente[0]) continue;
-      await pool.query("UPDATE cuadro_anticipos SET cuadroViajeId = ? WHERE id = ? AND cuadroViajeId IS NULL", [
-        siguiente[0].id,
-        p.id,
-      ]);
+      await pool.query("UPDATE cuadro_anticipos SET cuadroViajeId = ? WHERE id = ? AND cuadroViajeId IS NULL", [siguiente[0].id, p.id]);
       asignadas++;
     }
     return asignadas;
@@ -571,7 +584,7 @@ export const anticipos = {
          LEFT JOIN viaje_remesas vr ON vr.id = c.viajeRemesaId
          LEFT JOIN plantillas_viaje pl ON pl.id = vr.plantillaId
         WHERE t.idaYVuelta = 0 AND a.tramo = 'IDA'
-          AND (SELECT COUNT(*) FROM cuadro_anticipos x WHERE x.tanqueoId = t.id) = 1`
+          AND (SELECT COUNT(*) FROM cuadro_anticipos x WHERE x.tanqueoId = t.id) = 1`,
     );
     return rows.map((r) => ({
       tanqueoId: r.tanqueoId,
@@ -644,13 +657,13 @@ export const anticipos = {
   async separarVuelta(tanqueoId: number): Promise<void> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT a.id, t.placa, t.fecha, t.bombaId FROM cuadro_anticipos a JOIN anticipos_tanqueo t ON t.id = a.tanqueoId WHERE a.tanqueoId = ? AND a.tramo = 'VUELTA'",
-      [tanqueoId]
+      [tanqueoId],
     );
     const v = rows[0];
     if (!v) throw new ErrorCuadro("Ese tanqueo no tiene vuelta.");
     const [t] = await pool.query<ResultSetHeader>(
       "INSERT INTO anticipos_tanqueo (placa, fecha, bombaId, idaYVuelta, nota) VALUES (?, ?, ?, 0, 'Separado de una ida y vuelta')",
-      [v.placa, dia(v.fecha), v.bombaId]
+      [v.placa, dia(v.fecha), v.bombaId],
     );
     await pool.query("UPDATE cuadro_anticipos SET tanqueoId = ?, tramo = 'IDA' WHERE id = ?", [t.insertId, v.id]);
     await pool.query("UPDATE anticipos_tanqueo SET idaYVuelta = 0 WHERE id = ?", [tanqueoId]);
@@ -658,9 +671,7 @@ export const anticipos = {
 
   /** Los tramos de un viaje (para su detalle), por fecha. */
   async delViaje(cuadroViajeId: number): Promise<FilaAnticipo[]> {
-    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_ANTICIPOS} WHERE a.cuadroViajeId = ? ORDER BY a.fecha, a.id`, [
-      cuadroViajeId,
-    ]);
+    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_ANTICIPOS} WHERE a.cuadroViajeId = ? ORDER BY a.fecha, a.id`, [cuadroViajeId]);
     return rows.map(mapear);
   },
 
@@ -681,7 +692,11 @@ export const anticipos = {
     const valores: unknown[] = [];
     if ("facturaBomba" in d) {
       sets.push("facturaBomba = ?");
-      valores.push(String(d.facturaBomba ?? "").trim().slice(0, 40) || null);
+      valores.push(
+        String(d.facturaBomba ?? "")
+          .trim()
+          .slice(0, 40) || null,
+      );
     }
     if ("fechaFacturaBomba" in d) {
       sets.push("fechaFacturaBomba = ?");
@@ -718,7 +733,11 @@ export const anticipos = {
     }
     if ("nota" in d) {
       sets.push("nota = ?");
-      valores.push(String(d.nota ?? "").trim().slice(0, 200) || null);
+      valores.push(
+        String(d.nota ?? "")
+          .trim()
+          .slice(0, 200) || null,
+      );
     }
     // Cruce a mano (sin vale de la bomba): fecha en que se marco, o null para quitarlo.
     if ("cruzadoManual" in d) {
@@ -778,7 +797,7 @@ export const anticipos = {
       `SELECT a.efectivo, a.combustible, a.galones, a.precioGalon, a.descuento, a.combustibleEntregado,
               ${sqlDescuentoGalon("a.bombaId", "a.fecha")} AS descuentoGalon
          FROM cuadro_anticipos a WHERE a.id = ?`,
-      [id]
+      [id],
     );
     const t = rows[0];
     if (!t) return;
@@ -792,7 +811,7 @@ export const anticipos = {
       await pool.query(
         `UPDATE cuadro_anticipos SET galones = NULL, precioGalon = NULL, descuento = NULL, combustibleEntregado = NULL,
                 combustible = ?, valor = ? WHERE id = ?`,
-        [entregado, efectivo + entregado, id]
+        [entregado, efectivo + entregado, id],
       );
       return;
     }
@@ -807,7 +826,7 @@ export const anticipos = {
     await pool.query(
       `UPDATE cuadro_anticipos SET galones = ?, precioGalon = ?, descuento = ?, combustibleEntregado = ?,
               combustible = ?, valor = ? WHERE id = ?`,
-      [galones, precio, descuento, entregado, combustible, efectivo + combustible, id]
+      [galones, precio, descuento, entregado, combustible, efectivo + combustible, id],
     );
   },
 
@@ -823,14 +842,12 @@ export const anticipos = {
     await pool.query("DELETE FROM cuadro_anticipos WHERE id = ?", [id]);
     if (t.tanqueoId) {
       if (t.tramo === "IDA") {
-        await pool.query("DELETE FROM cuadro_anticipos WHERE tanqueoId = ? AND tramo = 'VUELTA' AND cuadroViajeId IS NULL", [
-          t.tanqueoId,
-        ]);
+        await pool.query("DELETE FROM cuadro_anticipos WHERE tanqueoId = ? AND tramo = 'VUELTA' AND cuadroViajeId IS NULL", [t.tanqueoId]);
       }
-      await pool.query(
-        "DELETE FROM anticipos_tanqueo WHERE id = ? AND NOT EXISTS (SELECT 1 FROM cuadro_anticipos WHERE tanqueoId = ?)",
-        [t.tanqueoId, t.tanqueoId]
-      );
+      await pool.query("DELETE FROM anticipos_tanqueo WHERE id = ? AND NOT EXISTS (SELECT 1 FROM cuadro_anticipos WHERE tanqueoId = ?)", [
+        t.tanqueoId,
+        t.tanqueoId,
+      ]);
     }
   },
 
@@ -839,7 +856,7 @@ export const anticipos = {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT b.id, b.nombre, b.ciudad, ${sqlDescuentoGalon("b.id", "?")} AS descuentoGalon
          FROM bombas b WHERE b.activa = 1 ORDER BY b.nombre`,
-      [fecha]
+      [fecha],
     );
     return rows.map((r) => ({ bombaId: Number(r.id), bomba: String(r.nombre), ciudad: r.ciudad ?? null, descuentoGalon: Number(r.descuentoGalon) }));
   },
@@ -868,9 +885,7 @@ export const anticipos = {
 
   /** Cupo con la bomba y precio por galon sugerido (el descuento va por bomba: ver descuentosGalon). */
   async parametrosBomba(): Promise<ParametrosBomba> {
-    const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT cupoBomba, precioGalonBomba FROM parametros_empresa WHERE id = 1"
-    );
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT cupoBomba, precioGalonBomba FROM parametros_empresa WHERE id = 1");
     const r = rows[0] ?? {};
     return {
       cupoBomba: Number(r.cupoBomba ?? 500000000),
@@ -901,25 +916,25 @@ export const anticipos = {
       `SELECT COALESCE(SUM(IF(pagoId IS NOT NULL OR cruzadoFecha IS NOT NULL, valor, 0)), 0) AS cruzado,
               COALESCE(SUM(IF(pagoId IS NULL AND cruzadoFecha IS NOT NULL, valor, 0)), 0) AS sinUsar,
               COALESCE(SUM(IF(pagoId IS NULL AND cruzadoFecha IS NULL, valor, 0)), 0) AS porCruzar
-         FROM abonos_socio`
+         FROM abonos_socio`,
     );
     return resumirBomba(
       tramos.map((t) => ({ bombaId: t.bombaId ?? null, valor: Number(t.valor), fechaPago: dia(t.fechaPago) })),
       Number(abonos.cruzado),
       await this.parametrosBomba(),
       Number(abonos.sinUsar),
-      Number(abonos.porCruzar)
+      Number(abonos.porCruzar),
     );
   },
 
   /** Abonos del socio, el mas reciente primero, con sus viajes. */
   async abonos(): Promise<AbonoSocio[]> {
     const [abonos] = await pool.query<RowDataPacket[]>(
-      "SELECT a.*, p.fecha AS fechaPago FROM abonos_socio a LEFT JOIN bomba_pagos p ON p.id = a.pagoId ORDER BY a.fecha DESC, a.id DESC"
+      "SELECT a.*, p.fecha AS fechaPago FROM abonos_socio a LEFT JOIN bomba_pagos p ON p.id = a.pagoId ORDER BY a.fecha DESC, a.id DESC",
     );
     const [viajes] = await pool.query<RowDataPacket[]>(
       `SELECT av.abonoId, av.cuadroViajeId, av.valor, c.placa, c.empresa, c.manifiesto, c.remesa, c.remision, c.remisionUrl, c.facturaUrl, c.fecha
-         FROM abonos_socio_viajes av LEFT JOIN cuadro_viajes c ON c.id = av.cuadroViajeId ORDER BY av.id`
+         FROM abonos_socio_viajes av LEFT JOIN cuadro_viajes c ON c.id = av.cuadroViajeId ORDER BY av.id`,
     );
     return abonos.map((a) => ({
       id: a.id,
@@ -952,7 +967,10 @@ export const anticipos = {
    * de cada uno (al menos uno). El valor del abono es la suma de los viajes.
    */
   async registrarAbono(d: Record<string, unknown>, usuarioId: number | null): Promise<void> {
-    const socio = String(d.socio ?? "").trim().toUpperCase().slice(0, 100);
+    const socio = String(d.socio ?? "")
+      .trim()
+      .toUpperCase()
+      .slice(0, 100);
     if (!socio) throw new ErrorCuadro("Escribe quien hizo el abono.");
     const f = fecha(d.fecha, "la fecha del abono");
     const lineas = (Array.isArray(d.viajes) ? d.viajes : []) as Array<Record<string, unknown>>;
@@ -963,13 +981,16 @@ export const anticipos = {
     const conexion = await pool.getConnection();
     try {
       await conexion.beginTransaction();
-      const [a] = await conexion.query<ResultSetHeader>(
-        "INSERT INTO abonos_socio (socio, fecha, valor, nota, creadoPorId) VALUES (?, ?, ?, ?, ?)",
-        [socio, f, total, String(d.nota ?? "").trim().slice(0, 200) || null, usuarioId]
-      );
-      await conexion.query("INSERT INTO abonos_socio_viajes (abonoId, cuadroViajeId, valor) VALUES ?", [
-        viajes.map((v) => [a.insertId, v.id, v.valor]),
+      const [a] = await conexion.query<ResultSetHeader>("INSERT INTO abonos_socio (socio, fecha, valor, nota, creadoPorId) VALUES (?, ?, ?, ?, ?)", [
+        socio,
+        f,
+        total,
+        String(d.nota ?? "")
+          .trim()
+          .slice(0, 200) || null,
+        usuarioId,
       ]);
+      await conexion.query("INSERT INTO abonos_socio_viajes (abonoId, cuadroViajeId, valor) VALUES ?", [viajes.map((v) => [a.insertId, v.id, v.valor])]);
       // Los viajes quedan con el anticipo del Zorro pagado (valor y fecha del abono).
       await conexion.query(SQL_PAGO_ANTICIPO_ABONOS, [[a.insertId]]);
       await conexion.commit();
@@ -1008,7 +1029,7 @@ export const anticipos = {
           SET c.anticipoEmpresaFechaPago = NULL
         WHERE c.anticipoEmpresaFechaPago = a.fecha
           AND NOT EXISTS (SELECT 1 FROM abonos_socio_viajes o WHERE o.cuadroViajeId = c.id AND o.abonoId <> av.abonoId)`,
-      [id]
+      [id],
     );
     await pool.query("DELETE FROM abonos_socio WHERE id = ?", [id]);
   },

@@ -2,13 +2,15 @@ import { Router, type Request } from "express";
 import { responder } from "./cuadro";
 import { ErrorCuadro } from "../cuadro";
 import { utilidades } from "../utilidades";
+import { cuentasVehiculos } from "../cuentasVehiculo";
 import type { VistaUtilidades } from "../utilidades";
 import { rolDePeticion } from "../accesos";
-import { puede, veRentabilidadTerceros } from "../roles";
+import { puede, veRentabilidadEmpresa, veRentabilidadTerceros } from "../roles";
 
 /**
- * Cascada de rentabilidad por vehiculo, fondos, reparto de los socios,
- * participaciones y socios (ver src/utilidades.ts). Montado en
+ * Rentabilidad (cascada por vehiculo, cuenta del vehiculo y estado de
+ * resultados de la empresa) y Reparto a socios (fondos, reparto,
+ * participaciones y socios) (ver src/utilidades.ts). Montado en
  * /api/utilidades con sesion y el area LIQUIDACION (los tres roles).
  * - El reparto de los socios (fondos, reparto, cuentas) es del area REPARTO:
  *   las administrativas no lo ven.
@@ -18,7 +20,29 @@ import { puede, veRentabilidadTerceros } from "../roles";
 export const utilidadesRouter = Router();
 
 /** Lo que ve el rol de la peticion. */
-const vistaDe = (req: Request): VistaUtilidades => ({ reparto: puede(rolDePeticion(req), "REPARTO"), terceros: veRentabilidadTerceros(rolDePeticion(req)) });
+const vistaDe = (req: Request): VistaUtilidades => ({
+  reparto: puede(rolDePeticion(req), "REPARTO"),
+  terceros: veRentabilidadTerceros(rolDePeticion(req)),
+  empresa: veRentabilidadEmpresa(rolDePeticion(req)),
+});
+
+/** Rentabilidad (o el reparto, que usa la cascada del mes): no las administrativas. */
+function exigirRentabilidad(req: Request): void {
+  const rol = rolDePeticion(req);
+  if (!puede(rol, "RENTABILIDAD") && !puede(rol, "REPARTO")) throw new ErrorCuadro("Tu usuario no tiene acceso a la rentabilidad.");
+}
+
+/**
+ * GET /api/utilidades/cuentas-vehiculos/:mes: la cuenta de cada vehiculo en el
+ * mes (Rentabilidad > Cuenta del vehiculo). M&C solo sus vehiculos y los
+ * visibles para todos (XGJ-197).
+ */
+utilidadesRouter.get("/cuentas-vehiculos/:mes", async (req, res) => {
+  await responder(res, () => {
+    if (!puede(rolDePeticion(req), "RENTABILIDAD")) throw new ErrorCuadro("Tu usuario no tiene acceso a la rentabilidad.");
+    return cuentasVehiculos(req.params.mes, rolDePeticion(req) === "MYC" ? "MYC" : null);
+  });
+});
 
 /** Solo el rol total. */
 function exigirTotal(req: Request): void {
@@ -135,7 +159,10 @@ utilidadesRouter.delete("/pagos/:id", async (req, res) => {
 
 /** GET /api/utilidades/:mes: cascada, fondos y reparto del mes ("AAAA-MM"), segun lo que ve el rol. */
 utilidadesRouter.get("/:mes", async (req, res) => {
-  await responder(res, () => utilidades.mes(req.params.mes, vistaDe(req)));
+  await responder(res, () => {
+    exigirRentabilidad(req);
+    return utilidades.mes(req.params.mes, vistaDe(req));
+  });
 });
 
 /** POST /api/utilidades/:mes/simular: el mes con lo que se reparte de cada vehiculo ({ repartimos: { vehiculoId: monto } }). */

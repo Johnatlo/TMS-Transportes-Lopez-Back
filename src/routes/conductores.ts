@@ -1,14 +1,15 @@
 /**
- * Rutas del modulo Cuentas vehiculos (/api/conductores): matriz de fletes conductor,
+ * Rutas del modulo Cuentas conductores (/api/conductores): matriz de fletes conductor,
  * cuentas de viaje, prestamos y liquidacion de los conductores (ver
  * src/conductores.ts). Solo el rol total y M&C; M&C solo su flota.
  */
 import { Router, type Request } from "express";
 import { responder } from "./cuadro";
 import { conductores } from "../conductores";
-import { cuentasVehiculos } from "../cuentasVehiculo";
 import { rolDePeticion } from "../accesos";
+import { soloGastosConductores } from "../roles";
 import type { EmpresaVehiculo } from "../roles";
+import type { ViajeConductor } from "../conductores";
 
 export const conductoresRouter = Router();
 
@@ -16,6 +17,24 @@ export const conductoresRouter = Router();
 const empresaDe = (req: Request): EmpresaVehiculo | null => (rolDePeticion(req) === "MYC" ? "MYC" : null);
 /** Id del usuario de la sesion. */
 const usuario = (req: Request) => req.usuario?.id ?? null;
+/** Las administrativas solo registran las cuentas de viaje (sin producido ni saldo del conductor). */
+const soloGastos = (req: Request) => soloGastosConductores(rolDePeticion(req));
+
+/** Un viaje sin lo que gana el conductor ni su saldo (para las administrativas). */
+const sinPagoConductor = (v: ViajeConductor): ViajeConductor => ({
+  ...v,
+  producido: null,
+  producidoMatriz: null,
+  producidoManual: false,
+  integro: false,
+  cuenta: v.cuenta ? { ...v.cuenta, saldo: 0 } : null,
+});
+
+// Las administrativas: solo las cuentas de viaje (lo demas es la plata del conductor).
+conductoresRouter.use((req, res, next) => {
+  if (soloGastos(req) && !req.path.startsWith("/viajes")) return void res.status(403).json({ error: "Tu usuario solo registra las cuentas de viaje." });
+  next();
+});
 
 /** GET /api/conductores/fletes: la matriz de fletes conductor (cada tarifa de la empresa con su valor e historial). */
 conductoresRouter.get("/fletes", async (_req, res) => {
@@ -40,21 +59,23 @@ conductoresRouter.post("/fletes/importar", async (req, res) => {
   await responder(res, () => conductores.importarFletes(req.body?.filas, req.body?.aplicar === true, usuario(req)));
 });
 
-/** GET /api/conductores/cuentas-vehiculos?mes=AAAA-MM: la cuenta de cada vehiculo en el mes (viajes, descuentos, conductor y lo que queda). */
-conductoresRouter.get("/cuentas-vehiculos", async (req, res) => {
-  await responder(res, () => cuentasVehiculos(req.query.mes, empresaDe(req)));
-});
-
 /** GET /api/conductores/viajes?mes=AAAA-MM: viajes de la flota propia con su producido conductor y su cuenta de viaje. */
 conductoresRouter.get("/viajes", async (req, res) => {
-  await responder(res, () => conductores.viajes(req.query.mes, empresaDe(req)));
+  await responder(res, async () => {
+    const viajes = await conductores.viajes(req.query.mes, empresaDe(req));
+    return soloGastos(req) ? viajes.map(sinPagoConductor) : viajes;
+  });
 });
 /** PUT /api/conductores/viajes/:id/cuenta: guarda la cuenta de viaje (conceptos, ACPM, producido a mano, nota). */
 conductoresRouter.put("/viajes/:id/cuenta", async (req, res) => {
   await responder(res, async () => {
     const id = Number(req.params.id);
-    await conductores.guardarCuenta(id, req.body ?? {}, usuario(req), empresaDe(req));
-    return (await conductores.viajes(String(req.body?.mes ?? ""), empresaDe(req))).find((v) => v.cuadroViajeId === id) ?? null;
+    const datos = { ...(req.body ?? {}) };
+    // Las administrativas no tocan el producido conductor.
+    if (soloGastos(req)) delete datos.producidoManual;
+    await conductores.guardarCuenta(id, datos, usuario(req), empresaDe(req));
+    const viaje = (await conductores.viajes(String(req.body?.mes ?? ""), empresaDe(req))).find((v) => v.cuadroViajeId === id) ?? null;
+    return viaje && soloGastos(req) ? sinPagoConductor(viaje) : viaje;
   });
 });
 /** DELETE /api/conductores/viajes/:id/cuenta: borra la cuenta de viaje y su gasto del libro. */
