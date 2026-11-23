@@ -112,6 +112,8 @@ export interface VistaUtilidades {
   terceros: boolean;
   /** Estado de resultados de la empresa (solo el rol total); sin el, la empresa va en cero. */
   empresa: boolean;
+  /** Solo estos vehiculos y sus socios (M&C: sus carros y los visibles para todos); null = todos. */
+  vehiculos?: number[] | null;
 }
 
 /** Configuracion del fondo de un vehiculo. */
@@ -200,6 +202,41 @@ function repartimosDe(x: unknown): Map<number, number> {
   return r;
 }
 
+/**
+ * Solo los vehiculos dados y los socios que tienen parte en ellos (M&C). Si un
+ * socio tiene tambien otros carros, lo suyo se recalcula solo con estos.
+ */
+export function soloVehiculos(u: UtilidadesMes, ids: Set<number>): UtilidadesMes {
+  const vehiculos = u.vehiculos.filter((v) => ids.has(v.vehiculoId));
+  const placas = new Set(vehiculos.map((v) => v.placa));
+  const socios = u.socios
+    .filter((s) => s.porVehiculo.some((p) => ids.has(p.vehiculoId)))
+    .map((s) => {
+      const porVehiculo = s.porVehiculo.filter((p) => ids.has(p.vehiculoId));
+      if (porVehiculo.length === s.porVehiculo.length) return s;
+      const suma = (k: "repartido" | "liquidado" | "recibido") => c2(porVehiculo.reduce((t, p) => t + p[k], 0));
+      const repartido = suma("repartido");
+      const gmf = s.repartido ? c2((s.gmf * repartido) / s.repartido) : 0;
+      const liquidado = suma("liquidado");
+      const recibido = suma("recibido");
+      return { ...s, porVehiculo, repartido, gmf, liquidado, recibido, neto: c2(repartido - gmf + liquidado - recibido - s.totalGastosPropios) };
+    });
+  return { ...u, vehiculos, socios, sinParticipacion: u.sinParticipacion.filter((p) => placas.has(p)) };
+}
+
+/** Los vehiculos de M&C y los visibles para todos (lo que M&C ve del reparto). */
+export async function vehiculosDeMyc(): Promise<number[]> {
+  const [filas] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE eliminado = 0 AND (empresa = 'MYC' OR visibleTodos = 1)");
+  return filas.map((f) => f.id as number);
+}
+
+/** Los socios con parte (vigente o pasada) en esos vehiculos. */
+export async function sociosDeVehiculos(ids: number[]): Promise<Set<number>> {
+  if (!ids.length) return new Set();
+  const [filas] = await pool.query<RowDataPacket[]>("SELECT DISTINCT socioId FROM participaciones WHERE vehiculoId IN (?)", [ids]);
+  return new Set(filas.map((f) => f.socioId as number));
+}
+
 /** El estado de resultados de la empresa con su detalle. */
 function armarEmpresa(d: {
   detalleTerceros: ViajeTercero[];
@@ -244,9 +281,10 @@ export const utilidades = {
     return this.recortar(resultado, vista);
   },
 
-  /** Quita lo que el rol no ve: el reparto (administrativas) o los terceros (M&C). */
+  /** Quita lo que el rol no ve: el reparto (administrativas), los terceros y la empresa, o los carros que no son suyos (M&C). */
   recortar(u: UtilidadesMes, vista: VistaUtilidades): UtilidadesMes {
     let r = u;
+    if (vista.vehiculos) r = soloVehiculos(r, new Set(vista.vehiculos));
     if (!vista.reparto) r = { ...r, vehiculos: r.vehiculos.map((v) => ({ ...v, fondo: null })), socios: [], sinParticipacion: [] };
     if (!vista.empresa) {
       // Sin nada de la empresa (ni terceros, ni reconocidos, ni T. Lopez, ni sus gastos).

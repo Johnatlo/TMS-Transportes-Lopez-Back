@@ -537,7 +537,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1086 funciones, componentes, métodos y rutas en 73 archivos._
+_1090 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -597,7 +597,7 @@ _1086 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
-- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (22)
+- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (23)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
 - [`src/scripts/crear-usuario.ts`](#srcscriptscrearusuariots) (1)
@@ -610,7 +610,7 @@ _1086 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/seguimiento.ts`](#srcseguimientots) (37)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
-- [`src/utilidades.ts`](#srcutilidadests) (29)
+- [`src/utilidades.ts`](#srcutilidadests) (32)
 - [`src/vigencias.ts`](#srcvigenciasts) (3)
 
 ### `src/accesos.ts`
@@ -5400,6 +5400,9 @@ _1086 funciones, componentes, métodos y rutas en 73 archivos._
 - **`vistaDe(req)`** · _función_
   Lo que ve el rol de la peticion.
 
+- **`vehiculosVisibles(req)`** · _función_
+  M&C: sus vehiculos y los visibles para todos; los demas roles: todos (null).
+
 - **`exigirRentabilidad(req)`** · _función_
   Rentabilidad (o el reparto, que usa la cascada del mes): no las administrativas.
 
@@ -6112,6 +6115,16 @@ _1086 funciones, componentes, métodos y rutas en 73 archivos._
 - **`repartimosDe(x)`** · _función_
   Lo que se decidio repartir de cada vehiculo ({ vehiculoId: monto }), validado.
 
+- **`soloVehiculos(u, ids)`** · _función_
+  Solo los vehiculos dados y los socios que tienen parte en ellos (M&C). Si un
+  socio tiene tambien otros carros, lo suyo se recalcula solo con estos.
+
+- **`vehiculosDeMyc()`** · _función_
+  Los vehiculos de M&C y los visibles para todos (lo que M&C ve del reparto).
+
+- **`sociosDeVehiculos(ids)`** · _función_
+  Los socios con parte (vigente o pasada) en esos vehiculos.
+
 - **`armarEmpresa(d)`** · _función_
   El estado de resultados de la empresa con su detalle.
 
@@ -6122,7 +6135,7 @@ _1086 funciones, componentes, métodos y rutas en 73 archivos._
     Cascada, fondo y reparto del mes, segun lo que ve el rol. Con `repartimos`, simula (aunque este aprobado).
 
   - **`utilidades.recortar(u, vista)`** · _método_
-    Quita lo que el rol no ve: el reparto (administrativas) o los terceros (M&C).
+    Quita lo que el rol no ve: el reparto (administrativas), los terceros y la empresa, o los carros que no son suyos (M&C).
 
   - **`utilidades.calcular(mes, repartimos)`** · _método_
     Calcula el mes con los datos actuales y lo que se reparte de cada vehiculo (lo que falte: el sugerido).

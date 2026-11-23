@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { responder } from "./cuadro";
 import { ErrorCuadro } from "../cuadro";
-import { utilidades } from "../utilidades";
+import { sociosDeVehiculos, utilidades, vehiculosDeMyc } from "../utilidades";
 import { cuentasVehiculos } from "../cuentasVehiculo";
 import type { VistaUtilidades } from "../utilidades";
 import { rolDePeticion } from "../accesos";
@@ -20,11 +20,16 @@ import { puede, veRentabilidadEmpresa, veRentabilidadTerceros } from "../roles";
 export const utilidadesRouter = Router();
 
 /** Lo que ve el rol de la peticion. */
-const vistaDe = (req: Request): VistaUtilidades => ({
+const vistaDe = async (req: Request): Promise<VistaUtilidades> => ({
   reparto: puede(rolDePeticion(req), "REPARTO"),
   terceros: veRentabilidadTerceros(rolDePeticion(req)),
   empresa: veRentabilidadEmpresa(rolDePeticion(req)),
+  // M&C: solo sus carros (y los visibles para todos) y sus socios.
+  vehiculos: await vehiculosVisibles(req),
 });
+
+/** M&C: sus vehiculos y los visibles para todos; los demas roles: todos (null). */
+const vehiculosVisibles = async (req: Request): Promise<number[] | null> => (rolDePeticion(req) === "MYC" ? vehiculosDeMyc() : null);
 
 /** Rentabilidad (o el reparto, que usa la cascada del mes): no las administrativas. */
 function exigirRentabilidad(req: Request): void {
@@ -60,8 +65,12 @@ utilidadesRouter.get("/aprobados", async (_req, res) => {
 });
 
 /** GET /api/utilidades/participaciones: vehiculos con su participacion vigente e historial. */
-utilidadesRouter.get("/participaciones", async (_req, res) => {
-  res.json(await utilidades.participaciones());
+utilidadesRouter.get("/participaciones", async (req, res) => {
+  await responder(res, async () => {
+    const lista = await utilidades.participaciones();
+    const ids = await vehiculosVisibles(req);
+    return ids ? lista.filter((p) => ids.includes(p.vehiculoId)) : lista;
+  });
 });
 
 /** PUT /api/utilidades/participaciones/:vehiculoId: nueva participacion desde una fecha ({ desde, partes }). Solo total. */
@@ -77,7 +86,9 @@ utilidadesRouter.put("/participaciones/:vehiculoId", async (req, res) => {
 utilidadesRouter.get("/fondos", async (req, res) => {
   await responder(res, async () => {
     exigirReparto(req);
-    return utilidades.fondos();
+    const fondos = await utilidades.fondos();
+    const ids = await vehiculosVisibles(req);
+    return ids ? fondos.filter((f) => ids.includes(f.vehiculoId)) : fondos;
   });
 });
 
@@ -135,7 +146,12 @@ utilidadesRouter.put("/socios/:id", async (req, res) => {
 utilidadesRouter.get("/cuentas", async (req, res) => {
   await responder(res, async () => {
     exigirReparto(req);
-    return utilidades.cuentas();
+    const cuentas = await utilidades.cuentas();
+    const ids = await vehiculosVisibles(req);
+    if (!ids) return cuentas;
+    // M&C: solo los socios de sus carros.
+    const suyos = await sociosDeVehiculos(ids);
+    return cuentas.filter((c) => suyos.has(c.id));
   });
 });
 
@@ -159,9 +175,9 @@ utilidadesRouter.delete("/pagos/:id", async (req, res) => {
 
 /** GET /api/utilidades/:mes: cascada, fondos y reparto del mes ("AAAA-MM"), segun lo que ve el rol. */
 utilidadesRouter.get("/:mes", async (req, res) => {
-  await responder(res, () => {
+  await responder(res, async () => {
     exigirRentabilidad(req);
-    return utilidades.mes(req.params.mes, vistaDe(req));
+    return utilidades.mes(req.params.mes, await vistaDe(req));
   });
 });
 
@@ -169,7 +185,7 @@ utilidadesRouter.get("/:mes", async (req, res) => {
 utilidadesRouter.post("/:mes/simular", async (req, res) => {
   await responder(res, async () => {
     exigirReparto(req);
-    return utilidades.mes(req.params.mes, vistaDe(req), req.body?.repartimos ?? {});
+    return utilidades.mes(req.params.mes, await vistaDe(req), req.body?.repartimos ?? {});
   });
 });
 
@@ -178,7 +194,7 @@ utilidadesRouter.post("/:mes/aprobar", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
     await utilidades.aprobar(req.params.mes, req.body?.repartimos ?? {}, req.usuario?.id ?? null);
-    return utilidades.mes(req.params.mes, vistaDe(req));
+    return utilidades.mes(req.params.mes, await vistaDe(req));
   });
 });
 
@@ -187,6 +203,6 @@ utilidadesRouter.delete("/:mes/aprobar", async (req, res) => {
   await responder(res, async () => {
     exigirTotal(req);
     await utilidades.anular(req.params.mes);
-    return utilidades.mes(req.params.mes, vistaDe(req));
+    return utilidades.mes(req.params.mes, await vistaDe(req));
   });
 });
