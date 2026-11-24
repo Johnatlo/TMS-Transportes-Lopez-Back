@@ -537,7 +537,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1090 funciones, componentes, métodos y rutas en 73 archivos._
+_1092 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -555,7 +555,7 @@ _1090 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/correo.ts`](#srccorreots) (9)
 - [`src/cuadro.ts`](#srccuadrots) (43)
 - [`src/cuentasVehiculo.ts`](#srccuentasvehiculots) (2)
-- [`src/db.ts`](#srcdbts) (3)
+- [`src/db.ts`](#srcdbts) (4)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (11)
 - [`src/fechas.ts`](#srcfechasts) (1)
@@ -571,7 +571,7 @@ _1090 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/proteccion.ts`](#srcproteccionts) (3)
 - [`src/proteccionMeses.ts`](#srcproteccionmesests) (3)
 - [`src/reglasGastos.ts`](#srcreglasgastosts) (6)
-- [`src/relacionesBomba.ts`](#srcrelacionesbombats) (18)
+- [`src/relacionesBomba.ts`](#srcrelacionesbombats) (19)
 - [`src/rentabilidad.ts`](#srcrentabilidadts) (13)
 - [`src/repo.ts`](#srcrepots) (96)
 - [`src/reportes.ts`](#srcreportests) (10)
@@ -1913,6 +1913,14 @@ _1090 funciones, componentes, métodos y rutas en 73 archivos._
      arranque sin pisar lo que ya esta).
   Asi un despliegue nuevo actualiza la base solo, sin migraciones manuales.
 
+- **`efectivoEnFacturasBomba()`** · _función_
+  Una sola vez: la relacion de la bomba (el PDF de COESCO) solo trae el
+  combustible y las facturas se cruzaron sin el efectivo, que la bomba si
+  cobra. A cada factura ya cruzada se le pone el efectivo registrado de sus
+  tanqueos (ya verificado): un vale de efectivo por tanqueo, sube el total de
+  la factura (y el del pago a la bomba en que va) y, si ya se pago, ese
+  efectivo queda pagado con ella. Las facturas nuevas ya lo traen al cruzarse.
+
 - **`unificarCollation()`** · _función_
   Deja todas las tablas con la misma collation que la tabla viajes.
 
@@ -2725,6 +2733,15 @@ _1090 funciones, componentes, métodos y rutas en 73 archivos._
 >   antes, para ver la diferencia; los galones son los del vale;
 > - el tanqueo queda con el numero y la fecha de la factura de la bomba.
 > Borrar la relacion devuelve los tramos como estaban.
+>
+> El efectivo: la relacion de COESCO (el PDF) solo trae los vales de
+> combustible, pero la factura de la bomba cobra tambien el efectivo que
+> entrego. Al proponer, el efectivo de esos tanqueos (y el de los tanqueos de
+> solo efectivo de esas placas en esa estacion y esas fechas) entra como vale
+> de efectivo del TMS (sin numero de vale): suma al total de la factura, se
+> paga con ella y se puede quitar si no va (ver efectivoDeTanqueos). Las
+> facturas cruzadas antes tomaron, una sola vez, el efectivo registrado de sus
+> tanqueos (ver db.ts).
 
 - **`montoTramo(t, tipo)`** · _función_
   Lo que el tramo tiene registrado del tipo del vale.
@@ -2745,6 +2762,13 @@ _1090 funciones, componentes, métodos y rutas en 73 archivos._
   del vale (combustible o efectivo) y sin un vale de ese tipo. Se reparten
   primero los que coinciden en valor (los mas cercanos en fecha), y luego los
   demas al tramo libre mas cercano. Un tramo va con un solo vale de cada tipo.
+
+- **`efectivoDeTanqueos(propuestos, tramos)`** · _función_
+  El efectivo que entrego la bomba y que la relacion (el PDF) no trae: el de
+  los tanqueos cruzados con un vale de combustible y el de los tanqueos de
+  solo efectivo de esas placas, en esa estacion y en esas fechas (+- 2 dias).
+  Solo los que tienen efectivo, sin vale de efectivo y no estan ya en la
+  relacion. Van como vales de efectivo del TMS (agregado), ya cruzados.
 
 - **`leerVales(lista)`** · _función_
   Valida los vales que manda el navegador.

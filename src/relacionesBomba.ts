@@ -15,6 +15,15 @@
  *   antes, para ver la diferencia; los galones son los del vale;
  * - el tanqueo queda con el numero y la fecha de la factura de la bomba.
  * Borrar la relacion devuelve los tramos como estaban.
+ *
+ * El efectivo: la relacion de COESCO (el PDF) solo trae los vales de
+ * combustible, pero la factura de la bomba cobra tambien el efectivo que
+ * entrego. Al proponer, el efectivo de esos tanqueos (y el de los tanqueos de
+ * solo efectivo de esas placas en esa estacion y esas fechas) entra como vale
+ * de efectivo del TMS (sin numero de vale): suma al total de la factura, se
+ * paga con ella y se puede quitar si no va (ver efectivoDeTanqueos). Las
+ * facturas cruzadas antes tomaron, una sola vez, el efectivo registrado de sus
+ * tanqueos (ver db.ts).
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
@@ -71,6 +80,8 @@ export type EstadoVale = "COINCIDE" | "DIFERENCIA" | "SIN_TANQUEO";
 export interface ValePropuesto extends ValeBomba {
   tramoId: number | null;
   estado: EstadoVale;
+  /** Efectivo del tanqueo que no viene en la relacion de la bomba (lo agrega el TMS; se puede quitar). */
+  agregado?: boolean;
   /** Lo registrado en el tramo propuesto del tipo del vale (combustible o efectivo). */
   combustibleTramo: number | null;
 }
@@ -118,9 +129,9 @@ export function emparejarVales(vales: ValeBomba[], tramos: TramoCruzable[]): Val
           montoTramo(t, v.tipo) > 0 &&
           placaNormal(t.placa) === placaNormal(v.placa) &&
           (!t.bomba || estacionNormal(t.bomba) === estacionNormal(v.eds)) &&
-          diasEntre(t.fecha, v.fecha) <= DIAS_VALE
+          diasEntre(t.fecha, v.fecha) <= DIAS_VALE,
       )
-      .sort((a, b) => diasEntre(a.fecha, v.fecha) - diasEntre(b.fecha, v.fecha) || a.id - b.id)
+      .sort((a, b) => diasEntre(a.fecha, v.fecha) - diasEntre(b.fecha, v.fecha) || a.id - b.id),
   );
   // 1. Mismo valor.
   vales.forEach((v, i) => {
@@ -148,6 +159,48 @@ export function emparejarVales(vales: ValeBomba[], tramos: TramoCruzable[]): Val
       estado: !t ? "SIN_TANQUEO" : Math.abs(montoTramo(t, v.tipo) - v.valor) <= TOLERANCIA_VALE ? "COINCIDE" : "DIFERENCIA",
     };
   });
+}
+
+/**
+ * El efectivo que entrego la bomba y que la relacion (el PDF) no trae: el de
+ * los tanqueos cruzados con un vale de combustible y el de los tanqueos de
+ * solo efectivo de esas placas, en esa estacion y en esas fechas (+- 2 dias).
+ * Solo los que tienen efectivo, sin vale de efectivo y no estan ya en la
+ * relacion. Van como vales de efectivo del TMS (agregado), ya cruzados.
+ */
+export function efectivoDeTanqueos(propuestos: ValePropuesto[], tramos: TramoCruzable[]): ValePropuesto[] {
+  const conEfectivo = new Set(propuestos.filter((v) => v.tipo === "EFECTIVO" && v.tramoId).map((v) => v.tramoId));
+  const combustible = propuestos.filter((v) => v.tipo === "COMBUSTIBLE" && v.tramoId);
+  const deCombustible = new Map(combustible.map((v) => [v.tramoId!, v]));
+  const fechas = propuestos.map((v) => v.fecha).sort();
+  const extras: ValePropuesto[] = [];
+  for (const t of tramos) {
+    if (t.efectivo <= 0 || t.cruzadoEfectivo || conEfectivo.has(t.id)) continue;
+    let vale = deCombustible.get(t.id);
+    if (!vale && t.combustible <= 0 && t.bomba && fechas.length) {
+      // Solo efectivo: misma placa y estacion que algun vale de la relacion, dentro de sus fechas.
+      const desde = fechas[0];
+      const hasta = fechas[fechas.length - 1];
+      const enFechas = diasEntre(t.fecha, desde) <= DIAS_VALE || diasEntre(t.fecha, hasta) <= DIAS_VALE || (t.fecha >= desde && t.fecha <= hasta);
+      if (enFechas) vale = propuestos.find((v) => placaNormal(v.placa) === placaNormal(t.placa) && estacionNormal(v.eds) === estacionNormal(t.bomba));
+    }
+    if (!vale) continue;
+    extras.push({
+      tipo: "EFECTIVO",
+      eds: vale.eds,
+      vale: null,
+      fecha: t.fecha,
+      hora: null,
+      placa: vale.placa,
+      galones: null,
+      valor: t.efectivo,
+      tramoId: t.id,
+      estado: "COINCIDE",
+      combustibleTramo: t.efectivo,
+      agregado: true,
+    });
+  }
+  return extras;
 }
 
 /** Una relacion (factura) de la bomba ya cruzada. */
@@ -178,10 +231,18 @@ function leerVales(lista: unknown): Array<ValeBomba & { tramoId: number | null }
     const galones = v?.galones === null || v?.galones === undefined || v?.galones === "" ? null : Number(v.galones);
     return {
       tipo: (v?.tipo === "EFECTIVO" ? "EFECTIVO" : "COMBUSTIBLE") as TipoVale,
-      eds: String(v?.eds ?? "").trim().slice(0, 80),
-      vale: String(v?.vale ?? "").trim().slice(0, 40) || null,
+      eds: String(v?.eds ?? "")
+        .trim()
+        .slice(0, 80),
+      vale:
+        String(v?.vale ?? "")
+          .trim()
+          .slice(0, 40) || null,
       fecha,
-      hora: String(v?.hora ?? "").trim().slice(0, 8) || null,
+      hora:
+        String(v?.hora ?? "")
+          .trim()
+          .slice(0, 8) || null,
       placa,
       galones: galones !== null && Number.isFinite(galones) ? galones : null,
       valor: Math.round(valor),
@@ -199,7 +260,7 @@ async function tramosCruzables(): Promise<TramoCruzable[]> {
        FROM cuadro_anticipos a
        LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId
        LEFT JOIN bombas b ON b.id = a.bombaId
-      WHERE a.combustible > 0 OR a.efectivo > 0`
+      WHERE a.combustible > 0 OR a.efectivo > 0`,
   );
   return rows.map((r) => ({
     id: r.id,
@@ -235,7 +296,10 @@ export const relacionesBomba = {
     const vales = leerVales(d.vales);
     const numero = String(d.numero ?? "").trim();
     const [hay] = await pool.query<RowDataPacket[]>("SELECT id FROM bomba_relaciones WHERE numero = ?", [numero]);
-    return { vales: emparejarVales(vales, await tramosCruzables()), yaExiste: !!hay[0] };
+    const tramos = await tramosCruzables();
+    const propuestos = emparejarVales(vales, tramos);
+    // El efectivo de la bomba que la relacion no trae (va en la misma factura).
+    return { vales: [...propuestos, ...efectivoDeTanqueos(propuestos, tramos)], yaExiste: !!hay[0] };
   },
 
   /**
@@ -243,7 +307,10 @@ export const relacionesBomba = {
    * fecha, nota, vales: [{ ...vale, tramoId }] }). En una transaccion.
    */
   async guardar(d: Record<string, unknown>, usuarioId: number | null): Promise<number> {
-    const numero = String(d.numero ?? "").trim().toUpperCase().slice(0, 40);
+    const numero = String(d.numero ?? "")
+      .trim()
+      .toUpperCase()
+      .slice(0, 40);
     const fecha = String(d.fecha ?? "").slice(0, 10);
     if (!numero) throw new ErrorCuadro("Escribe el numero de la factura de la bomba.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha de la factura de la bomba.");
@@ -260,23 +327,31 @@ export const relacionesBomba = {
       const [hay] = await conexion.query<RowDataPacket[]>("SELECT id FROM bomba_relaciones WHERE numero = ?", [numero]);
       if (hay[0]) throw new ErrorCuadro(`La factura ${numero} ya se cruzo. Borrala primero si quieres cargarla de nuevo.`);
       if (ids.length) {
-        const [ocupados] = await conexion.query<RowDataPacket[]>(
-          "SELECT cuadroAnticipoId, tipo FROM bomba_relacion_vales WHERE cuadroAnticipoId IN (?)",
-          [ids]
-        );
+        const [ocupados] = await conexion.query<RowDataPacket[]>("SELECT cuadroAnticipoId, tipo FROM bomba_relacion_vales WHERE cuadroAnticipoId IN (?)", [
+          ids,
+        ]);
         if (ocupados.some((o) => porTipo.includes(`${o.cuadroAnticipoId}|${o.tipo}`))) {
           throw new ErrorCuadro("Algun tanqueo ya esta cruzado con otra factura de la bomba.");
         }
       }
       const [r] = await conexion.query<ResultSetHeader>(
         "INSERT INTO bomba_relaciones (numero, fecha, fechaVencimiento, total, nota, creadoPorId) VALUES (?, ?, ?, ?, ?, ?)",
-        [numero, fecha, vence, total, String(d.nota ?? "").trim().slice(0, 200) || null, usuarioId]
+        [
+          numero,
+          fecha,
+          vence,
+          total,
+          String(d.nota ?? "")
+            .trim()
+            .slice(0, 200) || null,
+          usuarioId,
+        ],
       );
       for (const v of vales) {
         await conexion.query(
           `INSERT INTO bomba_relacion_vales (relacionId, tipo, eds, vale, fecha, hora, placa, galones, valor, cuadroAnticipoId)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [r.insertId, v.tipo, v.eds, v.vale, v.fecha, v.hora, v.placa, v.galones, v.valor, v.tramoId]
+          [r.insertId, v.tipo, v.eds, v.vale, v.fecha, v.hora, v.placa, v.galones, v.valor, v.tramoId],
         );
         if (!v.tramoId) continue;
         // El valor del tramo pasa a ser lo que cobra la bomba; se guarda lo de antes.
@@ -286,7 +361,7 @@ export const relacionesBomba = {
                 SET efectivoEntregado = COALESCE(efectivoEntregado, efectivo),
                     efectivo = ?, valor = ? + COALESCE(combustible, 0)
               WHERE id = ?`,
-            [v.valor, v.valor, v.tramoId]
+            [v.valor, v.valor, v.tramoId],
           );
         } else {
           await conexion.query(
@@ -294,14 +369,14 @@ export const relacionesBomba = {
                 SET combustibleEntregado = COALESCE(combustibleEntregado, combustible),
                     combustible = ?, valor = COALESCE(efectivo, 0) + ?, galones = COALESCE(?, galones)
               WHERE id = ?`,
-            [v.valor, v.valor, v.galones, v.tramoId]
+            [v.valor, v.valor, v.galones, v.tramoId],
           );
         }
         await conexion.query(
           `UPDATE anticipos_tanqueo t JOIN cuadro_anticipos a ON a.tanqueoId = t.id
               SET t.facturaBomba = ?, t.fechaFacturaBomba = ?
             WHERE a.id = ?`,
-          [numero, fecha, v.tramoId]
+          [numero, fecha, v.tramoId],
         );
       }
       await conexion.commit();
@@ -393,13 +468,22 @@ export const relacionesBomba = {
       const totalAbonos = abs.reduce((s, a) => s + Number(a.valor), 0);
       const [p] = await conexion.query<ResultSetHeader>(
         "INSERT INTO bomba_pagos (fecha, totalFacturas, totalAbonos, valorPagado, referencia, creadoPorId) VALUES (?, ?, ?, ?, ?, ?)",
-        [fecha, totalFacturas, totalAbonos, valorAPagarBomba(totalFacturas, totalAbonos), String(d.referencia ?? "").trim().slice(0, 80) || null, usuarioId]
+        [
+          fecha,
+          totalFacturas,
+          totalAbonos,
+          valorAPagarBomba(totalFacturas, totalAbonos),
+          String(d.referencia ?? "")
+            .trim()
+            .slice(0, 80) || null,
+          usuarioId,
+        ],
       );
       await conexion.query("UPDATE bomba_relaciones SET pagoId = ?, fechaPago = ? WHERE id IN (?)", [p.insertId, fecha, ids]);
       await conexion.query(
         `UPDATE cuadro_anticipos a JOIN bomba_relacion_vales v ON v.cuadroAnticipoId = a.id
             SET a.fechaPago = ? WHERE v.relacionId IN (?)`,
-        [fecha, ids]
+        [fecha, ids],
       );
       if (abonos.length) await conexion.query("UPDATE abonos_socio SET pagoId = ? WHERE id IN (?)", [p.insertId, abonos]);
       await conexion.commit();
@@ -418,7 +502,7 @@ export const relacionesBomba = {
       `UPDATE cuadro_anticipos a JOIN bomba_relacion_vales v ON v.cuadroAnticipoId = a.id
          JOIN bomba_relaciones r ON r.id = v.relacionId
           SET a.fechaPago = NULL WHERE r.pagoId = ?`,
-      [id]
+      [id],
     );
     await pool.query("UPDATE bomba_relaciones SET pagoId = NULL, fechaPago = NULL WHERE pagoId = ?", [id]);
     await pool.query("UPDATE abonos_socio SET pagoId = NULL WHERE pagoId = ?", [id]);
@@ -433,7 +517,7 @@ export const relacionesBomba = {
     await pool.query(
       `UPDATE cuadro_anticipos a JOIN bomba_relacion_vales v ON v.cuadroAnticipoId = a.id
           SET a.fechaPago = ? WHERE v.relacionId = ?`,
-      [fecha, id]
+      [fecha, id],
     );
   },
 
@@ -450,7 +534,7 @@ export const relacionesBomba = {
               a.valor = COALESCE(a.efectivo, 0) + COALESCE(a.combustibleEntregado, a.combustible),
               a.combustibleEntregado = NULL
         WHERE v.relacionId = ?`,
-      [id]
+      [id],
     );
     await pool.query(
       `UPDATE cuadro_anticipos a JOIN bomba_relacion_vales v ON v.cuadroAnticipoId = a.id AND v.tipo = 'EFECTIVO'
@@ -458,7 +542,7 @@ export const relacionesBomba = {
               a.valor = COALESCE(a.efectivoEntregado, a.efectivo) + COALESCE(a.combustible, 0),
               a.efectivoEntregado = NULL
         WHERE v.relacionId = ?`,
-      [id]
+      [id],
     );
     await pool.query("UPDATE anticipos_tanqueo SET facturaBomba = NULL, fechaFacturaBomba = NULL WHERE facturaBomba = ?", [r[0].numero]);
     await pool.query("DELETE FROM bomba_relaciones WHERE id = ?", [id]);

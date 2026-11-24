@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 // Los modulos importan la conexion a MySQL; estas pruebas no tocan la base.
 vi.mock("./db", () => ({ pool: {} }));
 
-import { emparejarVales, estacionNormal, valorAPagarBomba } from "./relacionesBomba";
+import { efectivoDeTanqueos, emparejarVales, estacionNormal, valorAPagarBomba } from "./relacionesBomba";
 import type { TramoCruzable, ValeBomba } from "./relacionesBomba";
 import { elegirIdaYVuelta, parejasIdaYVuelta } from "./anticipos";
 import type { TanqueoSuelto } from "./anticipos";
@@ -125,5 +125,54 @@ describe("pago a la bomba", () => {
     expect(valorAPagarBomba(125_653_812, 13_200_000 + 15_400_000 + 13_200_000)).toBe(83_853_812);
     // Si los abonos pasan las facturas, no se paga nada (no queda negativo).
     expect(valorAPagarBomba(1_000_000, 2_000_000)).toBe(0);
+  });
+});
+
+describe("efectivo de la bomba que la relacion no trae", () => {
+  const vale = (fecha: string, valor: number): ValeBomba => ({
+    tipo: "COMBUSTIBLE",
+    eds: "EDS CHUSACA",
+    vale: "V1",
+    fecha,
+    hora: null,
+    placa: "SWO594",
+    galones: 89.7,
+    valor,
+  });
+  const tramo = (id: number, fecha: string, combustible: number, efectivo: number, placa = "SWO-594", bomba = "CHUSACA"): TramoCruzable => ({
+    id,
+    placa,
+    fecha,
+    bomba,
+    combustible,
+    efectivo,
+    cruzadoCombustible: false,
+    cruzadoEfectivo: false,
+  });
+
+  test("el efectivo del tanqueo cruzado con el combustible entra en la factura (ya cruzado)", () => {
+    const tramos = [tramo(1, "2026-09-01", 1_100_000, 1_100_000)];
+    const propuestos = emparejarVales([vale("2026-09-01", 1_100_000)], tramos);
+    const extras = efectivoDeTanqueos(propuestos, tramos);
+    expect(extras).toHaveLength(1);
+    expect(extras[0]).toMatchObject({ tipo: "EFECTIVO", tramoId: 1, valor: 1_100_000, estado: "COINCIDE", agregado: true, vale: null, galones: null });
+  });
+
+  test("un tanqueo de solo efectivo de esa placa y estacion en esas fechas tambien; otra placa, otra estacion o lejos en fecha, no", () => {
+    const tramos = [
+      tramo(1, "2026-09-01", 1_100_000, 0),
+      tramo(2, "2026-09-02", 0, 500_000),
+      tramo(3, "2026-09-02", 0, 500_000, "SRO-029"),
+      tramo(4, "2026-09-02", 0, 500_000, "SWO-594", "SAN ESTEBAN"),
+      tramo(5, "2026-09-20", 0, 500_000),
+    ];
+    const propuestos = emparejarVales([vale("2026-09-01", 1_100_000)], tramos);
+    expect(efectivoDeTanqueos(propuestos, tramos).map((x) => x.tramoId)).toEqual([2]);
+  });
+
+  test("no repite el efectivo que ya tiene vale (en esta relacion o en otra)", () => {
+    const tramos = [{ ...tramo(1, "2026-09-01", 1_100_000, 1_100_000), cruzadoEfectivo: true }];
+    const propuestos = emparejarVales([vale("2026-09-01", 1_100_000)], tramos);
+    expect(efectivoDeTanqueos(propuestos, tramos)).toEqual([]);
   });
 });

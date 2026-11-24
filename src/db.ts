@@ -1156,6 +1156,8 @@ export async function initSchema(): Promise<void> {
     ["vehiculos", "visibleTodos", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Fecha de vencimiento de la factura de la bomba: avisa cuando hay que pagarla.
     ["bomba_relaciones", "fechaVencimiento", "DATE"],
+    // Una sola vez: las facturas de la bomba cruzadas solo con el combustible toman el efectivo registrado (ver abajo).
+    ["parametros_empresa", "efectivoBombaMigrado", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Tarifa que siempre se factura con el mismo peso (PEGANTE URBANO: 33.000 kg).
     ["tarifas_flete", "pesoFijoKg", "INT"],
     // Tarifa urbana aunque su nombre no diga URBANO (COOP DE LA SABANA): sus viajes no llevan poliza RCE.
@@ -1786,7 +1788,65 @@ export async function initSchema(): Promise<void> {
     await pool.query("UPDATE parametros_empresa SET descuentosBombaMigrado = 1 WHERE id = 1");
   }
 
+  await efectivoEnFacturasBomba();
+
   await unificarCollation();
+}
+
+/**
+ * Una sola vez: la relacion de la bomba (el PDF de COESCO) solo trae el
+ * combustible y las facturas se cruzaron sin el efectivo, que la bomba si
+ * cobra. A cada factura ya cruzada se le pone el efectivo registrado de sus
+ * tanqueos (ya verificado): un vale de efectivo por tanqueo, sube el total de
+ * la factura (y el del pago a la bomba en que va) y, si ya se pago, ese
+ * efectivo queda pagado con ella. Las facturas nuevas ya lo traen al cruzarse.
+ */
+async function efectivoEnFacturasBomba(): Promise<void> {
+  const [[p]] = await pool.query<RowDataPacket[]>("SELECT efectivoBombaMigrado AS hecho FROM parametros_empresa WHERE id = 1");
+  if (!p || p.hecho) return;
+  const conexion = await pool.getConnection();
+  try {
+    await conexion.beginTransaction();
+    const [tramos] = await conexion.query<RowDataPacket[]>(
+      `SELECT v.relacionId, r.pagoId, r.fechaPago, a.id AS tramoId, a.efectivo, a.fecha, v.eds, v.placa
+         FROM bomba_relacion_vales v
+         JOIN bomba_relaciones r ON r.id = v.relacionId
+         JOIN cuadro_anticipos a ON a.id = v.cuadroAnticipoId
+        WHERE v.tipo = 'COMBUSTIBLE' AND a.efectivo > 0
+          AND NOT EXISTS (SELECT 1 FROM bomba_relacion_vales e WHERE e.cuadroAnticipoId = a.id AND e.tipo = 'EFECTIVO')`,
+    );
+    const porRelacion = new Map<number, number>();
+    const porPago = new Map<number, number>();
+    const hechos = new Set<number>();
+    for (const t of tramos) {
+      if (hechos.has(t.tramoId)) continue;
+      hechos.add(t.tramoId);
+      const valor = Number(t.efectivo);
+      await conexion.query(
+        `INSERT INTO bomba_relacion_vales (relacionId, tipo, eds, vale, fecha, hora, placa, galones, valor, cuadroAnticipoId)
+         VALUES (?, 'EFECTIVO', ?, NULL, ?, NULL, ?, NULL, ?, ?)`,
+        [t.relacionId, t.eds, t.fecha, t.placa, valor, t.tramoId],
+      );
+      await conexion.query("UPDATE cuadro_anticipos SET efectivoEntregado = COALESCE(efectivoEntregado, efectivo) WHERE id = ?", [t.tramoId]);
+      if (t.fechaPago) await conexion.query("UPDATE cuadro_anticipos SET fechaPago = ? WHERE id = ?", [t.fechaPago, t.tramoId]);
+      porRelacion.set(t.relacionId, (porRelacion.get(t.relacionId) ?? 0) + valor);
+      if (t.pagoId) porPago.set(t.pagoId, (porPago.get(t.pagoId) ?? 0) + valor);
+    }
+    for (const [id, suma] of porRelacion) await conexion.query("UPDATE bomba_relaciones SET total = total + ? WHERE id = ?", [suma, id]);
+    for (const [id, suma] of porPago)
+      await conexion.query(
+        "UPDATE bomba_pagos SET totalFacturas = totalFacturas + ?, valorPagado = GREATEST(0, ROUND(totalFacturas - totalAbonos)) WHERE id = ?",
+        [suma, id],
+      );
+    await conexion.query("UPDATE parametros_empresa SET efectivoBombaMigrado = 1 WHERE id = 1");
+    await conexion.commit();
+    if (hechos.size) console.log(`Facturas de la bomba: ${hechos.size} tanqueo(s) con su efectivo en ${porRelacion.size} factura(s).`);
+  } catch (err) {
+    await conexion.rollback();
+    console.warn("AVISO: no se pudo poner el efectivo en las facturas de la bomba:", (err as Error).message);
+  } finally {
+    conexion.release();
+  }
 }
 
 /**
