@@ -145,10 +145,21 @@ seguimientoRouter.post("/terceros/pago", async (req, res) => {
   await responder(res, async () => ({ pagados: await terceros.pagar(req.body ?? {}) }));
 });
 
-/** PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). */
-seguimientoRouter.put("/cartera/anticipo", async (req, res) => {
+/** GET /api/seguimiento/cartera/anticipos?facturaNumero=&empresa=: los anticipos del cliente de una factura. */
+seguimientoRouter.get("/cartera/anticipos", async (req, res) => {
+  await responder(res, () => seguimiento.registrosAnticipoCliente(req.query.facturaNumero, req.query.empresa));
+});
+/** POST /api/seguimiento/cartera/anticipos: registra un anticipo del cliente ({ facturaNumero, empresa, valor, fecha }). */
+seguimientoRouter.post("/cartera/anticipos", async (req, res) => {
   await responder(res, async () => {
-    await seguimiento.guardarAnticipoCliente(req.body ?? {});
+    await seguimiento.agregarAnticipoCliente(req.body ?? {}, req.usuario?.id ?? null);
+    return seguimiento.registrosAnticipoCliente(req.body?.facturaNumero, req.body?.empresa);
+  });
+});
+/** DELETE /api/seguimiento/cartera/anticipos/:id: borra un anticipo del cliente (si se digito mal). */
+seguimientoRouter.delete("/cartera/anticipos/:id", async (req, res) => {
+  await responder(res, async () => {
+    await seguimiento.borrarAnticipoCliente(Number(req.params.id));
     return { ok: true };
   });
 });

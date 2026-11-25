@@ -39,7 +39,13 @@ const RELLENO = new Set(["SAS", "LTDA", "S", "A", "SA", "EN", "C", "DE", "DEL", 
 
 /** Mayusculas, sin tildes ni puntuacion. */
 const limpio = (s: string) =>
-  s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
 /**
  * true si el nombre corto del Excel corresponde a la empresa del cuadro: el
@@ -120,8 +126,7 @@ export interface FacturaPropuesta extends FacturaImportada {
 }
 
 /** Anticipo del cliente implicito: lo que suman las placas menos lo que se debe. */
-export const anticipoDe = (f: FacturaImportada) =>
-  Math.max(0, Math.round(f.placas.reduce((s, p) => s + p.valor, 0) - f.valor));
+export const anticipoDe = (f: FacturaImportada) => Math.max(0, Math.round(f.placas.reduce((s, p) => s + p.valor, 0) - f.valor));
 
 /**
  * Propone como cargar cada factura:
@@ -143,18 +148,14 @@ export function proponerCartera(facturas: FacturaImportada[], viajes: FilaCuadro
     const lineas: LineaPropuesta[] = f.placas.map((l) => {
       const candidatos = vivos
         .filter(
-          (v) =>
-            placaNormal(v.placa) === placaNormal(l.placa) &&
-            v.fecha <= f.fecha &&
-            v.fecha >= desde &&
-            (!v.facturaNumero || v.facturaNumero === f.numero)
+          (v) => placaNormal(v.placa) === placaNormal(l.placa) && v.fecha <= f.fecha && v.fecha >= desde && (!v.facturaNumero || v.facturaNumero === f.numero),
         )
         .map((v) => candidato(v, f.empresa))
         .sort(
           (a, b) =>
             Number(b.facturaNumero === f.numero) - Number(a.facturaNumero === f.numero) ||
             Number(b.mismoCliente) - Number(a.mismoCliente) ||
-            b.fecha.localeCompare(a.fecha)
+            b.fecha.localeCompare(a.fecha),
         );
       const yaLigados = candidatos.filter((c) => c.facturaNumero === f.numero);
       if (yaLigados.length) {
@@ -229,14 +230,14 @@ export async function importarCartera(facturas: FacturaConfirmada[]): Promise<{ 
   try {
     await conexion.beginTransaction();
     const anticipo = async (numero: string, empresa: string, valor: number) => {
+      // El anticipo del Excel reemplaza al que trajo antes el Excel (los registrados a mano se quedan).
+      await conexion.query("DELETE FROM cartera_anticipos_cliente_registros WHERE facturaNumero = ? AND empresa = ? AND origen = 'EXCEL'", [numero, empresa]);
       if (valor > 0) {
-        await conexion.query(
-          `INSERT INTO cartera_anticipos_cliente (facturaNumero, empresa, valor) VALUES (?, ?, ?)
-           ON DUPLICATE KEY UPDATE valor = VALUES(valor)`,
-          [numero, empresa, Math.round(valor)]
-        );
-      } else {
-        await conexion.query("DELETE FROM cartera_anticipos_cliente WHERE facturaNumero = ? AND empresa = ?", [numero, empresa]);
+        await conexion.query("INSERT INTO cartera_anticipos_cliente_registros (facturaNumero, empresa, valor, origen) VALUES (?, ?, ?, 'EXCEL')", [
+          numero,
+          empresa,
+          Math.round(valor),
+        ]);
       }
     };
 
@@ -249,12 +250,9 @@ export async function importarCartera(facturas: FacturaConfirmada[]): Promise<{ 
         await conexion.query(
           `INSERT INTO cartera_saldos (facturaNumero, empresa, fechaFactura, fechaVence) VALUES (?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE fechaFactura = VALUES(fechaFactura), fechaVence = VALUES(fechaVence)`,
-          [numero, empresa, fecha, vence]
+          [numero, empresa, fecha, vence],
         );
-        const [fila] = await conexion.query<RowDataPacket[]>(
-          "SELECT id FROM cartera_saldos WHERE facturaNumero = ? AND empresa = ?",
-          [numero, empresa]
-        );
+        const [fila] = await conexion.query<RowDataPacket[]>("SELECT id FROM cartera_saldos WHERE facturaNumero = ? AND empresa = ?", [numero, empresa]);
         await conexion.query("DELETE FROM cartera_saldos_placas WHERE saldoId = ?", [fila[0].id]);
         for (const l of f.lineas) {
           await conexion.query("INSERT INTO cartera_saldos_placas (saldoId, placa, valor) VALUES (?, ?, ?)", [
@@ -272,10 +270,7 @@ export async function importarCartera(facturas: FacturaConfirmada[]): Promise<{ 
       for (const l of f.lineas) {
         const parte = Math.round(Number(l.valor) / l.viajeIds.length);
         for (const id of l.viajeIds) {
-          const [actual] = await conexion.query<RowDataPacket[]>(
-            "SELECT empresa, anulado, facturaNumero FROM cuadro_viajes WHERE id = ? FOR UPDATE",
-            [id]
-          );
+          const [actual] = await conexion.query<RowDataPacket[]>("SELECT empresa, anulado, facturaNumero FROM cuadro_viajes WHERE id = ? FOR UPDATE", [id]);
           const v = actual[0];
           if (!v || v.anulado) throw new ErrorCuadro(`Factura ${numero}: el viaje ${id} no existe o esta anulado.`);
           if (v.facturaNumero && v.facturaNumero !== numero) {
@@ -290,7 +285,7 @@ export async function importarCartera(facturas: FacturaConfirmada[]): Promise<{ 
                     tipoFlete = CASE WHEN (tipoFlete = 'FIJO' AND valorFijo IS NULL) OR (tipoFlete <> 'FIJO' AND tarifaKilo IS NULL)
                                      THEN 'FIJO' ELSE tipoFlete END
               WHERE id = ?`,
-            [numero, fecha, vence, parte, id]
+            [numero, fecha, vence, parte, id],
           );
           viajes++;
         }
@@ -374,7 +369,7 @@ export function proponerAnticipos(filas: AnticipoImportado[], viajes: FilaCuadro
         .filter((v) => placaNormal(v.placa) === placaNormal(a.placa) && dias(a.fecha, v.fecha) >= -3 && dias(a.fecha, v.fecha) <= 20)
         .map((v) => candidato(v, a.cliente))
         .sort((x, y) => distancia(dias(a.fecha, x.fecha)) - distancia(dias(a.fecha, y.fecha))),
-    ])
+    ]),
   );
   const usados = new Set<number>();
   const elegido = new Map<AnticipoImportado, CandidatoViaje>();
@@ -404,8 +399,7 @@ export function proponerAnticipos(filas: AnticipoImportado[], viajes: FilaCuadro
     const mismoDia = candidatos.filter((c) => c.fecha === a.fecha);
     const seguro =
       !!mejor &&
-      ((mejor.mismoCliente && dias(a.fecha, mejor.fecha) >= 0 && dias(a.fecha, mejor.fecha) <= 2) ||
-        (mismoDia.length === 1 && mismoDia[0].id === mejor.id));
+      ((mejor.mismoCliente && dias(a.fecha, mejor.fecha) >= 0 && dias(a.fecha, mejor.fecha) <= 2) || (mismoDia.length === 1 && mismoDia[0].id === mejor.id));
     const llave = llaveAnticipo(a.placa, a.fecha, a.efectivo, a.combustible);
     const yaImportado = (quedan.get(llave) ?? 0) > 0;
     if (yaImportado) quedan.set(llave, quedan.get(llave)! - 1);
@@ -417,7 +411,7 @@ export function proponerAnticipos(filas: AnticipoImportado[], viajes: FilaCuadro
 /** Cuantos anticipos ya cargados hay de cada llave (placa, fecha, efectivo, combustible). */
 async function anticiposExistentes(): Promise<Map<string, number>> {
   const [rows] = await pool.query<RowDataPacket[]>(
-    "SELECT COALESCE(a.placa, c.placa) AS placa, DATE_FORMAT(a.fecha, '%Y-%m-%d') AS fecha, a.efectivo, a.combustible FROM cuadro_anticipos a LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId"
+    "SELECT COALESCE(a.placa, c.placa) AS placa, DATE_FORMAT(a.fecha, '%Y-%m-%d') AS fecha, a.efectivo, a.combustible FROM cuadro_anticipos a LEFT JOIN cuadro_viajes c ON c.id = a.cuadroViajeId",
   );
   const cuenta = new Map<string, number>();
   for (const r of rows) {
@@ -479,7 +473,7 @@ export async function importarAnticipos(filas: AnticipoConfirmado[], usuarioId: 
       const [t] = await conexion.query<ResultSetHeader>(
         `INSERT INTO anticipos_tanqueo (placa, fecha, bombaId, idaYVuelta, facturaBomba, fechaFacturaBomba, nota, creadoPorId)
          VALUES (?, ?, ?, 0, ?, ?, ?, ?)`,
-        [placa, fecha, bombaId, a.facturaBomba || null, fechaONull(a.fechaFacturaBomba), "Cargado del Excel de anticipos", usuarioId]
+        [placa, fecha, bombaId, a.facturaBomba || null, fechaONull(a.fechaFacturaBomba), "Cargado del Excel de anticipos", usuarioId],
       );
       await conexion.query(
         `INSERT INTO cuadro_anticipos
@@ -502,7 +496,7 @@ export async function importarAnticipos(filas: AnticipoConfirmado[], usuarioId: 
           descuento || null,
           "Cargado del Excel de anticipos",
           usuarioId,
-        ]
+        ],
       );
       cargados++;
     }

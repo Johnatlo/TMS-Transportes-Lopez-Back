@@ -44,9 +44,7 @@ export const DIAS_PAPELES_DEMORADOS = 5;
  * (siguen en la lista, pero no llenan la campana). Las facturas con numero y
  * fecha si avisan siempre. Se cambia con SEGUIMIENTO_DESDE en el .env.
  */
-export const SEGUIMIENTO_DESDE = /^\d{4}-\d{2}-\d{2}$/.test(process.env.SEGUIMIENTO_DESDE ?? "")
-  ? process.env.SEGUIMIENTO_DESDE!
-  : "2026-10-01";
+export const SEGUIMIENTO_DESDE = /^\d{4}-\d{2}-\d{2}$/.test(process.env.SEGUIMIENTO_DESDE ?? "") ? process.env.SEGUIMIENTO_DESDE! : "2026-10-01";
 
 export type NivelAlerta = "urgente" | "atencion";
 
@@ -66,12 +64,10 @@ export function diasEntre(desde: string, hasta: string): number {
 export const diaColombia = (iso: string) => new Date(Date.parse(iso) - 5 * 3_600_000).toISOString().slice(0, 10);
 
 /** Viaje que aun no tiene factura (ni marcada ni con numero) y no esta anulado. */
-const sinFactura = (f: FilaCuadro) =>
-  !f.anulado && !f.facturado && !f.facturaNumero && !f.facturaFecha && !f.facturaFechaPago;
+const sinFactura = (f: FilaCuadro) => !f.anulado && !f.facturado && !f.facturaNumero && !f.facturaFecha && !f.facturaFechaPago;
 
 /** El viaje ya descargo: paso la fecha de descargue o los papeles ya salieron de "en ruta". */
-export const descargo = (f: FilaCuadro, hoy: string) =>
-  f.estadoPapeles !== "EN_RUTA" || (!!f.fechaDescargue && f.fechaDescargue <= hoy);
+export const descargo = (f: FilaCuadro, hoy: string) => f.estadoPapeles !== "EN_RUTA" || (!!f.fechaDescargue && f.fechaDescargue <= hoy);
 
 /**
  * Alerta de papeles de un viaje descargado que aun no esta listo para
@@ -167,6 +163,17 @@ export interface ViajeFactura {
   valorFlete: number | null;
   /** Socio dueno del vehiculo o TERCEROS (filtro por dueno). */
   dueno: GrupoDueno;
+}
+
+/** Un anticipo del cliente de una factura: lo que transfirio y cuando. */
+export interface RegistroAnticipoCliente {
+  id: number;
+  valor: number;
+  /** Fecha en que el cliente transfirio (null en los que venian de antes). */
+  fecha: string | null;
+  /** MANUAL: en la cartera; EXCEL: de la importacion; ANTERIOR: el valor que habia antes. */
+  origen: "MANUAL" | "EXCEL" | "ANTERIOR";
+  registradoPor: string | null;
 }
 
 /** Valor de una placa dentro de una factura (antes del anticipo del cliente). */
@@ -291,7 +298,7 @@ export function agruparCartera(
   plazos: Map<string, number>,
   gestiones: Map<string, GestionCobro>,
   hoy: string,
-  extras: { saldos?: SaldoCartera[]; anticipos?: Map<string, number> } = {}
+  extras: { saldos?: SaldoCartera[]; anticipos?: Map<string, number> } = {},
 ): FacturaCartera[] {
   const anticipos = extras.anticipos ?? new Map<string, number>();
   const grupos = new Map<string, FilaCuadro[]>();
@@ -306,7 +313,7 @@ export function agruparCartera(
     llave: string,
     base: { facturaNumero: string; empresa: string; facturaFecha: string; venceEscrito: string | null; concepto?: string | null },
     placas: PlacaFactura[],
-    resto: Pick<FacturaCartera, "sinViaje" | "viajesSinValor" | "viajes">
+    resto: Pick<FacturaCartera, "sinViaje" | "viajesSinValor" | "viajes">,
   ): FacturaCartera => {
     const cobro = clienteDeCobro(base.empresa, base.concepto);
     // El plazo puede estar escrito para el nombre exacto o para el cliente.
@@ -351,7 +358,11 @@ export function agruparCartera(
           empresa,
           // Si los viajes tienen fechas distintas, cuenta la mas antigua.
           facturaFecha: viajes.map((v) => v.facturaFecha!).sort()[0],
-          venceEscrito: viajes.map((v) => v.facturaVence).filter((v): v is string => !!v).sort()[0] ?? null,
+          venceEscrito:
+            viajes
+              .map((v) => v.facturaVence)
+              .filter((v): v is string => !!v)
+              .sort()[0] ?? null,
           // Concepto de los reconocidos de Cartones America de la factura.
           concepto: [...new Set(viajes.map((v) => v.concepto).filter((c): c is string => !!c))].join(" / ") || null,
         },
@@ -370,8 +381,8 @@ export function agruparCartera(
             valorFlete: v.valorFlete,
             dueno: grupoDe(v.dueno),
           })),
-        }
-      )
+        },
+      ),
     );
   }
   for (const s of extras.saldos ?? []) {
@@ -380,8 +391,8 @@ export function agruparCartera(
         `${s.facturaNumero}|${s.empresa}`,
         { facturaNumero: s.facturaNumero, empresa: s.empresa, facturaFecha: s.fechaFactura, venceEscrito: s.fechaVence },
         s.placas,
-        { sinViaje: true, viajesSinValor: 0, viajes: [] }
-      )
+        { sinViaje: true, viajesSinValor: 0, viajes: [] },
+      ),
     );
   }
   return facturas.sort((a, b) => b.diasVencida - a.diasVencida || a.facturaNumero.localeCompare(b.facturaNumero));
@@ -393,9 +404,7 @@ export function agruparCartera(
  * cartera quedan por dueno.
  */
 export function carteraDeDueno(facturas: FacturaCartera[], grupo: GrupoDueno): FacturaCartera[] {
-  return facturas
-    .filter((f) => (f.porDueno[grupo] ?? 0) > 0)
-    .map((f) => ({ ...f, valor: f.porDueno[grupo]! }));
+  return facturas.filter((f) => (f.porDueno[grupo] ?? 0) > 0).map((f) => ({ ...f, valor: f.porDueno[grupo]! }));
 }
 
 /**
@@ -442,10 +451,7 @@ export const DIAS_AVISO_BOMBA = 5;
  * atencion si vence en los proximos DIAS_AVISO_BOMBA dias. Sin vencimiento
  * escrito o ya pagada, no avisa.
  */
-export function alertaFacturaBomba(
-  r: Pick<RelacionBomba, "numero" | "total" | "fechaVencimiento" | "fechaPago">,
-  hoy: string
-): AlertaFila | null {
+export function alertaFacturaBomba(r: Pick<RelacionBomba, "numero" | "total" | "fechaVencimiento" | "fechaPago">, hoy: string): AlertaFila | null {
   if (r.fechaPago || !r.fechaVencimiento) return null;
   const valor = Math.round(r.total).toLocaleString("es-CO");
   const fecha = r.fechaVencimiento.split("-").reverse().join("/");
@@ -589,8 +595,7 @@ export function alertasCarteraPorEmpresa(facturas: FacturaCartera[]): AlertaSegu
       const ordenadas = [...lista].sort((a, b) => a.vence.localeCompare(b.vence));
       const total = ordenadas.reduce((s, f) => s + f.valor, 0);
       const motivos = ordenadas.map((f) => {
-        const vencimiento =
-          f.diasVencida > 0 ? `vencida hace ${f.diasVencida} dias (vencio el ${fechaTexto(f.vence)})` : `vence el ${fechaTexto(f.vence)}`;
+        const vencimiento = f.diasVencida > 0 ? `vencida hace ${f.diasVencida} dias (vencio el ${fechaTexto(f.vence)})` : `vence el ${fechaTexto(f.vence)}`;
         const promesa = f.compromisoPago ? ` · prometio pagar el ${fechaTexto(f.compromisoPago)}` : "";
         const concepto = f.concepto ? ` (${f.concepto})` : "";
         return `Factura ${f.facturaNumero}${concepto} del ${fechaTexto(f.facturaFecha)}, ${vencimiento}: ${pesosTexto(f.valor)}${promesa}`;
@@ -676,10 +681,10 @@ export const seguimiento = {
     await pool.query(
       `UPDATE cuadro_viajes SET papelesTiene = ?, papelesCompletos = ?, papelesFaltan = ?,
               papelesRevisadoEn = ?, papelesRevisadoPorId = ? WHERE id = ?`,
-      [tiene, completos === null ? null : completos ? 1 : 0, faltan, new Date(), usuarioId, id]
+      [tiene, completos === null ? null : completos ? 1 : 0, faltan, new Date(), usuarioId, id],
     );
 
-    const estado = (("estadoPapeles" in d ? d.estadoPapeles : actual.estadoPapeles) as EstadoPapeles);
+    const estado = ("estadoPapeles" in d ? d.estadoPapeles : actual.estadoPapeles) as EstadoPapeles;
     const partes = [`Papeles: ${ETIQUETA_PAPELES[estado]}`];
     if (tiene) partes.push(`los tiene ${tiene}`);
     if (completos === true) partes.push("estan completos");
@@ -703,7 +708,9 @@ export const seguimiento = {
 
   /** Crea o cambia el plazo y el contacto de cobro de un cliente. */
   async guardarPlazo(d: Record<string, unknown>) {
-    const empresa = String(d.empresa ?? "").trim().toUpperCase();
+    const empresa = String(d.empresa ?? "")
+      .trim()
+      .toUpperCase();
     if (!empresa) throw new ErrorCuadro("Falta la empresa.");
     const dias = Number(d.diasCredito);
     if (!Number.isInteger(dias) || dias < 0 || dias > 365) throw new ErrorCuadro("Los dias de credito van de 0 a 365.");
@@ -712,7 +719,7 @@ export const seguimiento = {
       `INSERT INTO cartera_clientes (empresa, diasCredito, contacto, telefono, correo) VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE diasCredito = VALUES(diasCredito), contacto = VALUES(contacto),
                                telefono = VALUES(telefono), correo = VALUES(correo)`,
-      [empresa, dias, texto(d.contacto), texto(d.telefono), texto(d.correo)]
+      [empresa, dias, texto(d.contacto), texto(d.telefono), texto(d.correo)],
     );
   },
 
@@ -721,7 +728,7 @@ export const seguimiento = {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT g.*, u.nombre AS autor FROM cartera_gestiones g
          LEFT JOIN usuarios u ON u.id = g.usuarioId
-        WHERE g.id IN (SELECT MAX(id) FROM cartera_gestiones GROUP BY facturaNumero, empresa)`
+        WHERE g.id IN (SELECT MAX(id) FROM cartera_gestiones GROUP BY facturaNumero, empresa)`,
     );
     return new Map(rows.map((r) => [llaveFactura(r.facturaNumero, r.empresa), mapearGestion(r)]));
   },
@@ -752,7 +759,9 @@ export const seguimiento = {
       dueno: grupo ?? null,
       facturas,
       clientes: resumirPorCliente(facturas),
-      sinDatos: filas.filter((f) => !f.anulado && !f.facturaFechaPago && (f.facturado || f.facturaNumero || f.facturaFecha) && (!f.facturaNumero || !f.facturaFecha)),
+      sinDatos: filas.filter(
+        (f) => !f.anulado && !f.facturaFechaPago && (f.facturado || f.facturaNumero || f.facturaFecha) && (!f.facturaNumero || !f.facturaFecha),
+      ),
       plazos,
     };
   },
@@ -768,7 +777,7 @@ export const seguimiento = {
          FROM cartera_saldos s
          LEFT JOIN cartera_saldos_placas p ON p.saldoId = s.id
         WHERE s.fechaPago IS NULL
-        ORDER BY s.id, p.id`
+        ORDER BY s.id, p.id`,
     );
     const porId = new Map<number, SaldoCartera>();
     for (const r of rows) {
@@ -785,31 +794,54 @@ export const seguimiento = {
     return [...porId.values()];
   },
 
-  /** Anticipo del cliente de cada factura, por llave "numero|empresa". */
+  /** Anticipo del cliente de cada factura (la suma de sus registros), por llave "numero|empresa". */
   async anticiposCliente(): Promise<Map<string, number>> {
-    const [rows] = await pool.query<RowDataPacket[]>("SELECT facturaNumero, empresa, valor FROM cartera_anticipos_cliente");
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT facturaNumero, empresa, SUM(valor) AS valor FROM cartera_anticipos_cliente_registros GROUP BY facturaNumero, empresa",
+    );
     return new Map(rows.map((r) => [`${r.facturaNumero}|${r.empresa}`, Number(r.valor)]));
   },
 
+  /** Los anticipos del cliente de una factura, uno por transferencia (el mas reciente primero). */
+  async registrosAnticipoCliente(facturaNumero: unknown, empresa: unknown): Promise<RegistroAnticipoCliente[]> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT r.id, r.valor, r.fecha, r.origen, r.creadoEn, u.nombre AS registradoPor
+         FROM cartera_anticipos_cliente_registros r LEFT JOIN usuarios u ON u.id = r.creadoPorId
+        WHERE r.facturaNumero = ? AND r.empresa = ?
+        ORDER BY COALESCE(r.fecha, '1000-01-01') DESC, r.id DESC`,
+      [String(facturaNumero ?? ""), String(empresa ?? "")],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      valor: Number(r.valor),
+      fecha: dia(r.fecha),
+      origen: r.origen === "EXCEL" ? "EXCEL" : r.origen === "ANTERIOR" ? "ANTERIOR" : "MANUAL",
+      registradoPor: r.registradoPor ?? null,
+    }));
+  },
+
   /**
-   * Guarda el anticipo (o abono) que el cliente ya pago de una factura; 0 o
-   * vacio lo quita. Se resta de lo que debe en la cartera.
+   * Registra un anticipo (o abono) que el cliente pago de una factura ({
+   * facturaNumero, empresa, valor, fecha }): la fecha en que transfirio. Se
+   * resta de lo que debe en la cartera.
    */
-  async guardarAnticipoCliente(d: Record<string, unknown>): Promise<void> {
+  async agregarAnticipoCliente(d: Record<string, unknown>, usuarioId: number | null): Promise<void> {
     const facturaNumero = String(d.facturaNumero ?? "").trim();
     const empresa = String(d.empresa ?? "").trim();
     if (!facturaNumero || !empresa) throw new ErrorCuadro("Falta la factura.");
-    const valor = d.valor === null || d.valor === undefined || String(d.valor).trim() === "" ? 0 : Number(d.valor);
-    if (!Number.isFinite(valor) || valor < 0) throw new ErrorCuadro("El anticipo debe ser un valor positivo.");
-    if (valor === 0) {
-      await pool.query("DELETE FROM cartera_anticipos_cliente WHERE facturaNumero = ? AND empresa = ?", [facturaNumero, empresa]);
-      return;
-    }
+    const valor = Number(d.valor);
+    if (!Number.isFinite(valor) || valor <= 0) throw new ErrorCuadro("Escribe el valor del anticipo (mayor que cero).");
+    const fecha = String(d.fecha ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha en que el cliente transfirio.");
     await pool.query(
-      `INSERT INTO cartera_anticipos_cliente (facturaNumero, empresa, valor) VALUES (?, ?, ?)
-       ON DUPLICATE KEY UPDATE valor = VALUES(valor)`,
-      [facturaNumero, empresa, Math.round(valor)]
+      "INSERT INTO cartera_anticipos_cliente_registros (facturaNumero, empresa, valor, fecha, origen, creadoPorId) VALUES (?, ?, ?, ?, 'MANUAL', ?)",
+      [facturaNumero, empresa, Math.round(valor), fecha, usuarioId],
     );
+  },
+
+  /** Borra un anticipo del cliente (si se digito mal). */
+  async borrarAnticipoCliente(id: number): Promise<void> {
+    await pool.query("DELETE FROM cartera_anticipos_cliente_registros WHERE id = ?", [id]);
   },
 
   /**
@@ -836,7 +868,7 @@ export const seguimiento = {
     const [res] = await pool.query<ResultSetHeader>(
       `UPDATE cuadro_viajes SET anticipoEmpresaFechaPago = ?
         WHERE id IN (?) AND anticipoEmpresa > 0 AND anticipoEmpresaFechaPago IS NULL`,
-      [fecha, ids]
+      [fecha, ids],
     );
     return res.affectedRows;
   },
@@ -847,7 +879,7 @@ export const seguimiento = {
       `SELECT g.*, u.nombre AS autor FROM cartera_gestiones g
          LEFT JOIN usuarios u ON u.id = g.usuarioId
         WHERE g.facturaNumero = ? AND g.empresa = ? ORDER BY g.id DESC`,
-      [facturaNumero, empresa]
+      [facturaNumero, empresa],
     );
     return rows.map(mapearGestion);
   },
@@ -861,10 +893,13 @@ export const seguimiento = {
     if (!texto) throw new ErrorCuadro("Escribe que se hablo con el cliente.");
     const compromiso = d.compromisoPago ? String(d.compromisoPago).slice(0, 10) : null;
     if (compromiso && !/^\d{4}-\d{2}-\d{2}$/.test(compromiso)) throw new ErrorCuadro("La fecha de compromiso no es valida.");
-    await pool.query(
-      "INSERT INTO cartera_gestiones (facturaNumero, empresa, texto, compromisoPago, usuarioId) VALUES (?, ?, ?, ?, ?)",
-      [facturaNumero, empresa, texto.slice(0, 1000), compromiso, usuarioId]
-    );
+    await pool.query("INSERT INTO cartera_gestiones (facturaNumero, empresa, texto, compromisoPago, usuarioId) VALUES (?, ?, ?, ?, ?)", [
+      facturaNumero,
+      empresa,
+      texto.slice(0, 1000),
+      compromiso,
+      usuarioId,
+    ]);
   },
 
   /**
@@ -880,13 +915,14 @@ export const seguimiento = {
     const [res] = await pool.query<ResultSetHeader>(
       `UPDATE cuadro_viajes SET facturaFechaPago = ?
         WHERE facturaNumero = ? AND empresa = ? AND facturaFechaPago IS NULL AND anulado = 0`,
-      [fecha, facturaNumero, empresa]
+      [fecha, facturaNumero, empresa],
     );
     // Si es un saldo sin viaje, queda pagado el saldo.
-    const [saldo] = await pool.query<ResultSetHeader>(
-      "UPDATE cartera_saldos SET fechaPago = ? WHERE facturaNumero = ? AND empresa = ? AND fechaPago IS NULL",
-      [fecha, facturaNumero, empresa]
-    );
+    const [saldo] = await pool.query<ResultSetHeader>("UPDATE cartera_saldos SET fechaPago = ? WHERE facturaNumero = ? AND empresa = ? AND fechaPago IS NULL", [
+      fecha,
+      facturaNumero,
+      empresa,
+    ]);
     return res.affectedRows + saldo.affectedRows;
   },
 

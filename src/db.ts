@@ -685,6 +685,33 @@ export async function initSchema(): Promise<void> {
       PRIMARY KEY (facturaNumero, empresa)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Los anticipos del cliente, uno por transferencia (valor y fecha en que el
+  // cliente transfirio), que se pueden borrar. La factura descuenta la suma.
+  // origen: MANUAL (en la cartera), EXCEL (de la importacion) o ANTERIOR (el
+  // valor unico que habia antes, sin fecha).
+  const [conRegistros] = await pool.query(
+    `SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cartera_anticipos_cliente_registros'`
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cartera_anticipos_cliente_registros (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      facturaNumero VARCHAR(30) NOT NULL,
+      empresa VARCHAR(200) NOT NULL,
+      valor DOUBLE NOT NULL,
+      fecha DATE,
+      origen VARCHAR(10) NOT NULL DEFAULT 'MANUAL',
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_anticipo_factura (facturaNumero, empresa)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // Una sola vez: el anticipo que ya tenia cada factura queda como un registro (sin fecha).
+  if ((conRegistros as unknown[]).length === 0) {
+    await pool.query(
+      `INSERT INTO cartera_anticipos_cliente_registros (facturaNumero, empresa, valor, origen)
+       SELECT facturaNumero, empresa, valor, 'ANTERIOR' FROM cartera_anticipos_cliente WHERE valor > 0`
+    );
+  }
 
   // Sesiones abiertas. Se guarda el HASH del token (no el token): quien lea
   // esta tabla no puede suplantar a nadie.

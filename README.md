@@ -515,7 +515,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/seguimiento/rentabilidad/liquidaciones` | Registra la liquidacion a un dueno y marca sus viajes como pagados ({ grupo, nombre?, fecha, ids, conceptos, pagado? }). |
 | `DELETE` | `/api/seguimiento/rentabilidad/liquidaciones/:id` | Anula la ultima liquidacion de un grupo. |
 | `POST` | `/api/seguimiento/terceros/pago` | Se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). |
-| `PUT` | `/api/seguimiento/cartera/anticipo` | Anticipo del cliente de una factura ({ facturaNumero, empresa, valor }). |
+| `GET` | `/api/seguimiento/cartera/anticipos` | Los anticipos del cliente de una factura. |
+| `POST` | `/api/seguimiento/cartera/anticipos` | Registra un anticipo del cliente ({ facturaNumero, empresa, valor, fecha }). |
+| `DELETE` | `/api/seguimiento/cartera/anticipos/:id` | Borra un anticipo del cliente (si se digito mal). |
 | `POST` | `/api/seguimiento/cartera/importar/previa` | Propone como cargar cada factura del Excel "Cartera Total" ({ facturas }): saldo sin viaje o ligada a sus viajes. No guarda nada. |
 | `POST` | `/api/seguimiento/cartera/importar` | Carga las facturas confirmadas ({ facturas }). |
 | `PUT` | `/api/seguimiento/cartera/plazos` | Plazo y contacto de cobro de un cliente. |
@@ -537,7 +539,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1092 funciones, componentes, métodos y rutas en 73 archivos._
+_1096 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -595,7 +597,7 @@ _1092 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (26)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (23)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (23)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (25)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/routes/utilidades.ts`](#srcroutesutilidadests) (23)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
@@ -607,7 +609,7 @@ _1092 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (37)
+- [`src/seguimiento.ts`](#srcseguimientots) (39)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
 - [`src/utilidades.ts`](#srcutilidadests) (32)
@@ -5368,8 +5370,14 @@ _1092 funciones, componentes, métodos y rutas en 73 archivos._
 - **`POST /terceros/pago`** · _ruta HTTP_
   POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }).
 
-- **`PUT /cartera/anticipo`** · _ruta HTTP_
-  PUT /api/seguimiento/cartera/anticipo: anticipo del cliente de una factura ({ facturaNumero, empresa, valor }).
+- **`GET /cartera/anticipos`** · _ruta HTTP_
+  GET /api/seguimiento/cartera/anticipos?facturaNumero=&empresa=: los anticipos del cliente de una factura.
+
+- **`POST /cartera/anticipos`** · _ruta HTTP_
+  POST /api/seguimiento/cartera/anticipos: registra un anticipo del cliente ({ facturaNumero, empresa, valor, fecha }).
+
+- **`DELETE /cartera/anticipos/:id`** · _ruta HTTP_
+  DELETE /api/seguimiento/cartera/anticipos/:id: borra un anticipo del cliente (si se digito mal).
 
 - **`POST /cartera/importar/previa`** · _ruta HTTP_
   POST /api/seguimiento/cartera/importar/previa: propone como cargar cada
@@ -5912,11 +5920,18 @@ _1092 funciones, componentes, métodos y rutas en 73 archivos._
     dueno de cada placa (segun el vehiculo del catalogo; si no esta, tercero).
 
   - **`seguimiento.anticiposCliente()`** · _método_
-    Anticipo del cliente de cada factura, por llave "numero|empresa".
+    Anticipo del cliente de cada factura (la suma de sus registros), por llave "numero|empresa".
 
-  - **`seguimiento.guardarAnticipoCliente(d)`** · _método_
-    Guarda el anticipo (o abono) que el cliente ya pago de una factura; 0 o
-    vacio lo quita. Se resta de lo que debe en la cartera.
+  - **`seguimiento.registrosAnticipoCliente(facturaNumero, empresa)`** · _método_
+    Los anticipos del cliente de una factura, uno por transferencia (el mas reciente primero).
+
+  - **`seguimiento.agregarAnticipoCliente(d, usuarioId)`** · _método_
+    Registra un anticipo (o abono) que el cliente pago de una factura ({
+    facturaNumero, empresa, valor, fecha }): la fecha en que transfirio. Se
+    resta de lo que debe en la cartera.
+
+  - **`seguimiento.borrarAnticipoCliente(id)`** · _método_
+    Borra un anticipo del cliente (si se digito mal).
 
   - **`seguimiento.anticiposEmpresas()`** · _método_
     Anticipos que dan las empresas: los viajes que lo llevan (o a los que se
