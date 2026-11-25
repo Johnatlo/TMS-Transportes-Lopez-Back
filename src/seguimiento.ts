@@ -315,7 +315,7 @@ export function agruparCartera(
   plazos: Map<string, number>,
   gestiones: Map<string, GestionCobro>,
   hoy: string,
-  extras: { saldos?: SaldoCartera[]; anticipos?: Map<string, number> } = {},
+  extras: { saldos?: SaldoCartera[]; anticipos?: Map<string, number>; anuladas?: Set<string> } = {},
 ): FacturaCartera[] {
   const anticipos = extras.anticipos ?? new Map<string, number>();
   const grupos = new Map<string, FilaCuadro[]>();
@@ -412,7 +412,11 @@ export function agruparCartera(
       ),
     );
   }
-  return facturas.sort((a, b) => b.diasVencida - a.diasVencida || a.facturaNumero.localeCompare(b.facturaNumero));
+  // Las facturas con nota credito salen de la cartera: otra factura las reemplazo.
+  const anuladas = extras.anuladas ?? new Set<string>();
+  return facturas
+    .filter((f) => !anuladas.has(`${f.facturaNumero}|${f.empresa}`))
+    .sort((a, b) => b.diasVencida - a.diasVencida || a.facturaNumero.localeCompare(b.facturaNumero));
 }
 
 /**
@@ -757,16 +761,18 @@ export const seguimiento = {
    */
   async cartera(dueno?: string) {
     const hoy = hoyColombia();
-    const [filas, plazos, gestiones, saldos, anticipos] = await Promise.all([
+    const [filas, plazos, gestiones, saldos, anticipos, anuladas] = await Promise.all([
       cuadro.listar(),
       this.plazos(),
       this.ultimasGestiones(),
       this.saldosPendientes(),
       this.anticiposCliente(),
+      this.facturasConNotaCredito(),
     ]);
     const todas = agruparCartera(filas, new Map(plazos.map((p) => [p.empresa, p.diasCredito])), gestiones, hoy, {
       saldos,
       anticipos,
+      anuladas,
     });
     // Filtro por dueno: solo la parte de sus vehiculos en cada factura.
     const grupo = GRUPOS_DUENO.find((g) => g === String(dueno ?? "").toUpperCase());
@@ -817,6 +823,12 @@ export const seguimiento = {
       "SELECT facturaNumero, empresa, SUM(valor) AS valor FROM cartera_anticipos_cliente_registros GROUP BY facturaNumero, empresa",
     );
     return new Map(rows.map((r) => [`${r.facturaNumero}|${r.empresa}`, Number(r.valor)]));
+  },
+
+  /** Las facturas con nota credito (llave "numero|empresa"): salen de la cartera. */
+  async facturasConNotaCredito(): Promise<Set<string>> {
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT DISTINCT facturaAnulada, empresa FROM notas_credito");
+    return new Set(rows.map((r) => `${r.facturaAnulada}|${r.empresa}`));
   },
 
   /** Las notas credito (todas, o las de una factura), la mas reciente primero. */
@@ -1012,16 +1024,18 @@ export const seguimiento = {
   /** Alertas de la campana de seguimiento: papeles, facturacion y cartera. */
   async alertas() {
     const hoy = hoyColombia();
-    const [filas, plazos, gestiones, saldos, anticipos] = await Promise.all([
+    const [filas, plazos, gestiones, saldos, anticipos, anuladas] = await Promise.all([
       cuadro.listar(),
       this.plazos(),
       this.ultimasGestiones(),
       this.saldosPendientes(),
       this.anticiposCliente(),
+      this.facturasConNotaCredito(),
     ]);
     const facturas = agruparCartera(filas, new Map(plazos.map((p) => [p.empresa, p.diasCredito])), gestiones, hoy, {
       saldos,
       anticipos,
+      anuladas,
     });
     const alertas = alertasDe(filas, facturas, hoy, SEGUIMIENTO_DESDE);
     // Facturas de la bomba por pagar (con fecha de vencimiento).

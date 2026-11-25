@@ -427,3 +427,15 @@ describe("urbanos por facturar", () => {
     expect(esUrbano({ ...base, rutaManual: "URBANO BOGOTA" })).toBe(true);
   });
 });
+
+describe("notas credito en la cartera", () => {
+  test("la factura con nota credito sale de la cartera (otra factura la reemplazo)", () => {
+    const facturada = (id: number, facturaNumero: string) =>
+      fila({ id, estadoPapeles: "RADICADO", facturado: true, facturaNumero, facturaFecha: "2026-09-01" });
+    const filas = [facturada(1, "FV100"), facturada(2, "FV101")];
+    const sin = agruparCartera(filas, new Map(), new Map(), HOY);
+    const con = agruparCartera(filas, new Map(), new Map(), HOY, { anuladas: new Set(["FV100|CARTONES AMERICA"]) });
+    expect(sin.map((x) => x.facturaNumero).sort()).toEqual(["FV100", "FV101"]);
+    expect(con.map((x) => x.facturaNumero)).toEqual(["FV101"]);
+  });
+});

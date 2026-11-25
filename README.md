@@ -544,7 +544,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1111 funciones, componentes, métodos y rutas en 73 archivos._
+_1112 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -614,7 +614,7 @@ _1111 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (42)
+- [`src/seguimiento.ts`](#srcseguimientots) (43)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
 - [`src/utilidades.ts`](#srcutilidadests) (34)
@@ -5960,6 +5960,9 @@ _1111 funciones, componentes, métodos y rutas en 73 archivos._
 
   - **`seguimiento.anticiposCliente()`** · _método_
     Anticipo del cliente de cada factura (la suma de sus registros), por llave "numero|empresa".
+
+  - **`seguimiento.facturasConNotaCredito()`** · _método_
+    Las facturas con nota credito (llave "numero|empresa"): salen de la cartera.
 
   - **`seguimiento.notasCredito(filtro)`** · _método_
     Las notas credito (todas, o las de una factura), la mas reciente primero.
