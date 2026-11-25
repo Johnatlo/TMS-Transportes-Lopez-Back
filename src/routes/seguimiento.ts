@@ -145,6 +145,24 @@ seguimientoRouter.post("/terceros/pago", async (req, res) => {
   await responder(res, async () => ({ pagados: await terceros.pagar(req.body ?? {}) }));
 });
 
+/** GET /api/seguimiento/notas-credito[?facturaNumero=&empresa=]: las notas credito (todas o las de una factura). */
+seguimientoRouter.get("/notas-credito", async (req, res) => {
+  await responder(res, () => seguimiento.notasCredito({ facturaNumero: req.query.facturaNumero, empresa: req.query.empresa }));
+});
+/** POST /api/seguimiento/notas-credito: registra la nota credito de una factura anulada ({ numero, fecha, empresa, facturaAnulada, facturaReemplazo?, valor?, motivo? }). */
+seguimientoRouter.post("/notas-credito", async (req, res) => {
+  await responder(res, async () => {
+    await seguimiento.agregarNotaCredito(req.body ?? {}, req.usuario?.id ?? null);
+    return seguimiento.notasCredito();
+  });
+});
+/** DELETE /api/seguimiento/notas-credito/:id: borra una nota credito (si se digito mal). */
+seguimientoRouter.delete("/notas-credito/:id", async (req, res) => {
+  await responder(res, async () => {
+    await seguimiento.borrarNotaCredito(Number(req.params.id));
+    return seguimiento.notasCredito();
+  });
+});
 /** GET /api/seguimiento/cartera/anticipos?facturaNumero=&empresa=: los anticipos del cliente de una factura. */
 seguimientoRouter.get("/cartera/anticipos", async (req, res) => {
   await responder(res, () => seguimiento.registrosAnticipoCliente(req.query.facturaNumero, req.query.empresa));

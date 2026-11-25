@@ -517,6 +517,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/seguimiento/rentabilidad/liquidaciones` | Registra la liquidacion a un dueno y marca sus viajes como pagados ({ grupo, nombre?, fecha, ids, conceptos, pagado? }). |
 | `DELETE` | `/api/seguimiento/rentabilidad/liquidaciones/:id` | Anula la ultima liquidacion de un grupo. |
 | `POST` | `/api/seguimiento/terceros/pago` | Se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }). |
+| `GET` | `/api/seguimiento/notas-credito` | Las notas credito (todas o las de una factura). |
+| `POST` | `/api/seguimiento/notas-credito` | Registra la nota credito de una factura anulada ({ numero, fecha, empresa, facturaAnulada, facturaReemplazo?, valor?, motivo? }). |
+| `DELETE` | `/api/seguimiento/notas-credito/:id` | Borra una nota credito (si se digito mal). |
 | `GET` | `/api/seguimiento/cartera/anticipos` | Los anticipos del cliente de una factura. |
 | `POST` | `/api/seguimiento/cartera/anticipos` | Registra un anticipo del cliente ({ facturaNumero, empresa, valor, fecha }). |
 | `DELETE` | `/api/seguimiento/cartera/anticipos/:id` | Borra un anticipo del cliente (si se digito mal). |
@@ -541,7 +544,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1105 funciones, componentes, métodos y rutas en 73 archivos._
+_1111 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -599,7 +602,7 @@ _1105 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (28)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (23)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
-- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (25)
+- [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (28)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
 - [`src/routes/utilidades.ts`](#srcroutesutilidadests) (24)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
@@ -611,7 +614,7 @@ _1105 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (39)
+- [`src/seguimiento.ts`](#srcseguimientots) (42)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
 - [`src/utilidades.ts`](#srcutilidadests) (34)
@@ -5394,6 +5397,15 @@ _1105 funciones, componentes, métodos y rutas en 73 archivos._
 - **`POST /terceros/pago`** · _ruta HTTP_
   POST /api/seguimiento/terceros/pago: se le pago al tercero esos viajes ({ ids, fecha, cuentaCobro? }).
 
+- **`GET /notas-credito`** · _ruta HTTP_
+  GET /api/seguimiento/notas-credito[?facturaNumero=&empresa=]: las notas credito (todas o las de una factura).
+
+- **`POST /notas-credito`** · _ruta HTTP_
+  POST /api/seguimiento/notas-credito: registra la nota credito de una factura anulada ({ numero, fecha, empresa, facturaAnulada, facturaReemplazo?, valor?, motivo? }).
+
+- **`DELETE /notas-credito/:id`** · _ruta HTTP_
+  DELETE /api/seguimiento/notas-credito/:id: borra una nota credito (si se digito mal).
+
 - **`GET /cartera/anticipos`** · _ruta HTTP_
   GET /api/seguimiento/cartera/anticipos?facturaNumero=&empresa=: los anticipos del cliente de una factura.
 
@@ -5948,6 +5960,16 @@ _1105 funciones, componentes, métodos y rutas en 73 archivos._
 
   - **`seguimiento.anticiposCliente()`** · _método_
     Anticipo del cliente de cada factura (la suma de sus registros), por llave "numero|empresa".
+
+  - **`seguimiento.notasCredito(filtro)`** · _método_
+    Las notas credito (todas, o las de una factura), la mas reciente primero.
+
+  - **`seguimiento.agregarNotaCredito(d, usuarioId)`** · _método_
+    Registra la nota credito de una factura anulada ({ numero, fecha, empresa,
+    facturaAnulada, facturaReemplazo?, valor?, motivo? }).
+
+  - **`seguimiento.borrarNotaCredito(id)`** · _método_
+    Borra una nota credito (si se digito mal).
 
   - **`seguimiento.registrosAnticipoCliente(facturaNumero, empresa)`** · _método_
     Los anticipos del cliente de una factura, uno por transferencia (el mas reciente primero).

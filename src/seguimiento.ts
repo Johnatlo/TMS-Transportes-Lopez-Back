@@ -165,6 +165,23 @@ export interface ViajeFactura {
   dueno: GrupoDueno;
 }
 
+/** Una nota credito: anula una factura y dice cual la reemplaza. */
+export interface NotaCredito {
+  id: number;
+  /** Consecutivo de la nota credito. */
+  numero: string;
+  fecha: string;
+  /** Cliente de la factura (como en la cartera). */
+  empresa: string;
+  facturaAnulada: string;
+  /** La factura que la reemplaza (null si aun no se ha hecho). */
+  facturaReemplazo: string | null;
+  valor: number | null;
+  motivo: string | null;
+  registradoPor: string | null;
+  creadoEn: string;
+}
+
 /** Un anticipo del cliente de una factura: lo que transfirio y cuando. */
 export interface RegistroAnticipoCliente {
   id: number;
@@ -800,6 +817,72 @@ export const seguimiento = {
       "SELECT facturaNumero, empresa, SUM(valor) AS valor FROM cartera_anticipos_cliente_registros GROUP BY facturaNumero, empresa",
     );
     return new Map(rows.map((r) => [`${r.facturaNumero}|${r.empresa}`, Number(r.valor)]));
+  },
+
+  /** Las notas credito (todas, o las de una factura), la mas reciente primero. */
+  async notasCredito(filtro: { facturaNumero?: unknown; empresa?: unknown } = {}): Promise<NotaCredito[]> {
+    const donde: string[] = [];
+    const valores: unknown[] = [];
+    if (filtro.facturaNumero) {
+      donde.push("n.facturaAnulada = ?");
+      valores.push(String(filtro.facturaNumero));
+    }
+    if (filtro.empresa) {
+      donde.push("n.empresa = ?");
+      valores.push(String(filtro.empresa));
+    }
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT n.*, u.nombre AS registradoPor FROM notas_credito n LEFT JOIN usuarios u ON u.id = n.creadoPorId
+        ${donde.length ? `WHERE ${donde.join(" AND ")}` : ""}
+        ORDER BY n.fecha DESC, n.id DESC`,
+      valores,
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      numero: r.numero,
+      fecha: dia(r.fecha)!,
+      empresa: r.empresa,
+      facturaAnulada: r.facturaAnulada,
+      facturaReemplazo: r.facturaReemplazo ?? null,
+      valor: r.valor === null ? null : Number(r.valor),
+      motivo: r.motivo ?? null,
+      registradoPor: r.registradoPor ?? null,
+      creadoEn: r.creadoEn instanceof Date ? r.creadoEn.toISOString() : String(r.creadoEn),
+    }));
+  },
+
+  /**
+   * Registra la nota credito de una factura anulada ({ numero, fecha, empresa,
+   * facturaAnulada, facturaReemplazo?, valor?, motivo? }).
+   */
+  async agregarNotaCredito(d: Record<string, unknown>, usuarioId: number | null): Promise<void> {
+    const texto = (v: unknown, max: number) =>
+      String(v ?? "")
+        .trim()
+        .slice(0, max);
+    const numero = texto(d.numero, 40).toUpperCase();
+    const empresa = texto(d.empresa, 200);
+    const facturaAnulada = texto(d.facturaAnulada, 30);
+    const facturaReemplazo = texto(d.facturaReemplazo, 30) || null;
+    const fecha = texto(d.fecha, 10);
+    if (!numero) throw new ErrorCuadro("Escribe el consecutivo de la nota credito.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha de la nota credito.");
+    if (!facturaAnulada || !empresa) throw new ErrorCuadro("Falta la factura que se anula (numero y cliente).");
+    if (facturaReemplazo && facturaReemplazo === facturaAnulada) throw new ErrorCuadro("La factura que la reemplaza no puede ser la misma que se anula.");
+    const valor = d.valor === null || d.valor === undefined || String(d.valor).trim() === "" ? null : Number(d.valor);
+    if (valor !== null && (!Number.isFinite(valor) || valor < 0)) throw new ErrorCuadro("Revisa el valor de la nota credito.");
+    const [[repetida]] = await pool.query<RowDataPacket[]>("SELECT facturaAnulada FROM notas_credito WHERE numero = ? AND empresa = ?", [numero, empresa]);
+    if (repetida) throw new ErrorCuadro(`La nota credito ${numero} ya esta registrada (anula la factura ${repetida.facturaAnulada}).`);
+    await pool.query(
+      `INSERT INTO notas_credito (numero, fecha, empresa, facturaAnulada, facturaReemplazo, valor, motivo, creadoPorId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [numero, fecha, empresa, facturaAnulada, facturaReemplazo, valor === null ? null : Math.round(valor), texto(d.motivo, 300) || null, usuarioId],
+    );
+  },
+
+  /** Borra una nota credito (si se digito mal). */
+  async borrarNotaCredito(id: number): Promise<void> {
+    await pool.query("DELETE FROM notas_credito WHERE id = ?", [id]);
   },
 
   /** Los anticipos del cliente de una factura, uno por transferencia (el mas reciente primero). */

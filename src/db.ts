@@ -705,6 +705,24 @@ export async function initSchema(): Promise<void> {
       INDEX idx_anticipo_factura (facturaNumero, empresa)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Notas credito: por ley, cada factura anulada se reemplaza con una nota
+  // credito. Se guarda su consecutivo y fecha, la factura que anula (numero y
+  // cliente, como la cartera), la factura que la reemplaza, el valor y el motivo.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notas_credito (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      numero VARCHAR(40) NOT NULL,
+      fecha DATE NOT NULL,
+      empresa VARCHAR(200) NOT NULL,
+      facturaAnulada VARCHAR(30) NOT NULL,
+      facturaReemplazo VARCHAR(30),
+      valor DOUBLE,
+      motivo VARCHAR(300),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_nota_factura (facturaAnulada, empresa)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   // Una sola vez: el anticipo que ya tenia cada factura queda como un registro (sin fecha).
   if ((conRegistros as unknown[]).length === 0) {
     await pool.query(
