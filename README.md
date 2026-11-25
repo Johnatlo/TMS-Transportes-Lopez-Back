@@ -456,7 +456,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `PUT` | `/api/cuadro/tarifas` | Reemplaza la matriz completa con la importada del Excel ({ tarifas: [{ nombre, razonSocial, valor, tipo, pesoMinimoKg, observaciones }] }). |
 | `POST` | `/api/cuadro/tarifas` | Agrega una tarifa a la matriz ({ nombre, razonSocial, valor, tipo, ... }). |
 | `PUT` | `/api/cuadro/tarifas/:tarifaId` | Cambia una tarifa y la devuelve (404 si no existe). |
-| `GET` | `/api/cuadro/por-facturar` | Viajes listos para facturar (y los ya enviados sin fecha de factura). |
+| `POST` | `/api/cuadro/por-facturar/:id/quitar` | Quita el viaje del envio a facturacion ({ motivo }); no se factura. |
+| `DELETE` | `/api/cuadro/por-facturar/:id/quitar` | Devuelve el viaje al envio a facturacion. |
+| `GET` | `/api/cuadro/por-facturar` | Viajes listos para facturar (y los ya enviados sin fecha de factura), y los quitados del envio. |
 | `POST` | `/api/cuadro/enviar-facturacion` | Guarda en cada viaje lo que va en el cuadro de la contadora ({ filas: [{ id, tarifaFleteId, tipo, valorTon, pesoFacturadoKg, total, remision, notaFactura, facturaNumero }] }). |
 | `POST` | `/api/cuadro/facturar` | Asigna una misma factura a varios viajes. |
 | `GET` | `/api/cuadro/:id` | Un viaje con sus anticipos y notas (404 si no existe). |
@@ -539,7 +541,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1096 funciones, componentes, métodos y rutas en 73 archivos._
+_1100 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -559,7 +561,7 @@ _1096 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/cuentasVehiculo.ts`](#srccuentasvehiculots) (2)
 - [`src/db.ts`](#srcdbts) (4)
 - [`src/duenos.ts`](#srcduenosts) (1)
-- [`src/facturacion.ts`](#srcfacturacionts) (11)
+- [`src/facturacion.ts`](#srcfacturacionts) (13)
 - [`src/fechas.ts`](#srcfechasts) (1)
 - [`src/flota.ts`](#srcflotats) (1)
 - [`src/gastos.ts`](#srcgastosts) (38)
@@ -592,7 +594,7 @@ _1096 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (19)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (50)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (26)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (23)
@@ -1993,6 +1995,14 @@ _1096 funciones, componentes, métodos y rutas en 73 archivos._
     los ya enviados a la contadora que aun no tienen fecha de factura (para
     poder volver a generar el cuadro). Con el radicado de la remesa y la
     ultima tarifa usada con cada cliente (para sugerirla).
+
+  - **`facturacion.quitarDelEnvio(id, motivo, usuarioId)`** · _método_
+    Quita un viaje del envio a facturacion: no se factura (p. ej. el
+    manifiesto se anulo y el viaje se quedo en la lista). Deja de salir en el
+    envio hasta que se devuelva.
+
+  - **`facturacion.devolverAlEnvio(id)`** · _método_
+    Devuelve al envio a facturacion un viaje quitado (si fue un error).
 
   - **`facturacion.guardarEnvio(filas)`** · _método_
     Guarda en cada viaje lo que se envia a facturar y marca la fecha de envio.
@@ -4746,8 +4756,14 @@ _1096 funciones, componentes, métodos y rutas en 73 archivos._
 - **`PUT /tarifas/:tarifaId`** · _ruta HTTP_
   PUT /api/cuadro/tarifas/:tarifaId: cambia una tarifa y la devuelve (404 si no existe).
 
+- **`POST /por-facturar/:id/quitar`** · _ruta HTTP_
+  POST /api/cuadro/por-facturar/:id/quitar: quita el viaje del envio a facturacion ({ motivo }); no se factura.
+
+- **`DELETE /por-facturar/:id/quitar`** · _ruta HTTP_
+  DELETE /api/cuadro/por-facturar/:id/quitar: devuelve el viaje al envio a facturacion.
+
 - **`GET /por-facturar`** · _ruta HTTP_
-  GET /api/cuadro/por-facturar: viajes listos para facturar (y los ya enviados sin fecha de factura).
+  GET /api/cuadro/por-facturar: viajes listos para facturar (y los ya enviados sin fecha de factura), y los quitados del envio.
 
 - **`POST /enviar-facturacion`** · _ruta HTTP_
   POST /api/cuadro/enviar-facturacion: guarda en cada viaje lo que va en el

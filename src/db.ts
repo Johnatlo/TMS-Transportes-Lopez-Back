@@ -1042,6 +1042,10 @@ export async function initSchema(): Promise<void> {
     ["cuadro_viajes", "pesoFacturadoKg", "DOUBLE"],
     ["cuadro_viajes", "notaFactura", "VARCHAR(300)"],
     ["cuadro_viajes", "enviadoFacturarEn", "DATETIME"],
+    // Quitado del envio a facturacion (no se factura: p. ej. el manifiesto se anulo): cuando, quien y por que.
+    ["cuadro_viajes", "sinFacturarEn", "DATETIME"],
+    ["cuadro_viajes", "sinFacturarPorId", "INT"],
+    ["cuadro_viajes", "sinFacturarMotivo", "VARCHAR(200)"],
     // Flete por tonelada con 2 o 3 clientes (tarifas POR / POR3): se suma al
     // peso x tarifa (300.000 por cada cliente adicional).
     ["cuadro_viajes", "fleteAdicional", "DOUBLE"],

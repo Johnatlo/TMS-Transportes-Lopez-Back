@@ -11,7 +11,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "./db";
-import { cuadro, ErrorCuadro, TARIFA_KILO_MAXIMA } from "./cuadro";
+import { cuadro, dia, ErrorCuadro, TARIFA_KILO_MAXIMA } from "./cuadro";
 import type { FilaCuadro } from "./cuadro";
 import { invalidarTarifas } from "./tarifasFlete";
 
@@ -52,7 +52,9 @@ const numero = (v: unknown): number | null => {
 export function normalizarTarifa(t: Record<string, unknown>): Omit<TarifaFlete, "id"> {
   const nombre = texto(t.nombre, 200);
   if (!nombre) throw new ErrorCuadro("Cada tarifa necesita un nombre.");
-  const tipo = String(t.tipo ?? "TON").trim().toUpperCase();
+  const tipo = String(t.tipo ?? "TON")
+    .trim()
+    .toUpperCase();
   return {
     nombre,
     razonSocial: texto(t.razonSocial, 200),
@@ -83,6 +85,20 @@ export type FilaPorFacturar = FilaCuadro & {
   /** Radicado de la remesa en el RNDC (puede no haber: viajes sin planillar). */
   radicadoRemesa: string | null;
 };
+
+/** Un viaje quitado del envio a facturacion (no se factura). */
+export interface QuitadoEnvio {
+  id: number;
+  fecha: string;
+  placa: string;
+  empresa: string;
+  manifiesto: string | null;
+  remision: string | null;
+  motivo: string | null;
+  /** Cuando se quito (ISO) y quien. */
+  en: string;
+  por: string | null;
+}
 
 /** Matriz de fletes y envio a facturacion: lectura y escritura en la base. */
 export const facturacion = {
@@ -122,13 +138,13 @@ export const facturacion = {
         if (id) {
           await conexion.query(
             "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, pesoFijoKg = ?, observaciones = ?, urbano = ?, retirada = 0 WHERE id = ?",
-            [...valores, id]
+            [...valores, id],
           );
           usadas.add(id);
         } else {
           const [res] = await conexion.query<ResultSetHeader>(
             "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones, urbano) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            valores
+            valores,
           );
           usadas.add(res.insertId);
         }
@@ -139,7 +155,7 @@ export const facturacion = {
         const [enUso] = await conexion.query<RowDataPacket[]>(
           `SELECT DISTINCT tarifaFleteId AS id FROM cuadro_viajes WHERE tarifaFleteId IN (?)
            UNION SELECT DISTINCT tarifaFleteId FROM fletes_conductor WHERE tarifaFleteId IN (?)`,
-          [sobran, sobran]
+          [sobran, sobran],
         );
         const usadasPorOtros = new Set(enUso.map((u) => u.id as number));
         const borrar = sobran.filter((id) => !usadasPorOtros.has(id));
@@ -164,7 +180,7 @@ export const facturacion = {
     const t = normalizarTarifa(datos);
     const [res] = await pool.query<ResultSetHeader>(
       "INSERT INTO tarifas_flete (nombre, razonSocial, valor, tipo, pesoMinimoKg, pesoFijoKg, observaciones, urbano) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano]
+      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano],
     );
     invalidarTarifas();
     return { id: res.insertId, ...t };
@@ -177,7 +193,7 @@ export const facturacion = {
     const t = normalizarTarifa({ ...mapearTarifa(rows[0]), ...datos });
     await pool.query(
       "UPDATE tarifas_flete SET nombre = ?, razonSocial = ?, valor = ?, tipo = ?, pesoMinimoKg = ?, pesoFijoKg = ?, observaciones = ?, urbano = ? WHERE id = ?",
-      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano, id]
+      [t.nombre, t.razonSocial, t.valor, t.tipo, t.pesoMinimoKg, t.pesoFijoKg, t.observaciones, t.urbano, id],
     );
     invalidarTarifas();
     return { id, ...t };
@@ -189,29 +205,72 @@ export const facturacion = {
    * poder volver a generar el cuadro). Con el radicado de la remesa y la
    * ultima tarifa usada con cada cliente (para sugerirla).
    */
-  async porFacturar(): Promise<{ filas: FilaPorFacturar[]; ultimaTarifa: Record<string, number> }> {
+  async porFacturar(): Promise<{ filas: FilaPorFacturar[]; ultimaTarifa: Record<string, number>; quitados: QuitadoEnvio[] }> {
+    // Los quitados del envio (no se facturan) no salen; van aparte para poder devolverlos.
+    const [marcados] = await pool.query<RowDataPacket[]>(
+      `SELECT c.id, c.fecha, c.placa, c.empresa, c.manifiesto, c.remision, c.sinFacturarEn, c.sinFacturarMotivo, u.nombre AS por
+         FROM cuadro_viajes c LEFT JOIN usuarios u ON u.id = c.sinFacturarPorId
+        WHERE c.sinFacturarEn IS NOT NULL AND c.anulado = 0 AND c.facturaFecha IS NULL
+        ORDER BY c.sinFacturarEn DESC`,
+    );
+    const sinFacturar = new Set(marcados.map((m) => m.id as number));
     const filas = (await cuadro.listar()).filter(
-      (f) => !f.anulado && !f.facturaFecha && !f.facturaFechaPago && (((f.estado === "RADICADO" || f.estado === "RADICADOS") && f.estadoFactura === "SIN_FACTURAR") || !!f.enviadoFacturarEn)
+      (f) =>
+        !sinFacturar.has(f.id) &&
+        !f.anulado &&
+        !f.facturaFecha &&
+        !f.facturaFechaPago &&
+        (((f.estado === "RADICADO" || f.estado === "RADICADOS") && f.estadoFactura === "SIN_FACTURAR") || !!f.enviadoFacturarEn),
     );
     const remesas = filas.map((f) => f.viajeRemesaId).filter((x): x is number => !!x);
     const radicados = new Map<number, string>();
     if (remesas.length) {
-      const [rows] = await pool.query<RowDataPacket[]>(
-        "SELECT id, numeroRemesaRndc FROM viaje_remesas WHERE id IN (?)",
-        [remesas]
-      );
+      const [rows] = await pool.query<RowDataPacket[]>("SELECT id, numeroRemesaRndc FROM viaje_remesas WHERE id IN (?)", [remesas]);
       for (const r of rows) if (r.numeroRemesaRndc) radicados.set(r.id, String(r.numeroRemesaRndc));
     }
     // Ultima tarifa usada con cada cliente: la mas probable para el siguiente viaje.
     const [usadas] = await pool.query<RowDataPacket[]>(
       `SELECT c.empresa, c.tarifaFleteId FROM cuadro_viajes c
          JOIN (SELECT empresa, MAX(id) AS id FROM cuadro_viajes WHERE tarifaFleteId IS NOT NULL GROUP BY empresa) u
-           ON u.id = c.id`
+           ON u.id = c.id`,
     );
     return {
-      filas: filas.map((f) => ({ ...f, radicadoRemesa: f.viajeRemesaId ? radicados.get(f.viajeRemesaId) ?? null : null })),
+      filas: filas.map((f) => ({ ...f, radicadoRemesa: f.viajeRemesaId ? (radicados.get(f.viajeRemesaId) ?? null) : null })),
       ultimaTarifa: Object.fromEntries(usadas.map((u) => [u.empresa, u.tarifaFleteId])),
+      quitados: marcados.map((m) => ({
+        id: m.id,
+        fecha: dia(m.fecha)!,
+        placa: m.placa,
+        empresa: m.empresa,
+        manifiesto: m.manifiesto ?? null,
+        remision: m.remision ?? null,
+        motivo: m.sinFacturarMotivo ?? null,
+        en: m.sinFacturarEn instanceof Date ? m.sinFacturarEn.toISOString() : String(m.sinFacturarEn),
+        por: m.por ?? null,
+      })),
     };
+  },
+
+  /**
+   * Quita un viaje del envio a facturacion: no se factura (p. ej. el
+   * manifiesto se anulo y el viaje se quedo en la lista). Deja de salir en el
+   * envio hasta que se devuelva.
+   */
+  async quitarDelEnvio(id: number, motivo: unknown, usuarioId: number | null): Promise<void> {
+    const texto =
+      String(motivo ?? "")
+        .trim()
+        .slice(0, 200) || "No se factura";
+    const [r] = await pool.query<ResultSetHeader>(
+      "UPDATE cuadro_viajes SET sinFacturarEn = NOW(), sinFacturarPorId = ?, sinFacturarMotivo = ? WHERE id = ? AND facturaFecha IS NULL",
+      [usuarioId, texto, id],
+    );
+    if (!r.affectedRows) throw new ErrorCuadro("Ese viaje no existe o ya tiene fecha de factura.");
+  },
+
+  /** Devuelve al envio a facturacion un viaje quitado (si fue un error). */
+  async devolverAlEnvio(id: number): Promise<void> {
+    await pool.query("UPDATE cuadro_viajes SET sinFacturarEn = NULL, sinFacturarPorId = NULL, sinFacturarMotivo = NULL WHERE id = ?", [id]);
   },
 
   /**
@@ -235,7 +294,7 @@ export const facturacion = {
         // Mismo tope que en el cuadro: mas de 1.000 $/kg es un error de digitacion.
         if (!fijo && valorTon !== null && valorTon / 1000 > TARIFA_KILO_MAXIMA) {
           throw new ErrorCuadro(
-            `Viaje ${id}: ${valorTon.toLocaleString("es-CO")} por tonelada es demasiado (mas de ${TARIFA_KILO_MAXIMA.toLocaleString("es-CO")} $/kg). Revisa el valor por tonelada.`
+            `Viaje ${id}: ${valorTon.toLocaleString("es-CO")} por tonelada es demasiado (mas de ${TARIFA_KILO_MAXIMA.toLocaleString("es-CO")} $/kg). Revisa el valor por tonelada.`,
           );
         }
         const total = numero(f.total);
@@ -256,7 +315,7 @@ export const facturacion = {
             texto(f.facturaNumero, 30),
             new Date(),
             id,
-          ]
+          ],
         );
         if (res.affectedRows === 0) throw new ErrorCuadro(`El viaje ${id} no existe o esta anulado.`);
       }

@@ -242,7 +242,21 @@ cuadroRouter.put("/tarifas/:tarifaId", async (req, res) => {
     return t;
   });
 });
-/** GET /api/cuadro/por-facturar: viajes listos para facturar (y los ya enviados sin fecha de factura). */
+/** POST /api/cuadro/por-facturar/:id/quitar: quita el viaje del envio a facturacion ({ motivo }); no se factura. */
+cuadroRouter.post("/por-facturar/:id/quitar", async (req, res) => {
+  await responder(res, async () => {
+    await facturacion.quitarDelEnvio(Number(req.params.id), req.body?.motivo, req.usuario?.id ?? null);
+    return { ok: true };
+  });
+});
+/** DELETE /api/cuadro/por-facturar/:id/quitar: devuelve el viaje al envio a facturacion. */
+cuadroRouter.delete("/por-facturar/:id/quitar", async (req, res) => {
+  await responder(res, async () => {
+    await facturacion.devolverAlEnvio(Number(req.params.id));
+    return { ok: true };
+  });
+});
+/** GET /api/cuadro/por-facturar: viajes listos para facturar (y los ya enviados sin fecha de factura), y los quitados del envio. */
 cuadroRouter.get("/por-facturar", async (_req, res) => {
   res.json(await facturacion.porFacturar());
 });
