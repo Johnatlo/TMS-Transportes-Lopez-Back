@@ -76,8 +76,7 @@ export async function verificarCorreo(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Escapa &, <, > y comillas para meter texto en el HTML del correo. */
-const escapar = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const escapar = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /**
  * Plantilla HTML comun de los correos: tarjeta blanca con el nombre de la
@@ -102,15 +101,15 @@ const bloqueCodigo = (codigo: string) =>
  * restablecida. Devuelve asunto, texto plano y HTML.
  */
 export function correoClaveTemporal(nombre: string, email: string, claveTemp: string, motivo: "nueva" | "restablecida") {
-  const asunto = motivo === "nueva" ? "Tu cuenta en el sistema de despacho" : "Tu contrasena fue restablecida";
+  const asunto = motivo === "nueva" ? "Tu cuenta en SOFI" : "Tu contrasena de SOFI fue restablecida";
   const intro =
     motivo === "nueva"
-      ? `Hola ${nombre}, se creo tu cuenta en el sistema de despacho de ${config.empresa.nombre}.`
-      : `Hola ${nombre}, se restablecio tu contrasena del sistema de despacho.`;
+      ? `Hola ${nombre}, se creo tu cuenta en SOFI, el sistema de ${config.empresa.nombre}.`
+      : `Hola ${nombre}, se restablecio tu contrasena de SOFI.`;
   const texto = `${intro}\n\nUsuario: ${email}\nContrasena temporal: ${claveTemp}\n\nAl entrar, el sistema te pedira crear una contrasena propia.`;
   const html = envoltura(
     asunto,
-    `<p>${escapar(intro)}</p><p>Usuario: <strong>${escapar(email)}</strong><br>Contrasena temporal:</p>${bloqueCodigo(claveTemp)}<p>Al entrar, el sistema te pedira crear una contrasena propia.</p>`
+    `<p>${escapar(intro)}</p><p>Usuario: <strong>${escapar(email)}</strong><br>Contrasena temporal:</p>${bloqueCodigo(claveTemp)}<p>Al entrar, el sistema te pedira crear una contrasena propia.</p>`,
   );
   return { asunto, texto, html };
 }
@@ -120,11 +119,11 @@ export function correoClaveTemporal(nombre: string, email: string, claveTemp: st
  * minutos de vigencia. Devuelve asunto, texto plano y HTML.
  */
 export function correoCodigoRecuperacion(nombre: string, codigo: string, minutos: number) {
-  const asunto = "Codigo para recuperar tu contrasena";
+  const asunto = "Codigo para recuperar tu contrasena de SOFI";
   const texto = `Hola ${nombre}, tu codigo para crear una contrasena nueva es: ${codigo}\n\nVence en ${minutos} minutos. Si no lo pediste, ignora este correo: tu contrasena no cambia.`;
   const html = envoltura(
     asunto,
-    `<p>Hola ${escapar(nombre)}, tu codigo para crear una contrasena nueva es:</p>${bloqueCodigo(codigo)}<p>Vence en ${minutos} minutos. Si no lo pediste, ignora este correo: tu contrasena no cambia.</p>`
+    `<p>Hola ${escapar(nombre)}, tu codigo para crear una contrasena nueva es:</p>${bloqueCodigo(codigo)}<p>Vence en ${minutos} minutos. Si no lo pediste, ignora este correo: tu contrasena no cambia.</p>`,
   );
   return { asunto, texto, html };
 }

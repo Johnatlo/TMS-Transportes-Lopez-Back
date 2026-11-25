@@ -30,6 +30,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro, hoyColombia } from "./cuadro";
 import { rentabilidad } from "./rentabilidad";
+import type { FilaRentabilidad } from "./rentabilidad";
 import { cascadas, cuentaSocio, estadoEmpresa, finDeMes, participacionPonderada, pasoDe, repartoMes } from "./calculoUtilidades";
 import type {
   Cascada,
@@ -261,10 +262,62 @@ function armarEmpresa(d: {
   };
 }
 
+/** Lo de un grupo en un mes de la tendencia. */
+export interface GrupoTendencia {
+  ingresos: number;
+  /** Descuentos, costos y gastos (en la empresa, sus gastos). */
+  costos: number;
+  utilidad: number;
+}
+
+/** Un mes de la tendencia de la rentabilidad. */
+export interface MesTendencia {
+  mes: string;
+  aprobado: boolean;
+  carrosLopez: GrupoTendencia;
+  carrosMyc: GrupoTendencia;
+  empresa: GrupoTendencia;
+  /** Carros + empresa. */
+  total: number;
+}
+
+/** Lo de los carros de una empresa en un mes (de su cascada). */
+function grupoCarros(u: UtilidadesMes, empresa: EmpresaVehiculo): GrupoTendencia {
+  const vs = u.vehiculos.filter((v) => v.empresa === empresa);
+  const s = (f: (c: Cascada) => number) => c2(vs.reduce((t, v) => t + f(v.cascada), 0));
+  return {
+    ingresos: s((c) => c.ingresos),
+    costos: s((c) => c.totalDescuentos + c.totalDirectos + c.totalConductor + c.totalGenerales),
+    utilidad: s((c) => c.utilidad),
+  };
+}
+
 /** Utilidades, fondos, participaciones y socios. */
 export const utilidades = {
+  /**
+   * La tendencia de los ultimos meses hasta `hasta` (incluido): lo que dejaron
+   * los carros de cada empresa y la empresa, y el total. Los meses aprobados
+   * son su foto; los demas se calculan (los viajes, una sola vez).
+   */
+  async tendencia(hastaTexto: unknown, mesesTexto: unknown, vista: VistaUtilidades): Promise<MesTendencia[]> {
+    const hasta = mesDe(hastaTexto);
+    const n = Math.max(2, Math.min(12, Number(mesesTexto) || 6));
+    const meses: string[] = [hasta];
+    while (meses.length < n) meses.unshift(mesAnterior(meses[0]));
+    const filasRent = await rentabilidad.listar();
+    const resultado: MesTendencia[] = [];
+    for (const mes of meses) {
+      const u = await this.mes(mes, vista, undefined, filasRent);
+      const carrosLopez = grupoCarros(u, "LOPEZ");
+      const carrosMyc = grupoCarros(u, "MYC");
+      const empresa = { ingresos: u.empresa.ingresos, costos: u.empresa.totalGastos, utilidad: u.empresa.utilidad };
+      resultado.push({ mes, aprobado: !!u.aprobado, carrosLopez, carrosMyc, empresa, total: c2(carrosLopez.utilidad + carrosMyc.utilidad + empresa.utilidad) });
+    }
+    return resultado;
+  },
+
   /** Cascada, fondo y reparto del mes, segun lo que ve el rol. Con `repartimos`, simula (aunque este aprobado). */
-  async mes(mesTexto: unknown, vista: VistaUtilidades, repartimos?: unknown): Promise<UtilidadesMes> {
+  async mes(mesTexto: unknown, vista: VistaUtilidades, repartimos?: unknown, filasRent?: FilaRentabilidad[]): Promise<UtilidadesMes> {
     const mes = mesDe(mesTexto);
     const [[aprob]] = await pool.query<RowDataPacket[]>(
       "SELECT r.datos, r.aprobadoEn, u.nombre AS por FROM repartos_utilidades r LEFT JOIN usuarios u ON u.id = r.aprobadoPorId WHERE r.mes = ?",
@@ -272,7 +325,7 @@ export const utilidades = {
     );
     const [[cierre]] = await pool.query<RowDataPacket[]>("SELECT 1 AS si FROM periodos_cierre WHERE mes = ?", [mes]);
     const datos: Omit<UtilidadesMes, "cerrado" | "aprobado"> =
-      aprob && repartimos === undefined ? json(aprob.datos, null)! : await this.calcular(mes, repartimosDe(repartimos));
+      aprob && repartimos === undefined ? json(aprob.datos, null)! : await this.calcular(mes, repartimosDe(repartimos), filasRent);
     const resultado: UtilidadesMes = {
       ...datos,
       cerrado: !!cierre,
@@ -311,7 +364,7 @@ export const utilidades = {
   },
 
   /** Calcula el mes con los datos actuales y lo que se reparte de cada vehiculo (lo que falte: el sugerido). */
-  async calcular(mes: string, repartimos: Map<number, number>): Promise<Omit<UtilidadesMes, "cerrado" | "aprobado">> {
+  async calcular(mes: string, repartimos: Map<number, number>, filasRentDadas?: FilaRentabilidad[]): Promise<Omit<UtilidadesMes, "cerrado" | "aprobado">> {
     const { inicio, gmfPorMil } = await parametros();
     const desde = `${mes}-01`;
     const hasta = finDeMes(mes);
@@ -319,7 +372,8 @@ export const utilidades = {
       "SELECT id, placa, empresa, dueno FROM vehiculos WHERE eliminado = 0 AND empresa IS NOT NULL ORDER BY empresa, placa",
     );
     const porPlaca = new Map(flota.map((v) => [placaClave(v.placa), v.id as number]));
-    const filasRent = await rentabilidad.listar();
+    // Los viajes de Liquidacion de viajes (la tendencia los calcula una vez para todos los meses).
+    const filasRent = filasRentDadas ?? (await rentabilidad.listar());
     // Viajes con cuenta de viaje (modulo Cuentas vehiculos): su costo es lo gastado, que llega por el libro de gastos
     // como gasto directo del vehiculo; su anticipo ya no se cuenta (seria contar dos veces la plata del viaje).
     const [conCuenta] = await pool.query<RowDataPacket[]>("SELECT cuadroViajeId FROM cuentas_viaje WHERE gastoId IS NOT NULL");

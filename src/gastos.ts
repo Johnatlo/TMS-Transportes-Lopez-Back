@@ -359,12 +359,19 @@ export const gastos = {
   /** Lo que necesita el formulario: vehiculos propios, socios, categorias, fecha de corte y meses cerrados. */
   async opciones() {
     const [vehiculos] = await pool.query<RowDataPacket[]>(
-      "SELECT id, placa, empresa, dueno, activo FROM vehiculos WHERE eliminado = 0 AND empresa IS NOT NULL ORDER BY empresa, placa",
+      "SELECT id, placa, empresa, dueno, activo, visibleTodos FROM vehiculos WHERE eliminado = 0 AND empresa IS NOT NULL ORDER BY empresa, placa",
     );
     const [socios] = await pool.query<RowDataPacket[]>("SELECT id, nombre FROM socios WHERE activo = 1 ORDER BY nombre");
     const { corte, cerrados } = await limites();
     return {
-      vehiculos: vehiculos.map((v) => ({ id: v.id, placa: v.placa, empresa: v.empresa as EmpresaVehiculo, dueno: v.dueno ?? null, activo: !!v.activo })),
+      vehiculos: vehiculos.map((v) => ({
+        id: v.id,
+        placa: v.placa,
+        empresa: v.empresa as EmpresaVehiculo,
+        dueno: v.dueno ?? null,
+        activo: !!v.activo,
+        visibleTodos: !!v.visibleTodos,
+      })),
       socios: socios.map((s) => ({ id: s.id, nombre: s.nombre })),
       categorias: [...CATEGORIAS],
       corte,

@@ -22,7 +22,7 @@ async function main() {
   if (destino) {
     await enviarCorreo(
       destino,
-      "Prueba de correo del sistema de despacho",
+      "Prueba de correo de SOFI",
       "Si recibes este correo, el envio esta bien configurado.",
       "<p>Si recibes este correo, el envio esta bien configurado.</p>"
     );

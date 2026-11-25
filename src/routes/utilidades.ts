@@ -49,6 +49,14 @@ utilidadesRouter.get("/cuentas-vehiculos/:mes", async (req, res) => {
   });
 });
 
+/** GET /api/utilidades/tendencia/:hasta?meses=6: lo que dejaron los carros de cada empresa y la empresa en los ultimos meses. Solo el rol total. */
+utilidadesRouter.get("/tendencia/:hasta", async (req, res) => {
+  await responder(res, async () => {
+    if (!veRentabilidadEmpresa(rolDePeticion(req))) throw new ErrorCuadro("Tu usuario no ve la rentabilidad de la empresa.");
+    return utilidades.tendencia(req.params.hasta, req.query.meses, await vistaDe(req));
+  });
+});
+
 /** Solo el rol total. */
 function exigirTotal(req: Request): void {
   if (rolDePeticion(req) !== "TOTAL") throw new ErrorCuadro("Solo el rol de acceso total puede hacer esto.");

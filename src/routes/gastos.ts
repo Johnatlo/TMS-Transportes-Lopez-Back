@@ -1,3 +1,5 @@
+import type { RowDataPacket } from "mysql2/promise";
+import { pool } from "../db";
 import { Router, type Request } from "express";
 import { responder } from "./cuadro";
 import { ErrorCuadro } from "../cuadro";
@@ -22,12 +24,33 @@ function exigirEmpresa(req: Request, empresa: unknown): void {
   if (limite && empresa !== limite) throw new ErrorCuadro("Tu usuario solo registra gastos de Transportes M&C.");
 }
 
-/** El gasto o credito existe y es de una empresa que el usuario ve. */
+/**
+ * Los destinos son todos vehiculos visibles para todos (XGJ-197, al que le
+ * hacen cuentas todos los socios): M&C puede registrar y cambiar esos gastos
+ * aunque sean de T. Lopez.
+ */
+async function soloVehiculosDeTodos(destinos: unknown): Promise<boolean> {
+  if (!Array.isArray(destinos) || !destinos.length) return false;
+  if (destinos.some((d) => (d as { tipo?: unknown })?.tipo !== "VEHICULO")) return false;
+  const ids = [...new Set(destinos.map((d) => Number((d as { id?: unknown }).id)))];
+  const [filas] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE id IN (?) AND visibleTodos = 1", [ids]);
+  return filas.length === ids.length;
+}
+
+/** M&C registra gastos de su empresa, o de T. Lopez si van solo a vehiculos visibles para todos (XGJ-197). */
+async function exigirEmpresaGasto(req: Request, empresa: unknown, destinos: unknown): Promise<void> {
+  const limite = empresaDe(req);
+  if (!limite || empresa === limite) return;
+  if (!(await soloVehiculosDeTodos(destinos)))
+    throw new ErrorCuadro("Tu usuario solo registra gastos de Transportes M&C (o de los vehiculos que ven todos, como el XGJ-197).");
+}
+
+/** El gasto existe y el usuario lo puede cambiar (M&C: de su empresa o de los vehiculos visibles para todos). */
 async function exigirGasto(req: Request, id: number): Promise<void> {
   const limite = empresaDe(req);
   if (!limite) return;
   const [g] = await gastos.listar({ id });
-  if (g && g.empresa !== limite) throw new ErrorCuadro("Ese gasto es de la otra empresa.");
+  if (g && g.empresa !== limite && !(await soloVehiculosDeTodos(g.destinos))) throw new ErrorCuadro("Ese gasto es de la otra empresa.");
 }
 
 /** El credito existe y es de una empresa que el usuario ve. */
@@ -117,7 +140,7 @@ gastosRouter.put("/recurrentes/:id/estado", async (req, res) => {
 /** POST /api/gastos: registra un gasto ({ empresa, tipo, categoria, descripcion, monto, fechaPago?, soporteUrl?, causaDesde, causaCuotas?, destinos }). */
 gastosRouter.post("/", async (req, res) => {
   await responder(res, async () => {
-    exigirEmpresa(req, req.body?.empresa);
+    await exigirEmpresaGasto(req, req.body?.empresa, req.body?.destinos);
     const id = await gastos.crear(req.body ?? {}, req.usuario?.id ?? null);
     return (await gastos.listar({ id }))[0];
   });
@@ -128,7 +151,7 @@ gastosRouter.put("/:id(\\d+)", async (req, res) => {
   await responder(res, async () => {
     const id = Number(req.params.id);
     await exigirGasto(req, id);
-    exigirEmpresa(req, req.body?.empresa);
+    await exigirEmpresaGasto(req, req.body?.empresa, req.body?.destinos);
     await gastos.actualizar(id, req.body ?? {});
     return (await gastos.listar({ id }))[0];
   });

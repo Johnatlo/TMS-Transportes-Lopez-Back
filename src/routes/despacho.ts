@@ -575,7 +575,7 @@ async function procesarViaje(
   // Un viaje expedido en el portal del RNDC no tiene plantilla: no se arma ni
   // se reenvia desde aqui (ya existe alla).
   if (viaje.origen === "PORTAL") {
-    return { status: 409, cuerpo: { error: "Este viaje se expidio en el portal del RNDC: no se reenvia desde el TMS." } };
+    return { status: 409, cuerpo: { error: "Este viaje se expidio en el portal del RNDC: no se reenvia desde SOFI." } };
   }
 
   const [plantillaPrincipal, vehiculo, conductor, conductor2, remolque] = await Promise.all([

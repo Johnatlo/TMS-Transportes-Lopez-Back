@@ -541,7 +541,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1100 funciones, componentes, métodos y rutas en 73 archivos._
+_1105 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -596,12 +596,12 @@ _1100 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (19)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
-- [`src/routes/gastos.ts`](#srcroutesgastosts) (26)
+- [`src/routes/gastos.ts`](#srcroutesgastosts) (28)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (23)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (25)
 - [`src/routes/usuarios.ts`](#srcroutesusuariosts) (5)
-- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (23)
+- [`src/routes/utilidades.ts`](#srcroutesutilidadests) (24)
 - [`src/scripts/borrar-viaje.ts`](#srcscriptsborrarviajets) (6)
 - [`src/scripts/cargar-datos.ts`](#srcscriptscargardatosts) (3)
 - [`src/scripts/crear-usuario.ts`](#srcscriptscrearusuariots) (1)
@@ -614,7 +614,7 @@ _1100 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/seguimiento.ts`](#srcseguimientots) (39)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
-- [`src/utilidades.ts`](#srcutilidadests) (32)
+- [`src/utilidades.ts`](#srcutilidadests) (34)
 - [`src/vigencias.ts`](#srcvigenciasts) (3)
 
 ### `src/accesos.ts`
@@ -5155,8 +5155,16 @@ _1100 funciones, componentes, métodos y rutas en 73 archivos._
 - **`exigirEmpresa(req, empresa)`** · _función_
   M&C solo puede registrar en su empresa.
 
+- **`soloVehiculosDeTodos(destinos)`** · _función_
+  Los destinos son todos vehiculos visibles para todos (XGJ-197, al que le
+  hacen cuentas todos los socios): M&C puede registrar y cambiar esos gastos
+  aunque sean de T. Lopez.
+
+- **`exigirEmpresaGasto(req, empresa, destinos)`** · _función_
+  M&C registra gastos de su empresa, o de T. Lopez si van solo a vehiculos visibles para todos (XGJ-197).
+
 - **`exigirGasto(req, id)`** · _función_
-  El gasto o credito existe y es de una empresa que el usuario ve.
+  El gasto existe y el usuario lo puede cambiar (M&C: de su empresa o de los vehiculos visibles para todos).
 
 - **`exigirCredito(req, id)`** · _función_
   El credito existe y es de una empresa que el usuario ve.
@@ -5458,6 +5466,9 @@ _1100 funciones, componentes, métodos y rutas en 73 archivos._
   GET /api/utilidades/cuentas-vehiculos/:mes: la cuenta de cada vehiculo en el
   mes (Rentabilidad > Cuenta del vehiculo). M&C solo sus vehiculos y los
   visibles para todos (XGJ-197).
+
+- **`GET /tendencia/:hasta`** · _ruta HTTP_
+  GET /api/utilidades/tendencia/:hasta?meses=6: lo que dejaron los carros de cada empresa y la empresa en los ultimos meses. Solo el rol total.
 
 - **`exigirTotal(req)`** · _función_
   Solo el rol total.
@@ -6183,16 +6194,24 @@ _1100 funciones, componentes, métodos y rutas en 73 archivos._
 - **`armarEmpresa(d)`** · _función_
   El estado de resultados de la empresa con su detalle.
 
+- **`grupoCarros(u, empresa)`** · _función_
+  Lo de los carros de una empresa en un mes (de su cascada).
+
 - **`utilidades`** · _módulo_
   Utilidades, fondos, participaciones y socios.
 
-  - **`utilidades.mes(mesTexto, vista, repartimos)`** · _método_
+  - **`utilidades.tendencia(hastaTexto, mesesTexto, vista)`** · _método_
+    La tendencia de los ultimos meses hasta `hasta` (incluido): lo que dejaron
+    los carros de cada empresa y la empresa, y el total. Los meses aprobados
+    son su foto; los demas se calculan (los viajes, una sola vez).
+
+  - **`utilidades.mes(mesTexto, vista, repartimos, filasRent)`** · _método_
     Cascada, fondo y reparto del mes, segun lo que ve el rol. Con `repartimos`, simula (aunque este aprobado).
 
   - **`utilidades.recortar(u, vista)`** · _método_
     Quita lo que el rol no ve: el reparto (administrativas), los terceros y la empresa, o los carros que no son suyos (M&C).
 
-  - **`utilidades.calcular(mes, repartimos)`** · _método_
+  - **`utilidades.calcular(mes, repartimos, filasRentDadas)`** · _método_
     Calcula el mes con los datos actuales y lo que se reparte de cada vehiculo (lo que falte: el sugerido).
 
   - **`utilidades.aprobar(mesTexto, repartimos, usuarioId)`** · _método_
