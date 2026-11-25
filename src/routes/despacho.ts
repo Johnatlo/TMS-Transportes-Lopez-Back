@@ -35,13 +35,7 @@ import {
   PactoRemesa,
 } from "../repo";
 import { config } from "../config";
-import {
-  consecutivoRemesa,
-  siguienteBase,
-  validarBase,
-  mayorConsecutivo,
-  MAX_CARACTERES_CONSECUTIVO,
-} from "../consecutivos";
+import { consecutivoRemesa, siguienteBase, validarBase, mayorConsecutivo, MAX_CARACTERES_CONSECUTIVO } from "../consecutivos";
 import {
   construirXmlMensaje,
   construirDatosRemesa,
@@ -124,34 +118,19 @@ export const despachoRouter = Router();
  * DESCARGUE de las remesas del manifiesto, no contra el dia de hoy
  * [MANIFIESTO V7 pag. 12-13]. Con multiparada eso significa la ultima parada.
  */
-function validarDocumentos(
-  vehiculo: Vehiculo,
-  conductor: Conductor,
-  conductor2: Conductor | null,
-  ultimoDescargue: Date
-): string[] {
+function validarDocumentos(vehiculo: Vehiculo, conductor: Conductor, conductor2: Conductor | null, ultimoDescargue: Date): string[] {
   const problemas: string[] = [];
   const fecha = (d: Date) => d.toISOString().slice(0, 10);
 
   if (vehiculo.fechaVencSoat && vehiculo.fechaVencSoat < ultimoDescargue) {
-    problemas.push(
-      `El SOAT de ${vehiculo.placa} vence el ${fecha(vehiculo.fechaVencSoat)}, antes del ` +
-        `ultimo descargue`
-    );
+    problemas.push(`El SOAT de ${vehiculo.placa} vence el ${fecha(vehiculo.fechaVencSoat)}, antes del ` + `ultimo descargue`);
   }
   if (vehiculo.fechaVencTecnomecanica && vehiculo.fechaVencTecnomecanica < ultimoDescargue) {
-    problemas.push(
-      `La tecnomecanica de ${vehiculo.placa} vence el ${fecha(
-        vehiculo.fechaVencTecnomecanica
-      )}, antes del ultimo descargue`
-    );
+    problemas.push(`La tecnomecanica de ${vehiculo.placa} vence el ${fecha(vehiculo.fechaVencTecnomecanica)}, antes del ultimo descargue`);
   }
   for (const c of [conductor, conductor2]) {
     if (c?.fechaVencLicencia && c.fechaVencLicencia < ultimoDescargue) {
-      problemas.push(
-        `La licencia de ${c.nombre} vence el ${fecha(c.fechaVencLicencia)}, antes del ` +
-          `ultimo descargue`
-      );
+      problemas.push(`La licencia de ${c.nombre} vence el ${fecha(c.fechaVencLicencia)}, antes del ` + `ultimo descargue`);
     }
   }
   return problemas;
@@ -203,7 +182,7 @@ async function validarPisoSicetac(datos: {
         unidadTransporte: config.sicetac.unidadTransporte,
         tipoCarga: config.sicetac.tipoCarga,
       },
-      config.sicetac.mesesHaciaAtras
+      config.sicetac.mesesHaciaAtras,
     );
     if (!vivo) {
       return {
@@ -231,9 +210,7 @@ async function validarPisoSicetac(datos: {
 
 /** Quita los campos vacios: el XML tampoco los lleva. */
 function sinVacios(datos: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(datos).filter(([, v]) => v !== null && v !== undefined && v !== "")
-  );
+  return Object.fromEntries(Object.entries(datos).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 }
 
 /**
@@ -247,7 +224,7 @@ async function armarDatosRndc(
   datosViaje: DatosViajeParaRndc,
   datosRemesas: DatosRemesaParaRndc[],
   consecutivoManifiesto: string,
-  rutaBase: { origen: string | null; destino: string | null }
+  rutaBase: { origen: string | null; destino: string | null },
 ) {
   let manifiesto: Record<string, unknown> | null = null;
   let errorManifiesto: string | null = null;
@@ -326,10 +303,7 @@ function aTerceroRndc(t: PlantillaViajeConRelaciones["contratante"]): TerceroRnd
 }
 
 /** Arma los datos de una remesa a partir de su plantilla y sus datos variables. */
-function aDatosRemesa(
-  fila: ViajeRemesa,
-  plantilla: PlantillaViajeConRelaciones
-): DatosRemesaParaRndc {
+function aDatosRemesa(fila: ViajeRemesa, plantilla: PlantillaViajeConRelaciones): DatosRemesaParaRndc {
   return {
     consecutivo: fila.consecutivoRemesa!,
     contratante: aTerceroRndc(plantilla.contratante),
@@ -370,18 +344,19 @@ despachoRouter.post("/", async (req, res) => {
   // "S", semirremolque); si aun asi falta, responde el RNDC.
 
   // Compatibilidad: si llega el formato viejo de una sola remesa, se convierte.
-  const remesasEntrada: any[] = Array.isArray(b.remesas) && b.remesas.length > 0
-    ? b.remesas
-    : [
-        {
-          plantillaId: b.plantillaId,
-          pesoReal: b.pesoReal,
-          cantidadReal: b.cantidadReal,
-          fechaHoraCargue: b.fechaHoraCargue,
-          fechaHoraDescargue: b.fechaHoraDescargue,
-          ordenServicioGenerador: b.ordenServicioGenerador,
-        },
-      ];
+  const remesasEntrada: any[] =
+    Array.isArray(b.remesas) && b.remesas.length > 0
+      ? b.remesas
+      : [
+          {
+            plantillaId: b.plantillaId,
+            pesoReal: b.pesoReal,
+            cantidadReal: b.cantidadReal,
+            fechaHoraCargue: b.fechaHoraCargue,
+            fechaHoraDescargue: b.fechaHoraDescargue,
+            ordenServicioGenerador: b.ordenServicioGenerador,
+          },
+        ];
 
   if (remesasEntrada.length > MAX_REMESAS_POR_MANIFIESTO) {
     return res.status(422).json({
@@ -412,9 +387,7 @@ despachoRouter.post("/", async (req, res) => {
   ]);
 
   if (!plantillaPrincipal || !vehiculo || !conductor || (b.remolqueId && !remolque)) {
-    return res
-      .status(404)
-      .json({ error: "Plantilla, vehiculo, conductor o remolque no encontrado" });
+    return res.status(404).json({ error: "Plantilla, vehiculo, conductor o remolque no encontrado" });
   }
 
   // Plantillas de cada remesa (pueden ser distintas: varios clientes).
@@ -458,7 +431,7 @@ despachoRouter.post("/", async (req, res) => {
       : siguienteBase(
           mayorConsecutivo(await viajes.ultimoConsecutivo(), config.consecutivos.ultimoExterno),
           config.consecutivos.longitud,
-          config.consecutivos.prefijo
+          config.consecutivos.prefijo,
         );
 
     const problemasNumero = validarBase(base, nuevasRemesas.length, usados);
@@ -466,10 +439,7 @@ despachoRouter.post("/", async (req, res) => {
       return { error: problemasNumero.map((p) => p.mensaje).join(" ") };
     }
 
-    const primerCargue = nuevasRemesas.reduce(
-      (min, r) => (r.fechaHoraCargue < min ? r.fechaHoraCargue : min),
-      nuevasRemesas[0].fechaHoraCargue
-    );
+    const primerCargue = nuevasRemesas.reduce((min, r) => (r.fechaHoraCargue < min ? r.fechaHoraCargue : min), nuevasRemesas[0].fechaHoraCargue);
 
     const viaje = await viajes.create({
       consecutivoManifiesto: base,
@@ -479,32 +449,20 @@ despachoRouter.post("/", async (req, res) => {
       // En viajes se guarda la fecha de expedicion del manifiesto: el cargue mas
       // temprano de todas las remesas.
       fechaHoraCargue: primerCargue,
-      fechaHoraDescargue: nuevasRemesas.reduce(
-        (max, r) => (r.fechaHoraDescargue > max ? r.fechaHoraDescargue : max),
-        nuevasRemesas[0].fechaHoraDescargue
-      ),
+      fechaHoraDescargue: nuevasRemesas.reduce((max, r) => (r.fechaHoraDescargue > max ? r.fechaHoraDescargue : max), nuevasRemesas[0].fechaHoraDescargue),
       pesoReal: null,
       cantidadReal: null,
       // 0 es un valor real (flota propia); solo vacio es "sin flete".
-      valorFleteReal:
-        b.valorFleteReal === undefined || b.valorFleteReal === null || b.valorFleteReal === ""
-          ? null
-          : Number(b.valorFleteReal),
+      valorFleteReal: b.valorFleteReal === undefined || b.valorFleteReal === null || b.valorFleteReal === "" ? null : Number(b.valorFleteReal),
       valorAnticipoManifiesto: b.valorAnticipoManifiesto ? Number(b.valorAnticipoManifiesto) : 0,
       // El despachador ve el FOPAT en pantalla y lo puede ajustar. Si no llega,
       // se calcula al armar el manifiesto.
-      retencionFopat:
-        b.retencionFopat !== undefined && b.retencionFopat !== null && b.retencionFopat !== ""
-          ? Number(b.retencionFopat)
-          : null,
+      retencionFopat: b.retencionFopat !== undefined && b.retencionFopat !== null && b.retencionFopat !== "" ? Number(b.retencionFopat) : null,
       codVia: b.codVia || null,
       // EMF del viaje, en cascada: la elegida en pantalla, si no la del
       // vehiculo, si no la configurada para toda la empresa.
       nitMonitoreoFlota:
-        (b.nitMonitoreoFlota ? String(b.nitMonitoreoFlota).replace(/\D/g, "") : null) ||
-        vehiculo.nitMonitoreoFlota ||
-        config.rndc.nitMonitoreoFlota ||
-        null,
+        (b.nitMonitoreoFlota ? String(b.nitMonitoreoFlota).replace(/\D/g, "") : null) || vehiculo.nitMonitoreoFlota || config.rndc.nitMonitoreoFlota || null,
       fechaPagoSaldo: b.fechaPagoSaldo ? new Date(b.fechaPagoSaldo) : null,
       conductor2Id: conductor2 ? conductor2.id : null,
       remolqueId: remolque?.id ?? null,
@@ -522,7 +480,7 @@ despachoRouter.post("/", async (req, res) => {
     await viajeRemesas.crearParaViaje(
       viaje.id,
       // Cada remesa recibe su consecutivo derivado del mismo numero base.
-      nuevasRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) }))
+      nuevasRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) })),
     );
     return { viaje };
   });
@@ -541,10 +499,7 @@ despachoRouter.post("/", async (req, res) => {
  * completo y duplique las que ya pasaron.
  */
 function resumenParcial(creadas: string[], fallida: string, detalle: string): string {
-  const previas =
-    creadas.length > 0
-      ? `Las remesas ${creadas.join(", ")} YA quedaron creadas en el RNDC y no se deben volver a enviar. `
-      : "";
+  const previas = creadas.length > 0 ? `Las remesas ${creadas.join(", ")} YA quedaron creadas en el RNDC y no se deben volver a enviar. ` : "";
   return `${previas}Fallo la remesa ${fallida}: ${detalle}`;
 }
 
@@ -566,10 +521,7 @@ const ESTADOS_REINTENTABLES = ["VALIDACION_ERROR", "REMESA_ERROR", "MANIFIESTO_E
  * remesas activas (ni cumplidas ni anuladas) [MANIFIESTO V7, validaciones de
  * REMESASMAN].
  */
-async function procesarViaje(
-  viajeId: number,
-  opciones: { soloDatos?: boolean } = {}
-): Promise<{ status: number; cuerpo: unknown }> {
+async function procesarViaje(viajeId: number, opciones: { soloDatos?: boolean } = {}): Promise<{ status: number; cuerpo: unknown }> {
   const viaje = (await viajes.findById(viajeId))!;
   const filasRemesa = await viajeRemesas.findByViaje(viajeId);
   // Un viaje expedido en el portal del RNDC no tiene plantilla: no se arma ni
@@ -618,9 +570,7 @@ async function procesarViaje(
   // En viajes se guarda como fecha de cargue la mas temprana de las remesas.
   const primerCargue = new Date(viaje.fechaHoraCargue);
 
-  const datosRemesas: DatosRemesaParaRndc[] = filasRemesa.map((fila) =>
-    aDatosRemesa(fila, plantillasRemesa.get(fila.plantillaId!)!)
-  );
+  const datosRemesas: DatosRemesaParaRndc[] = filasRemesa.map((fila) => aDatosRemesa(fila, plantillasRemesa.get(fila.plantillaId!)!));
 
   // Los trayectos en vacio se arman antes porque determinan el origen y el
   // destino del manifiesto cuando existen.
@@ -661,9 +611,7 @@ async function procesarViaje(
     // Sin remolque (vehiculo rigido): NUMPLACAREMOLQUE no se envia.
     remolque: { placa: remolque?.placa ?? null, capacidadKg: remolque?.capacidadKg ?? null },
     conductor: { codTipoId: conductor.codTipoId, cedula: conductor.cedula },
-    conductor2: conductor2
-      ? { codTipoId: conductor2.codTipoId, cedula: conductor2.cedula }
-      : null,
+    conductor2: conductor2 ? { codTipoId: conductor2.codTipoId, cedula: conductor2.cedula } : null,
     manifiesto: {
       // La ruta base es la explicita de las plantillas: origen de la primera
       // carga y destino de la ultima (en multiparada el viaje termina donde
@@ -696,32 +644,18 @@ async function procesarViaje(
     viajesDia: viaje.viajesDia,
     retencionFopat: viaje.retencionFopat,
     nitEmpresaTransporte: config.rndc.empresaNit,
-    manifiestosMismaPlacaFecha: await viajes.contarPorVehiculoYFecha(
-      vehiculo.id,
-      primerCargue,
-      viajeId
-    ),
+    manifiestosMismaPlacaFecha: await viajes.contarPorVehiculoYFecha(vehiculo.id, primerCargue, viajeId),
   };
 
   // Lo que se envia (o se enviaria) al RNDC, campo por campo. Va en cada
   // respuesta de error: el rechazo puede venir de cualquier dato (la via, el
   // piso de SICETAC, el FOPAT, el titular...), asi que se muestran todos.
-  const datosRndc = await armarDatosRndc(
-    viaje,
-    filasRemesa,
-    datosViaje,
-    datosRemesas,
-    consecutivoManifiesto,
-    rutaBase
-  );
+  const datosRndc = await armarDatosRndc(viaje, filasRemesa, datosViaje, datosRemesas, consecutivoManifiesto, rutaBase);
   if (opciones.soloDatos) return { status: 200, cuerpo: datosRndc };
 
   // Remesas que ya existen en el RNDC (de un intento anterior).
   const yaCreadas = filasRemesa.filter((f) => f.estado === "CREADA").map((f) => f.consecutivoRemesa!);
-  const avisoYaCreadas =
-    yaCreadas.length > 0
-      ? `Las remesas ${yaCreadas.join(", ")} YA estan creadas en el RNDC y no se reenvian. `
-      : "";
+  const avisoYaCreadas = yaCreadas.length > 0 ? `Las remesas ${yaCreadas.join(", ")} YA estan creadas en el RNDC y no se reenvian. ` : "";
 
   // 1. Validaciones locales. Cada rechazo del RNDC cuesta tiempo en el despacho
   //    nocturno, y algunos consumen cupos de la empresa.
@@ -729,12 +663,7 @@ async function procesarViaje(
   // SOAT, tecnomecanica y licencia que vencen antes del ultimo descargue: solo
   // AVISO. La renovacion tarda dias en reflejarse y el manifiesto se expide
   // cuando el carro sale; si el RNDC no lo acepta, lo dira el.
-  const avisosDocumentos = validarDocumentos(
-    vehiculo,
-    conductor,
-    conductor2,
-    ultimoDescargueDe(datosRemesas)
-  );
+  const avisosDocumentos = validarDocumentos(vehiculo, conductor, conductor2, ultimoDescargueDe(datosRemesas));
   // El NIT debe estar en la lista de EMF registradas en el RNDC. Nuestro
   // catalogo es una copia de esa lista: si no esta aqui, lo mas probable es que
   // tampoco este alla. Se avisa pero no se bloquea, porque el catalogo local
@@ -745,7 +674,7 @@ async function procesarViaje(
     if (!emf) {
       avisosMonitoreo.push(
         `La empresa de monitoreo ${viaje.nitMonitoreoFlota} no esta en el catalogo. Verifica ` +
-          `que sea una EMF registrada en el RNDC o el manifiesto sera rechazado.`
+          `que sea una EMF registrada en el RNDC o el manifiesto sera rechazado.`,
       );
     }
   }
@@ -810,11 +739,7 @@ async function procesarViaje(
     }
 
     const datos = datosRemesas.find((d) => d.consecutivo === fila.consecutivoRemesa)!;
-    const xmlRemesa = construirXmlMensaje(
-      credenciales,
-      PROCESO_ID_REMESA,
-      construirDatosRemesa(datos)
-    );
+    const xmlRemesa = construirXmlMensaje(credenciales, PROCESO_ID_REMESA, construirDatosRemesa(datos));
 
     let resultado;
     try {
@@ -862,7 +787,7 @@ async function procesarViaje(
     PROCESO_ID_MANIFIESTO,
     construirDatosManifiesto(datosViaje, consecutivoManifiesto),
     "1",
-    construirBloqueRemesasManifiesto(creadas)
+    construirBloqueRemesasManifiesto(creadas),
   );
 
   let resultadoManifiesto;
@@ -871,9 +796,7 @@ async function procesarViaje(
   } catch (exc) {
     const actualizado = await viajes.update(viajeId, {
       estado: "MANIFIESTO_ERROR",
-      mensajeError:
-        `Las remesas ${creadas.join(", ")} quedaron creadas en el RNDC, pero fallo el ` +
-        `manifiesto: ${(exc as RndcError).message}`,
+      mensajeError: `Las remesas ${creadas.join(", ")} quedaron creadas en el RNDC, pero fallo el ` + `manifiesto: ${(exc as RndcError).message}`,
       codigoError: null,
       errorCrudo: null,
     });
@@ -885,9 +808,7 @@ async function procesarViaje(
     // y se reintenta solo el manifiesto (POST /:id/reintentar).
     const actualizado = await viajes.update(viajeId, {
       estado: "MANIFIESTO_ERROR",
-      mensajeError:
-        `Las remesas ${creadas.join(", ")} quedaron creadas en el RNDC, pero el manifiesto ` +
-        `fue rechazado. ${resultadoManifiesto.error}`,
+      mensajeError: `Las remesas ${creadas.join(", ")} quedaron creadas en el RNDC, pero el manifiesto ` + `fue rechazado. ${resultadoManifiesto.error}`,
       codigoError: resultadoManifiesto.codigoError,
       errorCrudo: resultadoManifiesto.errorCrudo,
     });
@@ -945,9 +866,7 @@ despachoRouter.post("/remesas/:remesaId/usar-existente", async (req, res) => {
   }
   await viajeRemesas.update(remesa.id, { estado: "CREADA", numeroRemesaRndc: radicado, mensajeError: null });
   const actualizado = await viajes.update(viaje.id, {
-    mensajeError:
-      `La remesa ${remesa.consecutivoRemesa} se tomo del RNDC (ya existia, radicado ${radicado}). ` +
-      "Reintenta para enviar lo que falta.",
+    mensajeError: `La remesa ${remesa.consecutivoRemesa} se tomo del RNDC (ya existia, radicado ${radicado}). ` + "Reintenta para enviar lo que falta.",
     codigoError: null,
     errorCrudo: null,
   });
@@ -997,7 +916,7 @@ despachoRouter.post("/:id/usar-manifiesto-existente", async (req, res) => {
 export async function tomarSiYaExpedido(
   viaje: Viaje,
   /** Numero a buscar: el que se escribio en el reintento, o el del viaje. */
-  numeroPedido?: string | null
+  numeroPedido?: string | null,
 ): Promise<{ status: number; cuerpo: unknown } | null> {
   const numero = (numeroPedido || viaje.consecutivoManifiesto || "").trim().toUpperCase();
   if (config.rndc.simular || viaje.numeroManifiestoRndc || !numero) return null;
@@ -1144,10 +1063,7 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
 
   // Primero: si el manifiesto ya se expidio por fuera del sistema, se toma ese
   // y no se reenvia nada (las correcciones del formulario ya no aplican).
-  const yaExpedido = await tomarSiYaExpedido(
-    viaje,
-    req.body?.consecutivoManifiesto ? String(req.body.consecutivoManifiesto) : null
-  );
+  const yaExpedido = await tomarSiYaExpedido(viaje, req.body?.consecutivoManifiesto ? String(req.body.consecutivoManifiesto) : null);
   if (yaExpedido) return res.status(yaExpedido.status).json(yaExpedido.cuerpo);
 
   const b = req.body ?? {};
@@ -1188,9 +1104,7 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
   if (b.retencionFopat !== undefined) cambios.retencionFopat = num(b.retencionFopat);
   if (b.codVia !== undefined) cambios.codVia = b.codVia ? String(b.codVia) : null;
   if (b.nitMonitoreoFlota !== undefined) {
-    cambios.nitMonitoreoFlota = b.nitMonitoreoFlota
-      ? String(b.nitMonitoreoFlota).replace(/\D/g, "")
-      : null;
+    cambios.nitMonitoreoFlota = b.nitMonitoreoFlota ? String(b.nitMonitoreoFlota).replace(/\D/g, "") : null;
   }
   if (b.fechaPagoSaldo !== undefined) {
     cambios.fechaPagoSaldo = b.fechaPagoSaldo ? new Date(b.fechaPagoSaldo) : null;
@@ -1311,9 +1225,7 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
 
   // Con remesas nuevas, el numero base debe servir para todas (con letra).
   if (reemplazarRemesas) {
-    const propios = new Set(
-      [viaje.consecutivoManifiesto, ...filasActuales.map((f) => f.consecutivoRemesa)].filter(Boolean) as string[]
-    );
+    const propios = new Set([viaje.consecutivoManifiesto, ...filasActuales.map((f) => f.consecutivoRemesa)].filter(Boolean) as string[]);
     const usados = new Set([...(await viajes.consecutivosUsados())].filter((c) => !propios.has(c)));
     const problemas = validarBase(base, reemplazarRemesas.length, usados);
     if (problemas.length > 0) {
@@ -1330,23 +1242,20 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
     if (reemplazarRemesas) {
       // El viaje guarda la plantilla principal y las fechas extremas de las cargas.
       cambios.plantillaId = reemplazarRemesas[0].plantillaId;
-      cambios.fechaHoraCargue = reemplazarRemesas.reduce(
-        (m, r) => (r.fechaHoraCargue < m ? r.fechaHoraCargue : m),
-        reemplazarRemesas[0].fechaHoraCargue
-      );
+      cambios.fechaHoraCargue = reemplazarRemesas.reduce((m, r) => (r.fechaHoraCargue < m ? r.fechaHoraCargue : m), reemplazarRemesas[0].fechaHoraCargue);
       cambios.fechaHoraDescargue = reemplazarRemesas.reduce(
         (m, r) => (r.fechaHoraDescargue > m ? r.fechaHoraDescargue : m),
-        reemplazarRemesas[0].fechaHoraDescargue
+        reemplazarRemesas[0].fechaHoraDescargue,
       );
     } else if (corregirRemesas.length > 0) {
       const todas = filasActuales.map((f) => corregirRemesas.find((c) => c.id === f.id)?.datos ?? f);
       cambios.fechaHoraCargue = todas.reduce(
         (m, r) => (new Date(r.fechaHoraCargue!) < m ? new Date(r.fechaHoraCargue!) : m),
-        new Date(todas[0].fechaHoraCargue!)
+        new Date(todas[0].fechaHoraCargue!),
       );
       cambios.fechaHoraDescargue = todas.reduce(
         (m, r) => (new Date(r.fechaHoraDescargue!) > m ? new Date(r.fechaHoraDescargue!) : m),
-        new Date(todas[0].fechaHoraDescargue!)
+        new Date(todas[0].fechaHoraDescargue!),
       );
       if (filasActuales[0].estado !== "CREADA") cambios.plantillaId = todas[0].plantillaId;
     }
@@ -1355,7 +1264,7 @@ despachoRouter.post("/:id/reintentar", async (req, res) => {
       await viajeRemesas.borrarDeViaje(viajeId);
       await viajeRemesas.crearParaViaje(
         viajeId,
-        reemplazarRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) }))
+        reemplazarRemesas.map((r, i) => ({ ...r, consecutivoRemesa: consecutivoRemesa(base, i + 1) })),
       );
     }
     for (const c of corregirRemesas) {
@@ -1447,16 +1356,13 @@ function planDeAnulacion(viaje: Viaje, remesas: ViajeRemesa[], consultado = fals
     consultado,
     // El cumplido del manifiesto se anula primero: con el manifiesto cumplido
     // el RNDC no deja anular el cumplido de las remesas (ACR070).
-    cumplidoManifiestoVigente:
-      manifiestoVigente && !!viaje.radicadoCumplido && !viaje.radicadoAnulacionCumplidoManifiesto,
+    cumplidoManifiestoVigente: manifiestoVigente && !!viaje.radicadoCumplido && !viaje.radicadoAnulacionCumplidoManifiesto,
     // Una remesa cumplida no se puede anular (Manual 6.1): antes, su cumplido (28).
     cumplidosRemesaPorAnular: remesasVigentes.filter((r) => r.estado === "CUMPLIDA"),
     // El cumplido inicial solo existe si hubo manifiesto (lo genera el
     // monitoreo del manifiesto), y el proceso 54 pide su numero.
     cumplidosPorAnular: manifiestoVigente
-      ? remesasVigentes.filter((r) =>
-          consultado ? !!r.radicadoCumplidoInicial && !r.radicadoAnulacionCumplido : !r.radicadoAnulacionCumplido
-        )
+      ? remesasVigentes.filter((r) => (consultado ? !!r.radicadoCumplidoInicial && !r.radicadoAnulacionCumplido : !r.radicadoAnulacionCumplido))
       : [],
     // Nada creado en el RNDC: la "anulacion" es solo local (descartar).
     soloLocal: !manifiestoVigente && remesasVigentes.length === 0,
@@ -1564,10 +1470,7 @@ despachoRouter.post("/:id/anular", async (req, res) => {
   if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
   if (!ESTADOS_ANULABLES.includes(viaje.estado)) {
     return res.status(409).json({
-      error:
-        viaje.estado === "ANULADO"
-          ? "Este viaje ya esta anulado."
-          : `Un viaje en estado ${viaje.estado} no se puede anular.`,
+      error: viaje.estado === "ANULADO" ? "Este viaje ya esta anulado." : `Un viaje en estado ${viaje.estado} no se puede anular.`,
     });
   }
 
@@ -1640,9 +1543,9 @@ despachoRouter.post("/:id/anular", async (req, res) => {
         construirXmlMensaje(
           credenciales,
           PROCESO_ID_ANULAR_CUMPLIDO_MANIFIESTO,
-          construirDatosAnularCumplidoManifiesto(viaje.consecutivoManifiesto!, motivoCumplido, obs)
+          construirDatosAnularCumplidoManifiesto(viaje.consecutivoManifiesto!, motivoCumplido, obs),
         ),
-        PROCESO_ID_ANULAR_CUMPLIDO_MANIFIESTO
+        PROCESO_ID_ANULAR_CUMPLIDO_MANIFIESTO,
       );
       const yaNoEsta = !resultado.ok && !(await cumplidoManifiestoExiste(viaje.consecutivoManifiesto!));
       if (!resultado.ok && !yaNoEsta) {
@@ -1664,12 +1567,8 @@ despachoRouter.post("/:id/anular", async (req, res) => {
     // 0b. Cumplido de cada remesa cumplida (28). Quedan CREADA y siguen.
     for (const r of plan.cumplidosRemesaPorAnular) {
       const resultado = await cliente.enviar(
-        construirXmlMensaje(
-          credenciales,
-          PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
-          construirDatosAnularCumplidoRemesa(r.consecutivoRemesa!, motivoCumplido, obs)
-        ),
-        PROCESO_ID_ANULAR_CUMPLIDO_REMESA
+        construirXmlMensaje(credenciales, PROCESO_ID_ANULAR_CUMPLIDO_REMESA, construirDatosAnularCumplidoRemesa(r.consecutivoRemesa!, motivoCumplido, obs)),
+        PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
       );
       const yaNoEsta = !resultado.ok && !(await cumplidoRemesaExiste(r.consecutivoRemesa!));
       if (!resultado.ok && !yaNoEsta) {
@@ -1677,7 +1576,7 @@ despachoRouter.post("/:id/anular", async (req, res) => {
           `${plan.cumplidoManifiestoVigente ? `Ya se anulo el cumplido del manifiesto ${viaje.consecutivoManifiesto}. ` : ""}` +
             `No se pudo anular el cumplido de la remesa ${r.consecutivoRemesa}: ${resultado.error}. ` +
             "Corrige y vuelve a anular: se retoma desde aqui.",
-          resultado
+          resultado,
         );
       }
       await viajeRemesas.update(r.id, {
@@ -1694,12 +1593,7 @@ despachoRouter.post("/:id/anular", async (req, res) => {
       const xml = construirXmlMensaje(
         credenciales,
         PROCESO_ID_ANULAR_CUMPLIDO_INICIAL,
-        construirDatosAnularCumplidoInicial(
-          r.consecutivoRemesa!,
-          viaje.consecutivoManifiesto!,
-          motivoCumplido as MotivoAnulacionCumplido,
-          obs
-        )
+        construirDatosAnularCumplidoInicial(r.consecutivoRemesa!, viaje.consecutivoManifiesto!, motivoCumplido as MotivoAnulacionCumplido, obs),
       );
       const resultado = await cliente.enviar(xml, PROCESO_ID_ANULAR_CUMPLIDO_INICIAL);
       if (resultado.ok) {
@@ -1710,12 +1604,10 @@ despachoRouter.post("/:id/anular", async (req, res) => {
         return await fallar(
           `No se pudo anular el cumplido inicial (GPS) de la remesa ${r.consecutivoRemesa}: ${resultado.error}. ` +
             "Mientras exista, el RNDC no deja anular el manifiesto. Nada mas se anulo.",
-          resultado
+          resultado,
         );
       } else {
-        avisos.push(
-          `Cumplido inicial de la remesa ${r.consecutivoRemesa}: ${resultado.errorCrudo ?? resultado.error}`
-        );
+        avisos.push(`Cumplido inicial de la remesa ${r.consecutivoRemesa}: ${resultado.errorCrudo ?? resultado.error}`);
       }
     }
 
@@ -1724,19 +1616,14 @@ despachoRouter.post("/:id/anular", async (req, res) => {
       const xml = construirXmlMensaje(
         credenciales,
         PROCESO_ID_ANULAR_MANIFIESTO,
-        construirDatosAnularManifiesto(
-          viaje.consecutivoManifiesto!,
-          motivoManifiesto as MotivoAnulacionManifiesto,
-          obs
-        )
+        construirDatosAnularManifiesto(viaje.consecutivoManifiesto!, motivoManifiesto as MotivoAnulacionManifiesto, obs),
       );
       const resultado = await cliente.enviar(xml, PROCESO_ID_ANULAR_MANIFIESTO);
       if (!resultado.ok) {
         const previos = avisos.length > 0 ? ` Antes, al anular el cumplido inicial: ${avisos.join(" | ")}` : "";
         return await fallar(
-          `No se pudo anular el manifiesto ${viaje.consecutivoManifiesto}: ${resultado.error}.${previos} ` +
-            `Nada de las remesas se anulo todavia.`,
-          resultado
+          `No se pudo anular el manifiesto ${viaje.consecutivoManifiesto}: ${resultado.error}.${previos} ` + `Nada de las remesas se anulo todavia.`,
+          resultado,
         );
       }
       await viajes.update(viajeId, {
@@ -1752,19 +1639,16 @@ despachoRouter.post("/:id/anular", async (req, res) => {
       const xml = construirXmlMensaje(
         credenciales,
         PROCESO_ID_ANULAR_REMESA,
-        construirDatosAnularRemesa(r.consecutivoRemesa!, motivoRemesa as MotivoAnulacionRemesa, obs)
+        construirDatosAnularRemesa(r.consecutivoRemesa!, motivoRemesa as MotivoAnulacionRemesa, obs),
       );
       const resultado = await cliente.enviar(xml, PROCESO_ID_ANULAR_REMESA);
       if (!resultado.ok) {
-        const hecho = [
-          ...(plan.manifiestoVigente ? [`el manifiesto ${viaje.consecutivoManifiesto}`] : []),
-          ...anuladas.map((c) => `la remesa ${c}`),
-        ];
+        const hecho = [...(plan.manifiestoVigente ? [`el manifiesto ${viaje.consecutivoManifiesto}`] : []), ...anuladas.map((c) => `la remesa ${c}`)];
         return await fallar(
           `${hecho.length > 0 ? `Ya se anularon ${hecho.join(", ")}. ` : ""}` +
             `No se pudo anular la remesa ${r.consecutivoRemesa}: ${resultado.error}. ` +
             `Corrige y vuelve a anular: se retoma desde esta remesa.`,
-          resultado
+          resultado,
         );
       }
       await viajeRemesas.update(r.id, {
@@ -1849,10 +1733,7 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
     const credenciales = credencialesRndc();
     const cliente = clienteRegistro();
     const enviar = (d: typeof datos) =>
-      cliente.enviar(
-        construirXmlMensaje(credenciales, PROCESO_ID_CUMPLIR_REMESA, construirDatosCumplidoRemesa(d)),
-        PROCESO_ID_CUMPLIR_REMESA
-      );
+      cliente.enviar(construirXmlMensaje(credenciales, PROCESO_ID_CUMPLIR_REMESA, construirDatosCumplidoRemesa(d)), PROCESO_ID_CUMPLIR_REMESA);
     // Como el portal: lo que el GPS ya reporto (cumplido inicial, proceso 45)
     // no se reenvia igual. Si el usuario lo corrigio a mano, va su valor y el
     // RNDC decide (puede responder CRE111 si no acepta cambiar el del GPS).
@@ -1938,11 +1819,7 @@ despachoRouter.post("/remesas/:remesaId/cumplir", async (req, res) => {
 async function gpsDeRemesa(consecutivo: string) {
   if (config.rndc.simular) return null;
   try {
-    return await leerCumplidoInicial(
-      clienteLectura(),
-      credencialesRndc(),
-      consecutivo
-    );
+    return await leerCumplidoInicial(clienteLectura(), credencialesRndc(), consecutivo);
   } catch (exc) {
     console.warn(`No se pudo leer el cumplido inicial (GPS) de ${consecutivo}:`, (exc as Error).message);
     return undefined;
@@ -1968,11 +1845,7 @@ despachoRouter.get("/remesas/:remesaId/cumplido", async (req, res) => {
   if (!config.rndc.simular && r.consecutivoRemesa) {
     try {
       const lector = clienteLectura();
-      const t = await leerTiemposCumplidoRemesa(
-        lector,
-        credencialesRndc(),
-        r.consecutivoRemesa
-      );
+      const t = await leerTiemposCumplidoRemesa(lector, credencialesRndc(), r.consecutivoRemesa);
       if (t) return res.json({ fuente: "RNDC", ...t });
       return res.json({ fuente: "RNDC", noCumplida: true });
     } catch (exc) {
@@ -2014,22 +1887,14 @@ despachoRouter.post("/remesas/:remesaId/anular-cumplido", async (req, res) => {
   let registrado: Awaited<ReturnType<typeof leerTiemposCumplidoRemesa>> = null;
   if (!config.rndc.simular) {
     try {
-      registrado = await leerTiemposCumplidoRemesa(
-        clienteLectura(),
-        credenciales,
-        remesa.consecutivoRemesa!
-      );
+      registrado = await leerTiemposCumplidoRemesa(clienteLectura(), credenciales, remesa.consecutivoRemesa!);
     } catch {
       registrado = null;
     }
   }
   const resultado = await cliente.enviar(
-    construirXmlMensaje(
-      credenciales,
-      PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
-      construirDatosAnularCumplidoRemesa(remesa.consecutivoRemesa!, motivo, observaciones)
-    ),
-    PROCESO_ID_ANULAR_CUMPLIDO_REMESA
+    construirXmlMensaje(credenciales, PROCESO_ID_ANULAR_CUMPLIDO_REMESA, construirDatosAnularCumplidoRemesa(remesa.consecutivoRemesa!, motivo, observaciones)),
+    PROCESO_ID_ANULAR_CUMPLIDO_REMESA,
   );
   if (!resultado.ok) {
     let error = resultado.error ?? "El RNDC rechazo la anulacion.";
@@ -2066,10 +1931,7 @@ despachoRouter.post("/remesas/:remesaId/anular-cumplido", async (req, res) => {
  * motivos que acepta el RNDC.
  */
 async function baseCumplidoManifiesto(viaje: Viaje) {
-  const [vehiculo, plantilla] = await Promise.all([
-    vehiculos.findById(viaje.vehiculoId),
-    plantillas.findById(viaje.plantillaId),
-  ]);
+  const [vehiculo, plantilla] = await Promise.all([vehiculos.findById(viaje.vehiculoId), plantillas.findById(viaje.plantillaId)]);
   return {
     valorFlete: viaje.valorFleteReal ?? 0,
     valorAnticipo: viaje.valorAnticipoManifiesto ?? 0,
@@ -2128,8 +1990,12 @@ export async function tiemposLogisticos(viaje: Viaje) {
     // Sin respuesta del RNDC, los que se reportaron desde este sistema.
     if (!t && r.entradaCargue) {
       t = {
-        llegadaCargue: r.llegadaCargue, entradaCargue: r.entradaCargue, salidaCargue: r.salidaCargue,
-        llegadaDescargue: r.llegadaDescargue, entradaDescargue: r.entradaDescargue, salidaDescargue: r.salidaDescargue,
+        llegadaCargue: r.llegadaCargue,
+        entradaCargue: r.entradaCargue,
+        salidaCargue: r.salidaCargue,
+        llegadaDescargue: r.llegadaDescargue,
+        entradaDescargue: r.entradaDescargue,
+        salidaDescargue: r.salidaDescargue,
       };
       fuente = "sistema";
     }
@@ -2145,9 +2011,7 @@ export async function tiemposLogisticos(viaje: Viaje) {
       conEsperaDescargue: minutos(t?.llegadaDescargue ?? t?.entradaDescargue, t?.salidaDescargue),
     });
   }
-  const suma = (
-    k: "pactadoCargue" | "pactadoDescargue" | "ejecutadoCargue" | "ejecutadoDescargue" | "conEsperaCargue" | "conEsperaDescargue"
-  ) =>
+  const suma = (k: "pactadoCargue" | "pactadoDescargue" | "ejecutadoCargue" | "ejecutadoDescargue" | "conEsperaCargue" | "conEsperaDescargue") =>
     filas.every((f) => f[k] !== null) ? filas.reduce((t, f) => t + (f[k] ?? 0), 0) : null;
 
   // Valor hora de SICETAC de la via del viaje.
@@ -2165,9 +2029,16 @@ export async function tiemposLogisticos(viaje: Viaje) {
       vivo = await pisoSicetacEnVivo(
         clienteSicetac(),
         credenciales,
-        { configuracion: vehiculo.configuracion, origen, destino, codVia: viaje.codVia, horasPactadas,
-          unidadTransporte: config.sicetac.unidadTransporte, tipoCarga: config.sicetac.tipoCarga },
-        config.sicetac.mesesHaciaAtras
+        {
+          configuracion: vehiculo.configuracion,
+          origen,
+          destino,
+          codVia: viaje.codVia,
+          horasPactadas,
+          unidadTransporte: config.sicetac.unidadTransporte,
+          tipoCarga: config.sicetac.tipoCarga,
+        },
+        config.sicetac.mesesHaciaAtras,
       );
       valorHora = vivo?.valorHora ?? null;
       if (!vivo) errorSicetac = "La via no aparece en SICETAC para esta ruta y configuracion.";
@@ -2192,8 +2063,7 @@ export async function tiemposLogisticos(viaje: Viaje) {
   // llegada->salida 8 h 13 + 2 h = 10,22 h -> piso $4.597.650. Con valor a
   // pagar $4.551.761 (horas de entrada a salida) dio CMA045; con $4.597.761
   // paso. Sin tiempos, el piso de despacho (horas pactadas).
-  const horasEjecutadas =
-    conEsperaCargue !== null && conEsperaDescargue !== null ? (conEsperaCargue + conEsperaDescargue) / 60 : null;
+  const horasEjecutadas = conEsperaCargue !== null && conEsperaDescargue !== null ? (conEsperaCargue + conEsperaDescargue) / 60 : null;
   const piso = vivo
     ? {
         // Misma formula que el piso de despacho, con otras horas (ver sicetac.test.ts).
@@ -2334,7 +2204,7 @@ despachoRouter.get("/:id/cumplir/previa", async (req, res) => {
     retencionFuente: calcularRetencionFuente(
       baseRetenciones(base.valorFlete, base.vacio1Valor, base.vacio2Valor),
       base.tarifaRetencionFuente,
-      base.titularEsRegimenSimple
+      base.titularEsRegimenSimple,
     ),
     retencionFopat: calcularFopat(base.valorFlete, base.aplicaFopat),
     motivosDescuento: MOTIVOS_DESCUENTO_MANIFIESTO,
@@ -2369,9 +2239,7 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
 
   // Lo cumplido en el portal se adopta antes de enviar. Si el manifiesto ya
   // estaba cumplido alla, no se reenvia.
-  await sincronizarCumplidos(viajeId).catch((exc) =>
-    console.warn(`No se pudo sincronizar el cumplido del viaje ${viajeId}:`, (exc as Error).message)
-  );
+  await sincronizarCumplidos(viajeId).catch((exc) => console.warn(`No se pudo sincronizar el cumplido del viaje ${viajeId}:`, (exc as Error).message));
   const sincronizado = await viajes.findById(viajeId);
   const remesas = (await viajeRemesas.findByViaje(viajeId)).filter((r) => r.estado !== "ANULADA");
   if (sincronizado?.estado === "CUMPLIDO") return res.json({ ...sincronizado, remesas });
@@ -2393,11 +2261,7 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
   const retencionFuente =
     b.retencionFuente !== undefined && b.retencionFuente !== null && b.retencionFuente !== ""
       ? Number(b.retencionFuente)
-      : calcularRetencionFuente(
-          baseRetenciones(valorFinal, base.vacio1Valor, base.vacio2Valor),
-          base.tarifaRetencionFuente,
-          base.titularEsRegimenSimple
-        );
+      : calcularRetencionFuente(baseRetenciones(valorFinal, base.vacio1Valor, base.vacio2Valor), base.tarifaRetencionFuente, base.titularEsRegimenSimple);
   const retencionFopat =
     b.retencionFopat !== undefined && b.retencionFopat !== null && b.retencionFopat !== ""
       ? Number(b.retencionFopat)
@@ -2426,9 +2290,9 @@ despachoRouter.post("/:id/cumplir", async (req, res) => {
           motivoDescuento: b.motivoDescuento ?? null,
           valorSobreanticipo: n(b.valorSobreanticipo),
           observaciones: b.observaciones ?? null,
-        })
+        }),
       ),
-      PROCESO_ID_CUMPLIR_MANIFIESTO
+      PROCESO_ID_CUMPLIR_MANIFIESTO,
     );
     const radicado = resultado.ok ? resultado.radicado : radicadoDeDuplicado(resultado.errorCrudo);
 
@@ -2481,8 +2345,7 @@ despachoRouter.get("/:id/manifiesto.pdf", async (req, res) => {
   }
   if (!viaje.numeroManifiestoRndc) {
     return res.status(409).json({
-      error:
-        "Este viaje todavia no tiene manifiesto radicado en el RNDC, asi que no hay PDF que imprimir.",
+      error: "Este viaje todavia no tiene manifiesto radicado en el RNDC, asi que no hay PDF que imprimir.",
     });
   }
 
@@ -2495,7 +2358,7 @@ despachoRouter.get("/:id/manifiesto.pdf", async (req, res) => {
         simular: config.rndc.simular,
       },
       viaje.numeroManifiestoRndc,
-      viaje.consecutivoManifiesto ?? undefined
+      viaje.consecutivoManifiesto ?? undefined,
     );
 
     // Logo de la empresa sobre el PDF oficial, sin tocar el QR (ver
@@ -2520,6 +2383,18 @@ despachoRouter.get("/:id/manifiesto.pdf", async (req, res) => {
 });
 
 /**
+ * POST /api/despacho/:id/contingencia/resuelta: ya se imprimio el manifiesto
+ * oficial por fuera de SOFI (por ejemplo, desde el portal del RNDC): quita la
+ * contingencia pendiente y su alerta.
+ */
+despachoRouter.post("/:id/contingencia/resuelta", async (req, res) => {
+  const viaje = await viajes.findById(Number(req.params.id));
+  if (!viaje) return res.status(404).json({ error: "Viaje no encontrado" });
+  await contingencia.resolver(viaje.id);
+  res.json({ ok: true });
+});
+
+/**
  * Manifiesto de contingencia (HTML para imprimir): cuando el RNDC no deja
  * expedir el manifiesto o no entrega su PDF. Lleva los mismos datos que se
  * envian al RNDC, sin QR y con el aviso de contingencia. El viaje queda
@@ -2528,13 +2403,21 @@ despachoRouter.get("/:id/manifiesto.pdf", async (req, res) => {
  */
 despachoRouter.get("/:id/manifiesto-contingencia", async (req, res) => {
   const pagina = (estado: number, mensaje: string) =>
-    res.status(estado).type("html").send(`<!DOCTYPE html><meta charset="utf-8"><p style="font-family:Arial;margin:2rem">${mensaje.replace(/</g, "&lt;")}</p>`);
+    res
+      .status(estado)
+      .type("html")
+      .send(`<!DOCTYPE html><meta charset="utf-8"><p style="font-family:Arial;margin:2rem">${mensaje.replace(/</g, "&lt;")}</p>`);
   const viaje = await viajes.findById(Number(req.params.id));
   if (!viaje) return pagina(404, "Viaje no encontrado.");
   if (viaje.estado === "ANULADO") return pagina(409, "El viaje esta anulado: no se imprime manifiesto.");
   if (viaje.origen === "PORTAL") return pagina(409, "Este viaje se expidio en el portal del RNDC: imprime el manifiesto alla.");
   const r = await procesarViaje(viaje.id, { soloDatos: true });
-  const d = r.cuerpo as { error?: string; manifiesto?: Record<string, unknown> | null; errorManifiesto?: string | null; via?: { codVia: string; descripcion: string } | null };
+  const d = r.cuerpo as {
+    error?: string;
+    manifiesto?: Record<string, unknown> | null;
+    errorManifiesto?: string | null;
+    via?: { codVia: string; descripcion: string } | null;
+  };
   if (r.status !== 200 || !d.manifiesto) {
     return pagina(r.status === 200 ? 422 : r.status, `No se pudo armar el manifiesto: ${d.error ?? d.errorManifiesto ?? "faltan datos del viaje"}.`);
   }
@@ -2575,10 +2458,7 @@ despachoRouter.get("/remesas/:remesaId/imprimir", async (req, res) => {
   if (!viaje || !plantilla) {
     return res.status(404).json({ error: "No se encontraron los datos del viaje o la plantilla" });
   }
-  const [vehiculo, conductor] = await Promise.all([
-    vehiculos.findById(viaje.vehiculoId),
-    conductores.findById(viaje.conductorId),
-  ]);
+  const [vehiculo, conductor] = await Promise.all([vehiculos.findById(viaje.vehiculoId), conductores.findById(viaje.conductorId)]);
 
   const html = construirHtmlRemesa({
     remesa,
@@ -2618,10 +2498,7 @@ despachoRouter.get("/sugerencias/:vehiculoId", async (req, res) => {
   if (!vehiculo) return res.status(404).json({ error: "Vehiculo no encontrado" });
 
   const hist = await viajes.habitualesDeVehiculo(vehiculo.id);
-  const [listaRemolques, listaConductores] = await Promise.all([
-    remolques.findMany(),
-    conductores.findMany(),
-  ]);
+  const [listaRemolques, listaConductores] = await Promise.all([remolques.findMany(), conductores.findMany()]);
 
   let remolque: { id: number; origen: string } | null = null;
   const rHist = hist.remolque && listaRemolques.find((r) => r.id === hist.remolque!.id && r.activo);
@@ -2653,7 +2530,7 @@ despachoRouter.get("/siguiente-consecutivo", async (_req, res) => {
   const base = siguienteBase(
     mayorConsecutivo(await viajes.ultimoConsecutivo(), config.consecutivos.ultimoExterno),
     config.consecutivos.longitud,
-    config.consecutivos.prefijo
+    config.consecutivos.prefijo,
   );
   res.json({ base });
 });
@@ -2680,14 +2557,31 @@ despachoRouter.get("/:id/detalle", async (req, res) => {
     viaje.nitMonitoreoFlota ? empresasMonitoreo.findByNit(viaje.nitMonitoreoFlota) : Promise.resolve(null),
     plantillas.findById(viaje.plantillaId),
   ]);
-  const tercero = (t: { nombre: string; nit: string; codTipoId: string; codSede: string; ciudad: string | null; codMunicipioRndc?: string | null; direccion?: string | null } | null | undefined) =>
-    t ? { nombre: t.nombre, nit: t.nit, tipoId: t.codTipoId, sede: t.codSede, ciudad: t.ciudad, codMunicipio: t.codMunicipioRndc ?? null, direccion: t.direccion ?? null } : null;
+  const tercero = (
+    t:
+      | { nombre: string; nit: string; codTipoId: string; codSede: string; ciudad: string | null; codMunicipioRndc?: string | null; direccion?: string | null }
+      | null
+      | undefined,
+  ) =>
+    t
+      ? {
+          nombre: t.nombre,
+          nit: t.nit,
+          tipoId: t.codTipoId,
+          sede: t.codSede,
+          ciudad: t.ciudad,
+          codMunicipio: t.codMunicipioRndc ?? null,
+          direccion: t.direccion ?? null,
+        }
+      : null;
   // Remesas del portal (sin plantilla): las partes se buscan por NIT y sede.
   const catalogoTerceros = filas.some((r) => !r.plantillaId) ? await terceros.findMany() : [];
   const porNit = (nit: string | null | undefined, sede: string | null | undefined, tipoId: string | null | undefined) => {
     if (!nit) return null;
     const t = catalogoTerceros.find((x) => x.nit === nit && x.codSede === sede) ?? catalogoTerceros.find((x) => x.nit === nit);
-    return t ? tercero(t) : { nombre: "(no esta en el catalogo)", nit, tipoId: tipoId ?? "", sede: sede ?? "", ciudad: null, codMunicipio: null, direccion: null };
+    return t
+      ? tercero(t)
+      : { nombre: "(no esta en el catalogo)", nit, tipoId: tipoId ?? "", sede: sede ?? "", ciudad: null, codMunicipio: null, direccion: null };
   };
   const remesas = [];
   for (const r of filas) {
@@ -2711,14 +2605,18 @@ despachoRouter.get("/:id/detalle", async (req, res) => {
     tipoManifiesto: principal?.tipoManifiesto ?? null,
     origen: principal?.municipioOrigen ?? viaje.origenRndc ?? null,
     destino: remesas.length
-      ? (await plantillas.findById(filas[filas.length - 1].plantillaId))?.municipioDestino ?? viaje.destinoRndc ?? null
-      : viaje.destinoRndc ?? null,
+      ? ((await plantillas.findById(filas[filas.length - 1].plantillaId))?.municipioDestino ?? viaje.destinoRndc ?? null)
+      : (viaje.destinoRndc ?? null),
     // En los viajes del portal el vehiculo, el remolque o el conductor pueden no
     // estar en el catalogo: se muestra lo que reporto el RNDC.
     vehiculo: vehiculo
       ? {
-          placa: vehiculo.placa, marca: vehiculo.marca, configuracion: vehiculo.configuracion,
-          titular: vehiculo.nombreTenedor, titularId: vehiculo.numIdTenedor, titularTipoId: vehiculo.codTipoIdTenedor,
+          placa: vehiculo.placa,
+          marca: vehiculo.marca,
+          configuracion: vehiculo.configuracion,
+          titular: vehiculo.nombreTenedor,
+          titularId: vehiculo.numIdTenedor,
+          titularTipoId: vehiculo.codTipoIdTenedor,
         }
       : viaje.placaRndc
         ? { placa: viaje.placaRndc, marca: null, configuracion: null, titular: null, titularId: null, titularTipoId: null }
@@ -2768,8 +2666,8 @@ despachoRouter.get("/historial", async (_req, res) => {
     lista.map((v) =>
       v.estado === "CONFIRMADO" && v.fechaHoraDescargue && new Date(v.fechaHoraDescargue) <= ahora
         ? { ...v, plazoCumplido: plazoCumplido(new Date(v.fechaHoraDescargue), ahora) }
-        : v
-    )
+        : v,
+    ),
   );
 });
 

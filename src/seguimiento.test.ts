@@ -12,6 +12,7 @@ import {
   alertasCarteraPorEmpresa,
   alertaFactura,
   alertaFacturacion,
+  alertasAnticiposPorEmpresa,
   alertaPapeles,
   alertasDe,
   diasEntre,
@@ -437,5 +438,38 @@ describe("notas credito en la cartera", () => {
     const con = agruparCartera(filas, new Map(), new Map(), HOY, { anuladas: new Set(["FV100|CARTONES AMERICA"]) });
     expect(sin.map((x) => x.facturaNumero).sort()).toEqual(["FV100", "FV101"]);
     expect(con.map((x) => x.facturaNumero)).toEqual(["FV101"]);
+  });
+});
+
+describe("alertas: facturar y anticipos (24/11/2026)", () => {
+  const lista = { estadoPapeles: "RADICADO" as const, fechaRadicado: "2026-10-01" };
+
+  test("facturar: el quitado del envio no avisa; el enviado a la contadora avisa en amarillo que falta la factura", () => {
+    expect(alertaFacturacion(fila(lista), HOY)?.nivel).toBe("urgente");
+    expect(alertaFacturacion(fila({ ...lista, sinFacturarEn: "2026-10-05T10:00:00.000Z" }), HOY)).toBeNull();
+    const enviado = alertaFacturacion(fila({ ...lista, enviadoFacturarEn: "2026-10-04T10:00:00.000Z" }), HOY);
+    expect(enviado?.nivel).toBe("atencion");
+    expect(enviado?.motivos[0]).toContain("Enviado a facturar el 04/10/2026");
+  });
+
+  test("anticipos: una alerta por cliente con sus viajes; urgente si alguno lleva 15 dias o mas", () => {
+    const base = { empresa: "CORPORACION ABURRA LIMPIO" };
+    const alertas = alertasAnticiposPorEmpresa(
+      [
+        fila({ ...base, id: 1, fecha: "2026-10-08" }),
+        fila({ ...base, id: 2, fecha: "2026-10-09", anticipoEmpresa: 1_500_000 }),
+        fila({ id: 3, empresa: "ECOAMBIENTAL RECICLAJE S.A.S.", fecha: "2026-09-20", anticipoEmpresa: 2_000_000 }),
+      ],
+      HOY,
+    );
+    expect(alertas).toHaveLength(2);
+    const aburra = alertas.find((a) => a.titulo.startsWith("CORPORACION ABURRA LIMPIO"))!;
+    expect(aburra.nivel).toBe("atencion");
+    expect(aburra.titulo).toMatch(/2 viajes/);
+    expect(aburra.motivos.join(" ")).toContain("1 viaje(s) sin registrar");
+    expect(aburra.cuadroId).toBe(1);
+    const zorro = alertas.find((a) => a.titulo.startsWith("ECOAMBIENTAL"))!;
+    expect(zorro.nivel).toBe("urgente");
+    expect(zorro.titulo).toMatch(/se abona a la bomba/);
   });
 });

@@ -107,6 +107,17 @@ export function alertaPapeles(f: FilaCuadro, hoy: string, desde = ""): AlertaFil
  */
 export function alertaFacturacion(f: FilaCuadro, hoy: string, desde = ""): AlertaFila | null {
   if (f.anulado || f.facturaFechaPago || f.fecha < desde) return null;
+  // Quitado del envio a facturacion (no se factura: p. ej. el manifiesto se anulo).
+  if (f.sinFacturarEn) return null;
+  // Ya se le envio a la contadora: falta que llegue la factura (numero y fecha), no que alguien la haga.
+  if (sinFactura(f) && f.enviadoFacturarEn) {
+    const enviado = f.enviadoFacturarEn.slice(0, 10).split("-").reverse().join("/");
+    return {
+      nivel: "atencion",
+      motivos: [`Enviado a facturar el ${enviado}: falta el numero y la fecha de la factura.`],
+      comunicarse: false,
+    };
+  }
   if (sinFactura(f) && papelesListos(f.estadoPapeles)) {
     const dias = f.fechaRadicado ? Math.max(0, diasEntre(f.fechaRadicado, hoy)) : null;
     const motivo = dias === null || dias === 0 ? "Listo para facturar: falta la factura." : `Listo para facturar hace ${dias} dias y sin factura.`;
@@ -519,6 +530,59 @@ export function alertaAnticipoEmpresa(f: FilaCuadro, desde = ""): AlertaFila | n
   return null;
 }
 
+/** Dias desde el viaje en que el anticipo de la empresa sin registrar o sin cobrar pasa a urgente. */
+export const DIAS_ANTICIPO_URGENTE = 15;
+
+/**
+ * Alertas del anticipo de la empresa, una por cliente (y destino: el del
+ * Zorro se abona a la bomba; el de los demas nos lo pagan): cuantos viajes
+ * faltan por registrar, cuantos por cobrar y cuanto suman, con los viajes
+ * (los mas viejos primero). Urgente si algun viaje lleva DIAS_ANTICIPO_URGENTE
+ * dias o mas. Abre el viaje mas viejo.
+ */
+export function alertasAnticiposPorEmpresa(filas: FilaCuadro[], hoy: string, desde = ""): AlertaSeguimiento[] {
+  const grupos = new Map<string, FilaCuadro[]>();
+  for (const f of filas) {
+    if (!alertaAnticipoEmpresa(f, desde)) continue;
+    const llave = `${f.empresa}|${f.anticipoEmpresaABomba ? "BOMBA" : "NOSOTROS"}`;
+    grupos.set(llave, [...(grupos.get(llave) ?? []), f]);
+  }
+  const limite = sumarDias(hoy, -DIAS_ANTICIPO_URGENTE);
+  return [...grupos.values()]
+    .map((lista) => {
+      const ordenados = [...lista].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id);
+      const primero = ordenados[0];
+      const aBomba = primero.anticipoEmpresaABomba;
+      const faltan = ordenados.filter((f) => f.estadoAnticipoEmpresa === "FALTA_REGISTRAR");
+      const porCobrar = ordenados.filter((f) => f.estadoAnticipoEmpresa === "POR_COBRAR");
+      const totalPorCobrar = porCobrar.reduce((s, f) => s + (f.anticipoEmpresa ?? 0), 0);
+      const motivos: string[] = [];
+      if (faltan.length) motivos.push(`${faltan.length} viaje(s) sin registrar el anticipo${aBomba ? " que el Zorro abona a la bomba" : ""}.`);
+      if (porCobrar.length)
+        motivos.push(
+          aBomba
+            ? `${porCobrar.length} viaje(s) por abonar a la bomba: ${pesosTexto(totalPorCobrar)}.`
+            : `${porCobrar.length} viaje(s) por cobrar: ${pesosTexto(totalPorCobrar)}.`,
+        );
+      const viajes = ordenados.map(
+        (f) =>
+          `${fechaTexto(f.fecha)} · ${f.placa}${f.manifiesto ? ` · manifiesto ${f.manifiesto}` : f.remision ? ` · remision ${f.remision}` : ""}: ${
+            f.estadoAnticipoEmpresa === "FALTA_REGISTRAR" ? "sin registrar" : `${pesosTexto(f.anticipoEmpresa ?? 0)} por cobrar`
+          }`,
+      );
+      motivos.push(...viajes.slice(0, 8));
+      if (viajes.length > 8) motivos.push(`... y ${viajes.length - 8} viaje(s) mas.`);
+      return {
+        tipo: "ANTICIPO_EMPRESA" as const,
+        nivel: (primero.fecha <= limite ? "urgente" : "atencion") as NivelAlerta,
+        titulo: `${primero.empresa} · ${ordenados.length} viaje${ordenados.length === 1 ? "" : "s"}${totalPorCobrar ? ` · ${pesosTexto(totalPorCobrar)}` : ""}${aBomba ? " · se abona a la bomba" : ""}`,
+        motivos,
+        cuadroId: primero.id,
+      };
+    })
+    .sort((a, b) => (a.nivel === b.nivel ? b.motivos.length - a.motivos.length : a.nivel === "urgente" ? -1 : 1));
+}
+
 /** Totales del anticipo de la empresa por cliente (para cobrar). */
 export interface ResumenAnticipoEmpresa {
   empresa: string;
@@ -588,6 +652,7 @@ export function alertaContingencia(v: ViajeContingencia): AlertaSeguimiento {
       v.radicado
         ? `Ya esta radicado en el RNDC (${v.radicado}): imprime el manifiesto oficial apenas el RNDC lo entregue.`
         : "Aun no esta radicado en el RNDC: reintenta expedirlo (Corregir y reintentar) hasta que el RNDC lo acepte, y luego imprime el oficial.",
+      'Si ya se imprimio el oficial (por ejemplo, desde el portal del RNDC), marcalo con "Ya se imprimio el oficial".',
     ],
     viajeId: v.id,
   };
@@ -647,9 +712,9 @@ export function alertasDe(filas: FilaCuadro[], facturas: FacturaCartera[], hoy: 
     if (p) lista.push({ tipo: "PAPELES", nivel: p.nivel, titulo: titulo(f), motivos: p.motivos, cuadroId: f.id });
     const fa = alertaFacturacion(f, hoy, desde);
     if (fa) lista.push({ tipo: "FACTURACION", nivel: fa.nivel, titulo: titulo(f), motivos: fa.motivos, cuadroId: f.id });
-    const ae = alertaAnticipoEmpresa(f, desde);
-    if (ae) lista.push({ tipo: "ANTICIPO_EMPRESA", nivel: ae.nivel, titulo: titulo(f), motivos: ae.motivos, cuadroId: f.id });
   }
+  // Anticipos de las empresas: una alerta por cliente con todos sus viajes.
+  lista.push(...alertasAnticiposPorEmpresa(filas, hoy, desde));
   // Cartera: una alerta por empresa con todas sus facturas vencidas.
   lista.push(...alertasCarteraPorEmpresa(facturas));
   const orden: Record<TipoAlerta, number> = { CONTINGENCIA: -1, PAPELES: 0, FACTURACION: 1, CARTERA: 2, ANTICIPO_EMPRESA: 3, BOMBA: 4 };

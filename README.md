@@ -488,6 +488,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/despacho/:id/cumplir/previa` | Datos para el formulario del cumplido del manifiesto: flete, anticipo, vacios, retencion y FOPAT calculados, tiempos logisticos con el piso SICETAC del cumplido, y los motivos permitidos de adicional y descuento. |
 | `POST` | `/api/despacho/:id/cumplir` | Cumple el manifiesto en el RNDC (proceso 6). |
 | `GET` | `/api/despacho/:id/manifiesto.pdf` | PDF del manifiesto, tal como lo genera el Ministerio. |
+| `POST` | `/api/despacho/:id/contingencia/resuelta` | Ya se imprimio el manifiesto oficial por fuera de SOFI (por ejemplo, desde el portal del RNDC): quita la contingencia pendiente y su alerta. |
 | `GET` | `/api/despacho/:id/manifiesto-contingencia` | Manifiesto de contingencia (HTML para imprimir): cuando el RNDC no deja expedir el manifiesto o no entrega su PDF. Lleva los mismos datos que se envian al RNDC, sin QR y con el aviso de contingencia. El viaje queda marcado y con alerta hasta que se imprime el oficial. ?motivo= el error que se vio. |
 | `GET` | `/api/despacho/remesas/:remesaId/imprimir` | Impresion de una remesa. |
 | `GET` | `/api/despacho/:id/remesas` | Remesas de un viaje, con su consecutivo y radicado. |
@@ -544,7 +545,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1112 funciones, componentes, métodos y rutas en 73 archivos._
+_1114 funciones, componentes, métodos y rutas en 73 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -598,7 +599,7 @@ _1112 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (19)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
-- [`src/routes/despacho.ts`](#srcroutesdespachots) (49)
+- [`src/routes/despacho.ts`](#srcroutesdespachots) (50)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (28)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (23)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
@@ -614,7 +615,7 @@ _1112 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/scripts/respaldo.ts`](#srcscriptsrespaldots) (3)
 - [`src/scripts/verificar-rndc.ts`](#srcscriptsverificarrndcts) (5)
 - [`src/seed.ts`](#srcseedts) (1)
-- [`src/seguimiento.ts`](#srcseguimientots) (43)
+- [`src/seguimiento.ts`](#srcseguimientots) (44)
 - [`src/tarifasFlete.ts`](#srctarifasfletets) (16)
 - [`src/terceros.ts`](#srctercerosts) (13)
 - [`src/utilidades.ts`](#srcutilidadests) (34)
@@ -5087,6 +5088,11 @@ _1112 funciones, componentes, métodos y rutas en 73 archivos._
   Se pide al RNDC en vez de componerlo aqui: el formato es el oficial y trae el
   codigo QR de seguridad que las autoridades verifican en via.
 
+- **`POST /:id/contingencia/resuelta`** · _ruta HTTP_
+  POST /api/despacho/:id/contingencia/resuelta: ya se imprimio el manifiesto
+  oficial por fuera de SOFI (por ejemplo, desde el portal del RNDC): quita la
+  contingencia pendiente y su alerta.
+
 - **`GET /:id/manifiesto-contingencia`** · _ruta HTTP_
   Manifiesto de contingencia (HTML para imprimir): cuando el RNDC no deja
   expedir el manifiesto o no entrega su PDF. Lleva los mismos datos que se
@@ -5900,6 +5906,13 @@ _1112 funciones, componentes, métodos y rutas en 73 archivos._
   viajes sin manifiesto): avisa todos los dias hasta que se escriben el valor
   y la fecha en que se pago. El del Zorro lo abona a la bomba; el de los demas
   nos lo pagan a nosotros. Sin alerta antes de `desde`.
+
+- **`alertasAnticiposPorEmpresa(filas, hoy, desde)`** · _función_
+  Alertas del anticipo de la empresa, una por cliente (y destino: el del
+  Zorro se abona a la bomba; el de los demas nos lo pagan): cuantos viajes
+  faltan por registrar, cuantos por cobrar y cuanto suman, con los viajes
+  (los mas viejos primero). Urgente si algun viaje lleva DIAS_ANTICIPO_URGENTE
+  dias o mas. Abre el viaje mas viejo.
 
 - **`resumirAnticiposEmpresa(filas)`** · _función_
   Resumen por cliente de los viajes con anticipo de la empresa (mas por cobrar primero).

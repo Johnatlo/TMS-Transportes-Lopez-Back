@@ -36,7 +36,6 @@ export const papelesListos = (e: string) => e === "RADICADO" || e === "RADICADOS
 
 export type Flota = "LOPEZ" | "MYC" | "TERCERO";
 
-
 /**
  * Dias dentro de los cuales un manifiesto nuevo de la misma placa y empresa se
  * toma como el reemplazo de uno anulado (el viaje se re-expide casi siempre el
@@ -55,10 +54,23 @@ export type FilaHeredable = Record<string, unknown> & {
 
 /** Campos que se copian del anulado si en la fila nueva estan vacios. */
 const CAMPOS_HEREDABLES = [
-  "remision", "remisionUrl", "facturaUrl", "fechaRadicado", "facturaNumero", "facturaFecha", "facturaVence",
-  "tarifaFleteId", "pesoFacturadoKg", "notaFactura", "enviadoFacturarEn",
-  "facturaFechaPago", "fechaPagoSaldo", "revisadoContabilidadPorId", "revisadoContabilidadEn",
-  "revisadoGerenciaPorId", "revisadoGerenciaEn",
+  "remision",
+  "remisionUrl",
+  "facturaUrl",
+  "fechaRadicado",
+  "facturaNumero",
+  "facturaFecha",
+  "facturaVence",
+  "tarifaFleteId",
+  "pesoFacturadoKg",
+  "notaFactura",
+  "enviadoFacturarEn",
+  "facturaFechaPago",
+  "fechaPagoSaldo",
+  "revisadoContabilidadPorId",
+  "revisadoContabilidadEn",
+  "revisadoGerenciaPorId",
+  "revisadoGerenciaEn",
 ] as const;
 
 /**
@@ -168,7 +180,7 @@ export type EstadoAnticipoEmpresa = "NO_APLICA" | "FALTA_REGISTRAR" | "POR_COBRA
  * manifiesto, los que dicen URBANO en la empresa o la ruta.
  */
 export function requiereAnticipoEmpresa(
-  f: Pick<FilaCuadro, "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica" | "tarifaFlete">
+  f: Pick<FilaCuadro, "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica" | "tarifaFlete">,
 ): boolean {
   if (f.anulado || f.anticipoEmpresaNoAplica) return false;
   if (/URBANO/i.test(f.tarifaFlete ?? "")) return false;
@@ -182,7 +194,7 @@ export function estadoAnticipoEmpresa(
   f: Pick<
     FilaCuadro,
     "anulado" | "empresa" | "viajeId" | "ruta" | "rutaManual" | "anticipoEmpresaNoAplica" | "anticipoEmpresa" | "anticipoEmpresaFechaPago" | "tarifaFlete"
-  >
+  >,
 ): EstadoAnticipoEmpresa {
   if (f.anulado) return "NO_APLICA";
   // Si ya se escribio un valor, cuenta aunque el cliente no este en la lista.
@@ -291,6 +303,8 @@ export interface FilaCuadro {
   notaFactura: string | null;
   /** Cuando se envio en el cuadro de facturacion. */
   enviadoFacturarEn: string | null;
+  /** Quitado del envio a facturacion (no se factura, p. ej. manifiesto anulado): sin alerta de facturar. */
+  sinFacturarEn?: string | null;
   fechaDescargue: string | null;
   estadoPapeles: EstadoPapeles;
   flujoCorame: boolean;
@@ -391,16 +405,14 @@ export const sumarDias = (fecha: string, dias: number) => {
  *   "Facturar varios". Con solo uno de los dos, o solo marcado, queda como
  *   "facturado sin datos".
  */
-export function estadoDe(
-  f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa" | "anticipoEmpresaABomba" | "urbano">
-): { estado: EstadoCuadro; estadoFactura: EstadoFactura; todoPagado: boolean } {
+export function estadoDe(f: Omit<FilaCuadro, "estado" | "estadoFactura" | "todoPagado" | "estadoAnticipoEmpresa" | "anticipoEmpresaABomba" | "urbano">): {
+  estado: EstadoCuadro;
+  estadoFactura: EstadoFactura;
+  todoPagado: boolean;
+} {
   const todoPagado = !f.anulado && !!f.facturaFechaPago;
   const estadoFactura: EstadoFactura =
-    f.facturaNumero && f.facturaFecha
-      ? "FACTURADO"
-      : f.facturado || f.facturaNumero || f.facturaFecha
-        ? "FACTURADO_SIN_DATOS"
-        : "SIN_FACTURAR";
+    f.facturaNumero && f.facturaFecha ? "FACTURADO" : f.facturado || f.facturaNumero || f.facturaFecha ? "FACTURADO_SIN_DATOS" : "SIN_FACTURAR";
   if (f.anulado) return { estado: "ANULADO", estadoFactura, todoPagado: false };
   if (f.facturaFechaPago) return { estado: "PAGADO", estadoFactura, todoPagado };
   if (f.estadoPapeles === "RADICADOS") return { estado: "RADICADOS", estadoFactura, todoPagado };
@@ -468,11 +480,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     configuracion: r.configuracion ?? null,
     dueno: r.dueno ?? null,
     conductor: r.conductor,
-    ruta: r.viajeId
-      ? r.rutaOrigen || r.rutaDestino
-        ? `${r.rutaOrigen ?? "?"} → ${r.rutaDestino ?? "?"}`
-        : null
-      : r.rutaManual ?? null,
+    ruta: r.viajeId ? (r.rutaOrigen || r.rutaDestino ? `${r.rutaOrigen ?? "?"} → ${r.rutaDestino ?? "?"}` : null) : (r.rutaManual ?? null),
     rutaManual: r.rutaManual ?? null,
     concepto: r.concepto ?? null,
     reconocidoDe: r.reconocidoDe ?? null,
@@ -506,6 +514,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     tarifasPosibles: [],
     notaFactura: r.notaFactura ?? null,
     enviadoFacturarEn: r.enviadoFacturarEn ? new Date(r.enviadoFacturarEn).toISOString() : null,
+    sinFacturarEn: r.sinFacturarEn ? new Date(r.sinFacturarEn).toISOString() : null,
     fechaDescargue: dia(r.fechaDescargue),
     estadoPapeles: r.estadoPapeles as EstadoPapeles,
     flujoCorame: !!r.flujoCorame,
@@ -669,7 +678,7 @@ function validar(datos: Record<string, unknown>) {
   if ("tarifaKilo" in datos && Number(datos.tarifaKilo) > TARIFA_KILO_MAXIMA) {
     throw new ErrorCuadro(
       `La tarifa es por KILO: ${Number(datos.tarifaKilo).toLocaleString("es-CO")} $/kg es demasiado (el maximo es ${TARIFA_KILO_MAXIMA.toLocaleString("es-CO")}). ` +
-        `Si es la tarifa por tonelada, dividela por 1.000 (por ejemplo 168.000 por tonelada = 168 por kilo).`
+        `Si es la tarifa por tonelada, dividela por 1.000 (por ejemplo 168.000 por tonelada = 168 por kilo).`,
     );
   }
   // Booleano real: "false" como texto se guardaria como 1.
@@ -684,8 +693,14 @@ function validar(datos: Record<string, unknown>) {
     if (!/^https?:\/\//i.test(link)) throw new ErrorCuadro("El comprobante debe ser un enlace (https://...).");
     datos.anticipoTransferenciaLink = link.slice(0, 500);
   }
-  if ("placa" in datos) datos.placa = String(datos.placa ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if ("empresa" in datos) datos.empresa = String(datos.empresa ?? "").trim().toUpperCase();
+  if ("placa" in datos)
+    datos.placa = String(datos.placa ?? "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  if ("empresa" in datos)
+    datos.empresa = String(datos.empresa ?? "")
+      .trim()
+      .toUpperCase();
 }
 
 /**
@@ -743,12 +758,12 @@ export const cuadro = {
          LEFT JOIN (SELECT nit, MIN(nombre) AS nombre FROM terceros GROUP BY nit) prop
                 ON p.id IS NULL AND prop.nit = vr.propietarioNit
         WHERE v.estado IN ('CONFIRMADO', 'CUMPLIDO') AND vr.estado <> 'ANULADA'
-          AND COALESCE(ve.placa, v.placaRndc) IS NOT NULL`
+          AND COALESCE(ve.placa, v.placaRndc) IS NOT NULL`,
     );
     await pool.query(
       `UPDATE cuadro_viajes cv JOIN viajes v ON v.id = cv.viajeId
           SET cv.anulado = (v.estado = 'ANULADO')
-        WHERE cv.anulado <> (v.estado = 'ANULADO')`
+        WHERE cv.anulado <> (v.estado = 'ANULADO')`,
     );
     await this.reemplazarAnulados();
     await this.generarReconocidosCorame();
@@ -782,7 +797,7 @@ export const cuadro = {
                   LEFT JOIN terceros r ON r.id = p.remitenteId
                  WHERE vr.estado <> 'ANULADA' AND COALESCE(r.nit, vr.remitenteNit) LIKE ?)
         GROUP BY v.id`,
-      [`${NIT_CARTONES_AMERICA}%`]
+      [`${NIT_CARTONES_AMERICA}%`],
     );
     // Si cambio el nombre de un concepto, los reconocidos ya generados toman el
     // nuevo; tambien su nota de factura, si aun no se facturo.
@@ -792,12 +807,12 @@ export const cuadro = {
             SET notaFactura = IF(facturaNumero IS NULL AND concepto IS NOT NULL, REPLACE(notaFactura, concepto, ?), notaFactura),
                 concepto = ?
           WHERE reconocidoTipo = ? AND NOT (concepto <=> ?)`,
-        [concepto, concepto, tipo, concepto]
+        [concepto, concepto, tipo, concepto],
       );
     }
     const [existentes] = await pool.query<RowDataPacket[]>(
       `SELECT id, reconocidoDeViajeId, reconocidoTipo, pesoKg, anulado, facturado, facturaNumero
-         FROM cuadro_viajes WHERE reconocidoDeViajeId IS NOT NULL`
+         FROM cuadro_viajes WHERE reconocidoDeViajeId IS NOT NULL`,
     );
     const llave = (viajeId: number, tipo: string) => `${viajeId}|${tipo}`;
     const porLlave = new Map(existentes.map((e) => [llave(e.reconocidoDeViajeId, e.reconocidoTipo), e]));
@@ -814,16 +829,18 @@ export const cuadro = {
                (fecha, vehiculoId, placa, conductor, empresa, pesoKg, fechaDescargue, flujoCorame,
                 anticipoEmpresaNoAplica, concepto, reconocidoDeViajeId, reconocidoTipo)
              VALUES (?, ?, ?, ?, 'CARTONES AMERICA', ?, ?, 1, 1, ?, ?, ?)`,
-            [dia(v.fecha), v.vehiculoId, v.placa, v.conductor, r.pesoKg, dia(v.fechaDescargue), CONCEPTO_RECONOCIDO[r.tipo], v.id, r.tipo]
+            [dia(v.fecha), v.vehiculoId, v.placa, v.conductor, r.pesoKg, dia(v.fechaDescargue), CONCEPTO_RECONOCIDO[r.tipo], v.id, r.tipo],
           );
           continue;
         }
         const sinFacturar = !Number(e.facturado) && !e.facturaNumero;
         if (Number(e.anulado) || (sinFacturar && Number(e.pesoKg) !== r.pesoKg)) {
-          await pool.query(
-            `UPDATE cuadro_viajes SET anulado = 0, pesoKg = IF(?, ?, pesoKg), fechaDescargue = COALESCE(fechaDescargue, ?) WHERE id = ?`,
-            [sinFacturar ? 1 : 0, r.pesoKg, dia(v.fechaDescargue), e.id]
-          );
+          await pool.query(`UPDATE cuadro_viajes SET anulado = 0, pesoKg = IF(?, ?, pesoKg), fechaDescargue = COALESCE(fechaDescargue, ?) WHERE id = ?`, [
+            sinFacturar ? 1 : 0,
+            r.pesoKg,
+            dia(v.fechaDescargue),
+            e.id,
+          ]);
         }
       }
     }
@@ -852,7 +869,7 @@ export const cuadro = {
          FROM cuadro_viajes cv
          JOIN viajes v ON v.id = cv.viajeId
          LEFT JOIN viaje_remesas vr ON vr.id = cv.viajeRemesaId
-        WHERE cv.anulado = 1`
+        WHERE cv.anulado = 1`,
     );
     let reemplazadas = 0;
     for (const anulada of anuladas) {
@@ -866,7 +883,7 @@ export const cuadro = {
             AND v.fechaCreacion > ? AND v.fechaCreacion <= DATE_ADD(?, INTERVAL ? DAY)
           ORDER BY (vr.orden <=> ?) DESC, v.fechaCreacion, cv.id
           LIMIT 1`,
-        [anulada.placa, anulada.empresa, anulada.creadoViaje, anulada.creadoViaje, DIAS_REEXPEDICION, anulada.ordenRemesa]
+        [anulada.placa, anulada.empresa, anulada.creadoViaje, anulada.creadoViaje, DIAS_REEXPEDICION, anulada.ordenRemesa],
       );
       const nueva = candidatas[0];
       if (!nueva) continue;
@@ -877,10 +894,10 @@ export const cuadro = {
         const cambios = datosAHeredar(anulada, nueva);
         const campos = Object.keys(cambios);
         if (campos.length) {
-          await conexion.query(
-            `UPDATE cuadro_viajes SET ${campos.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`,
-            [...campos.map((c) => cambios[c]), nueva.id]
-          );
+          await conexion.query(`UPDATE cuadro_viajes SET ${campos.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`, [
+            ...campos.map((c) => cambios[c]),
+            nueva.id,
+          ]);
         }
         await conexion.query("UPDATE cuadro_anticipos SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
         await conexion.query("UPDATE cuadro_notas SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
@@ -995,7 +1012,7 @@ export const cuadro = {
    */
   async deducirFletes(filas: FilaCuadro[]): Promise<number> {
     const pendientes = filas.filter(
-      (f) => !f.anulado && f.tarifaKilo === null && f.valorFijo === null && f.tarifaFleteId === null && !f.fleteManual && !f.enviadoFacturarEn
+      (f) => !f.anulado && f.tarifaKilo === null && f.valorFijo === null && f.tarifaFleteId === null && !f.fleteManual && !f.enviadoFacturarEn,
     );
     let guardados = 0;
     for (const f of pendientes) {
@@ -1011,7 +1028,7 @@ export const cuadro = {
       const [res] = await pool.query<ResultSetHeader>(
         `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?
           WHERE id = ? AND tarifaFleteId IS NULL AND tarifaKilo IS NULL AND valorFijo IS NULL AND fleteManual = 0 AND anulado = 0`,
-        [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, f.id]
+        [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, f.id],
       );
       guardados += res.affectedRows;
     }
@@ -1033,7 +1050,7 @@ export const cuadro = {
     await pool.query(
       `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?,
               fleteManual = 1 WHERE id = ?`,
-      [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, id]
+      [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, id],
     );
   },
 
@@ -1049,7 +1066,7 @@ export const cuadro = {
       `SELECT n.id, n.texto, n.creadaEn, u.nombre AS autor
          FROM cuadro_notas n LEFT JOIN usuarios u ON u.id = n.usuarioId
         WHERE n.cuadroViajeId = ? ORDER BY n.id DESC`,
-      [id]
+      [id],
     );
     const fila = mapear(rows[0]);
     // Sin flete: las tarifas de la matriz que podrian ser (para elegir en la ventana del viaje).
@@ -1071,7 +1088,7 @@ export const cuadro = {
       `SELECT ve.id, ch.nombre AS conductorHabitual FROM vehiculos ve
          LEFT JOIN conductores ch ON ch.cedula = ve.cedulaConductorHabitual
         WHERE ve.placa = ?`,
-      [datos.placa]
+      [datos.placa],
     );
     // Sin conductor escrito: el habitual del vehiculo en la flota.
     if (!String(datos.conductor ?? "").trim() && ve[0]?.conductorHabitual) datos.conductor = ve[0].conductorHabitual;
@@ -1085,7 +1102,7 @@ export const cuadro = {
     }
     const [res] = await pool.query<ResultSetHeader>(
       `INSERT INTO cuadro_viajes (${columnas.join(", ")}) VALUES (${columnas.map(() => "?").join(", ")})`,
-      valores
+      valores,
     );
     return res.insertId;
   },
@@ -1122,10 +1139,7 @@ export const cuadro = {
       sets.push("fleteManual = 1", "tarifaFleteId = NULL");
     }
     if (sets.length === 0) return false;
-    const [res] = await pool.query<ResultSetHeader>(`UPDATE cuadro_viajes SET ${sets.join(", ")} WHERE id = ?`, [
-      ...valores,
-      id,
-    ]);
+    const [res] = await pool.query<ResultSetHeader>(`UPDATE cuadro_viajes SET ${sets.join(", ")} WHERE id = ?`, [...valores, id]);
     return res.affectedRows > 0;
   },
 
@@ -1141,17 +1155,13 @@ export const cuadro = {
   /** Revisado por contabilidad, por la gerente o en Rentabilidad (o se quita la marca). */
   async revisar(id: number, quien: "CONTABILIDAD" | "GERENCIA" | "RENTABILIDAD", usuarioId: number | null, revisado: boolean) {
     const col = quien === "CONTABILIDAD" ? "revisadoContabilidad" : quien === "GERENCIA" ? "revisadoGerencia" : "rentRevisado";
-    await pool.query(`UPDATE cuadro_viajes SET ${col}PorId = ?, ${col}En = ? WHERE id = ?`, [
-      revisado ? usuarioId : null,
-      revisado ? new Date() : null,
-      id,
-    ]);
+    await pool.query(`UPDATE cuadro_viajes SET ${col}PorId = ?, ${col}En = ? WHERE id = ?`, [revisado ? usuarioId : null, revisado ? new Date() : null, id]);
   },
 
   /** Una factura que cubre varios viajes (los urbanos se facturan juntos). */
   async facturar(
     ids: number[],
-    datos: { facturaNumero?: string | null; facturaFecha?: string | null; facturaVence?: string | null; facturaUrl?: string | null }
+    datos: { facturaNumero?: string | null; facturaFecha?: string | null; facturaVence?: string | null; facturaUrl?: string | null },
   ) {
     if (ids.length === 0) throw new ErrorCuadro("Selecciona al menos un viaje.");
     validar({ facturaUrl: datos.facturaUrl });
@@ -1164,7 +1174,7 @@ export const cuadro = {
               facturaNumero = COALESCE(?, facturaNumero), facturaFecha = COALESCE(?, facturaFecha),
               facturaVence = COALESCE(?, facturaVence), facturaUrl = COALESCE(?, facturaUrl)
         WHERE id IN (?)`,
-      [numero, fecha, vence, link, ids]
+      [numero, fecha, vence, link, ids],
     );
     return res.affectedRows;
   },
@@ -1173,11 +1183,7 @@ export const cuadro = {
   async agregarNota(id: number, texto: string, usuarioId: number | null) {
     const limpio = texto.trim();
     if (!limpio) throw new ErrorCuadro("La nota esta vacia.");
-    await pool.query("INSERT INTO cuadro_notas (cuadroViajeId, texto, usuarioId) VALUES (?, ?, ?)", [
-      id,
-      limpio.slice(0, 1000),
-      usuarioId,
-    ]);
+    await pool.query("INSERT INTO cuadro_notas (cuadroViajeId, texto, usuarioId) VALUES (?, ?, ?)", [id, limpio.slice(0, 1000), usuarioId]);
   },
 
   /** Borra una nota de ese viaje. */
@@ -1207,19 +1213,12 @@ export const cuadro = {
       valores.push(valorCampo("nota", "texto", d.nota));
     }
     if (sets.length === 0) return;
-    await pool.query(`UPDATE cuadro_anticipos SET ${sets.join(", ")} WHERE id = ? AND cuadroViajeId = ?`, [
-      ...valores,
-      anticipoId,
-      id,
-    ]);
+    await pool.query(`UPDATE cuadro_anticipos SET ${sets.join(", ")} WHERE id = ? AND cuadroViajeId = ?`, [...valores, anticipoId, id]);
   },
 
   /** Quita un anticipo de ese viaje (y la vuelta pendiente si era la ida; ver anticipos.borrarTramo). */
   async borrarAnticipo(id: number, anticipoId: number) {
-    const [rows] = await pool.query<RowDataPacket[]>("SELECT 1 FROM cuadro_anticipos WHERE id = ? AND cuadroViajeId = ?", [
-      anticipoId,
-      id,
-    ]);
+    const [rows] = await pool.query<RowDataPacket[]>("SELECT 1 FROM cuadro_anticipos WHERE id = ? AND cuadroViajeId = ?", [anticipoId, id]);
     if (rows[0]) await anticipos.borrarTramo(anticipoId);
   },
 };
@@ -1233,9 +1232,14 @@ export const bombas = {
   },
   /** Crea una bomba (nombre y ciudad en mayuscula). Nombre + ciudad no se repiten. */
   async crear(d: Record<string, unknown>) {
-    const nombre = String(d.nombre ?? "").trim().toUpperCase();
+    const nombre = String(d.nombre ?? "")
+      .trim()
+      .toUpperCase();
     if (!nombre) throw new ErrorCuadro("Escribe el nombre de la bomba.");
-    const ciudad = String(d.ciudad ?? "").trim().toUpperCase() || null;
+    const ciudad =
+      String(d.ciudad ?? "")
+        .trim()
+        .toUpperCase() || null;
     try {
       const [res] = await pool.query<ResultSetHeader>("INSERT INTO bombas (nombre, ciudad) VALUES (?, ?)", [nombre, ciudad]);
       return res.insertId;
@@ -1253,11 +1257,19 @@ export const bombas = {
     const valores: unknown[] = [];
     if ("nombre" in d) {
       sets.push("nombre = ?");
-      valores.push(String(d.nombre ?? "").trim().toUpperCase());
+      valores.push(
+        String(d.nombre ?? "")
+          .trim()
+          .toUpperCase(),
+      );
     }
     if ("ciudad" in d) {
       sets.push("ciudad = ?");
-      valores.push(String(d.ciudad ?? "").trim().toUpperCase() || null);
+      valores.push(
+        String(d.ciudad ?? "")
+          .trim()
+          .toUpperCase() || null,
+      );
     }
     if ("activa" in d) {
       sets.push("activa = ?");
