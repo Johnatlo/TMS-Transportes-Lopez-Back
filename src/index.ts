@@ -13,6 +13,8 @@ import fs from "fs";
 import path from "path";
 import { config, describirAmbiente } from "./config";
 import { initSchema } from "./db";
+import { instalarBitacora } from "./bitacora";
+import { controlRouter } from "./routes/control";
 import { catalogoRouter } from "./routes/catalogo";
 import { despachoRouter } from "./routes/despacho";
 import { authRouter } from "./routes/auth";
@@ -41,6 +43,8 @@ import { cuadro, MANTENIMIENTO_CADA_MS } from "./cuadro";
  */
 async function main() {
   await initSchema();
+  // Bitacora de cambios: su tabla y los triggers de las tablas sensibles (ver bitacora.ts).
+  await instalarBitacora();
 
   const app = express();
 
@@ -81,6 +85,7 @@ async function main() {
   app.use("/api/nomina", exigirSesion, exigirArea("GASTOS"), nominaRouter);
   app.use("/api/conductores", exigirSesion, exigirArea("CONDUCTORES"), conductoresRouter);
   app.use("/api/utilidades", exigirSesion, exigirArea("LIQUIDACION"), utilidadesRouter);
+  app.use("/api/control", exigirSesion, exigirArea("CONTROL"), controlRouter);
 
   /**
    * Frontend compilado (despliegue).
@@ -118,9 +123,7 @@ async function main() {
     // uk_consecutivo). Es un caso esperable, no una falla del servidor.
     if (err?.code === "ER_DUP_ENTRY" && /consecutivo/i.test(err?.sqlMessage ?? "")) {
       return res.status(409).json({
-        error:
-          "Ese numero de manifiesto o remesa ya esta usado por otro viaje. Recarga la pantalla " +
-          "para tomar el siguiente numero libre, o escribe otro.",
+        error: "Ese numero de manifiesto o remesa ya esta usado por otro viaje. Recarga la pantalla " + "para tomar el siguiente numero libre, o escribe otro.",
       });
     }
     console.error("Error no controlado:", err);

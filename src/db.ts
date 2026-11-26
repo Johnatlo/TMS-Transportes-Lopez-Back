@@ -1,7 +1,9 @@
 /**
  * Conexion a MySQL y esquema de la base.
  *
- * - `pool`: conexiones compartidas (mysql2, en UTC: timezone "Z").
+ * - `pool`: conexiones compartidas (mysql2, en UTC: timezone "Z"). Antes de
+ *   cada escritura pone quien la hace en @sofi_usuario y @sofi_origen, para la
+ *   bitacora de cambios (ver contexto.ts y bitacora.ts).
  * - `conCandado`: ejecuta una funcion con un candado de MySQL (GET_LOCK), por
  *   ejemplo para que dos despachos no tomen el mismo consecutivo.
  * - `initSchema`: crea las tablas y agrega las columnas que falten al arrancar.
@@ -9,6 +11,7 @@
 import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import "dotenv/config";
+import { variablesBitacora } from "./contexto";
 import { DUENOS, PLACAS_POR_DUENO } from "./duenos";
 import { correosSiempreTotal, EMPRESA_INICIAL, NOMBRES_TOTAL_INICIAL, VISIBLES_PARA_TODOS_INICIAL } from "./roles";
 
@@ -27,6 +30,34 @@ export const pool = mysql.createPool({
   // mysql2 daba corrimientos de horas en los cargues de madrugada.
   timezone: "Z",
 });
+
+/** Una escritura (INSERT, UPDATE, DELETE o REPLACE), aunque empiece con comentarios. */
+const ESCRITURA = /^\s*(?:\/\*[\s\S]*?\*\/\s*|--[^\n]*\n\s*)*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i;
+const SET_BITACORA = "SET @sofi_usuario = ?, @sofi_origen = ?";
+const consultaOriginal = pool.query.bind(pool);
+const conexionOriginal = pool.getConnection.bind(pool);
+/**
+ * Cada escritura va en una conexion a la que antes se le dice quien escribe
+ * (el usuario y la ruta de la peticion, o vacio si no viene de una peticion),
+ * para que los triggers de la bitacora lo guarden. Las lecturas van directo.
+ */
+(pool as unknown as { query: unknown }).query = async (...args: unknown[]) => {
+  const sql = typeof args[0] === "string" ? args[0] : (args[0] as { sql?: string } | undefined)?.sql;
+  if (!sql || !ESCRITURA.test(sql)) return (consultaOriginal as (...a: unknown[]) => unknown)(...args);
+  const conexion = await conexionOriginal();
+  try {
+    await conexion.query(SET_BITACORA, variablesBitacora());
+    return await (conexion.query as (...a: unknown[]) => unknown)(...args);
+  } finally {
+    conexion.release();
+  }
+};
+/** Las conexiones apartadas (transacciones, candados) tambien llevan quien escribe. */
+(pool as unknown as { getConnection: unknown }).getConnection = async () => {
+  const conexion = await conexionOriginal();
+  await conexion.query(SET_BITACORA, variablesBitacora());
+  return conexion;
+};
 
 /**
  * Ejecuta `fn` con un candado de MySQL (GET_LOCK) tomado: si otra peticion
@@ -690,7 +721,7 @@ export async function initSchema(): Promise<void> {
   // origen: MANUAL (en la cartera), EXCEL (de la importacion) o ANTERIOR (el
   // valor unico que habia antes, sin fecha).
   const [conRegistros] = await pool.query(
-    `SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cartera_anticipos_cliente_registros'`
+    `SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cartera_anticipos_cliente_registros'`,
   );
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cartera_anticipos_cliente_registros (
@@ -727,7 +758,7 @@ export async function initSchema(): Promise<void> {
   if ((conRegistros as unknown[]).length === 0) {
     await pool.query(
       `INSERT INTO cartera_anticipos_cliente_registros (facturaNumero, empresa, valor, origen)
-       SELECT facturaNumero, empresa, valor, 'ANTERIOR' FROM cartera_anticipos_cliente WHERE valor > 0`
+       SELECT facturaNumero, empresa, valor, 'ANTERIOR' FROM cartera_anticipos_cliente WHERE valor > 0`,
     );
   }
 
@@ -1223,9 +1254,7 @@ export async function initSchema(): Promise<void> {
   await pool.query("ALTER TABLE plantillas_viaje MODIFY rutaId INT NULL").catch(() => undefined);
   // Un viaje expedido en el portal del RNDC no tiene plantilla, y su vehiculo
   // o conductor pueden no estar en el catalogo.
-  await pool
-    .query("ALTER TABLE viajes MODIFY plantillaId INT NULL, MODIFY vehiculoId INT NULL, MODIFY conductorId INT NULL")
-    .catch(() => undefined);
+  await pool.query("ALTER TABLE viajes MODIFY plantillaId INT NULL, MODIFY vehiculoId INT NULL, MODIFY conductorId INT NULL").catch(() => undefined);
   await pool.query("ALTER TABLE viaje_remesas MODIFY plantillaId INT NULL").catch(() => undefined);
   // Estado de la sincronizacion con el RNDC (una fila).
   await pool.query(`
@@ -1342,9 +1371,7 @@ export async function initSchema(): Promise<void> {
   `);
 
   // ---------- Participaciones y reparto de utilidades (ver src/utilidades.ts) ----------
-  const [habiaParticipaciones] = await pool.query(
-    "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'participaciones'"
-  );
+  const [habiaParticipaciones] = await pool.query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'participaciones'");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS participaciones (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1361,7 +1388,7 @@ export async function initSchema(): Promise<void> {
     await pool.query(
       `INSERT INTO participaciones (vehiculoId, socioId, porcentaje, desde)
        SELECT v.id, s.id, 100, '2000-01-01' FROM vehiculos v JOIN socios s ON s.nombre = UPPER(TRIM(v.dueno))
-        WHERE v.eliminado = 0 AND v.empresa IS NOT NULL`
+        WHERE v.eliminado = 0 AND v.empresa IS NOT NULL`,
     );
   }
   // Pagos hechos a cada socio (o lo que el socio devolvio, en negativo): la cuenta del socio.
@@ -1614,47 +1641,47 @@ export async function initSchema(): Promise<void> {
   // una sola vez lo que se habia escrito antes (ver despues del ciclo).
   const [conVence] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'facturaVence'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'facturaVence'`,
   );
   const venceEsNuevo = (conVence as unknown[]).length === 0;
   const [conManifiesto] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'conductorManifiesto'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND COLUMN_NAME = 'conductorManifiesto'`,
   );
   const conductorManifiestoEsNuevo = (conManifiesto as unknown[]).length === 0;
   const [conDueno] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'dueno'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'dueno'`,
   );
   const duenoEsNuevo = (conDueno as unknown[]).length === 0;
   // Al crear el cruce de los abonos del socio se pasan una sola vez los abonos
   // que ya habia al cuadro de anticipos del Zorro (ver despues del ciclo).
   const [conCruceAbono] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'abonos_socio' AND COLUMN_NAME = 'cruzadoFecha'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'abonos_socio' AND COLUMN_NAME = 'cruzadoFecha'`,
   );
   const cruceAbonoEsNuevo = (conCruceAbono as unknown[]).length === 0;
   // Al crear los roles y la empresa de los vehiculos se llenan una sola vez (ver despues del ciclo).
   const [conRol] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'rol'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'rol'`,
   );
   const rolEsNuevo = (conRol as unknown[]).length === 0;
   const [conEmpresa] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'empresa'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehiculos' AND COLUMN_NAME = 'empresa'`,
   );
   const empresaEsNuevo = (conEmpresa as unknown[]).length === 0;
   // ¿Ya existia el producido a mano de la nomina? Si no, los producidos ya escritos quedan como manuales (abajo).
   const [conProducidoManual] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'nomina_lineas' AND COLUMN_NAME = 'producidoManual'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'nomina_lineas' AND COLUMN_NAME = 'producidoManual'`,
   );
   const producidoManualEsNuevo = (conProducidoManual as unknown[]).length === 0;
   // ¿Ya existia la forma de los gastos? Si no, los que se causaban en varias cuotas quedan como diferidos (abajo).
   const [conForma] = await pool.query(
     `SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gastos' AND COLUMN_NAME = 'forma'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gastos' AND COLUMN_NAME = 'forma'`,
   );
   const formaEsNueva = (conForma as unknown[]).length === 0;
 
@@ -1662,7 +1689,7 @@ export async function initSchema(): Promise<void> {
     const [filas] = await pool.query(
       `SELECT 1 FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
-      [tabla, columna]
+      [tabla, columna],
     );
     if ((filas as unknown[]).length === 0) {
       await pool.query(`ALTER TABLE \`${tabla}\` ADD COLUMN \`${columna}\` ${definicion}`);
@@ -1704,7 +1731,7 @@ export async function initSchema(): Promise<void> {
         SET c.anticipoEmpresa = IF(c.anticipoEmpresa IS NULL OR c.anticipoEmpresa = 0, x.valor, c.anticipoEmpresa),
             c.anticipoEmpresaFechaPago = COALESCE(c.anticipoEmpresaFechaPago, x.fecha),
             c.anticipoEmpresaNoAplica = 0`,
-        [abonos.map((a) => a.id)]
+        [abonos.map((a) => a.id)],
       );
     }
   }
@@ -1715,9 +1742,7 @@ export async function initSchema(): Promise<void> {
   // Fletes conductor: cabe INTEGRO (se le paga completo al conductor, sin %).
   await pool.query("ALTER TABLE fletes_conductor MODIFY tipo VARCHAR(10) NOT NULL DEFAULT 'TON'").catch(() => undefined);
   // Los anticipos de antes eran solo de bomba (combustible): se marcan asi.
-  await pool.query(
-    "UPDATE cuadro_anticipos SET combustible = valor, efectivo = 0 WHERE combustible IS NULL AND efectivo IS NULL"
-  );
+  await pool.query("UPDATE cuadro_anticipos SET combustible = valor, efectivo = 0 WHERE combustible IS NULL AND efectivo IS NULL");
 
   // Correccion unica al crear facturaVence: lo que se lleno en "fecha pago
   // cliente" (facturaFechaPago) era el vencimiento de la factura, no el pago.
@@ -1725,7 +1750,7 @@ export async function initSchema(): Promise<void> {
   if (venceEsNuevo) {
     await pool.query(
       `UPDATE cuadro_viajes SET facturaVence = facturaFechaPago, facturaFechaPago = NULL
-        WHERE facturaFechaPago IS NOT NULL`
+        WHERE facturaFechaPago IS NOT NULL`,
     );
   }
 
@@ -1744,14 +1769,14 @@ export async function initSchema(): Promise<void> {
     await pool.query(
       `UPDATE cuadro_viajes cv JOIN viajes v ON v.id = cv.viajeId
          LEFT JOIN conductores c ON c.id = v.conductorId
-          SET cv.conductorManifiesto = COALESCE(c.nombre, v.conductorRndc)`
+          SET cv.conductorManifiesto = COALESCE(c.nombre, v.conductorRndc)`,
     );
     await pool.query(
       `UPDATE cuadro_viajes cv
          JOIN vehiculos ve ON ve.id = cv.vehiculoId
          JOIN conductores ch ON ch.cedula = ve.cedulaConductorHabitual
           SET cv.conductor = ch.nombre
-        WHERE cv.conductor <=> cv.conductorManifiesto OR cv.conductor IS NULL OR cv.conductor = ''`
+        WHERE cv.conductor <=> cv.conductorManifiesto OR cv.conductor IS NULL OR cv.conductor = ''`,
     );
   }
 
@@ -1760,7 +1785,7 @@ export async function initSchema(): Promise<void> {
   // viejo, en la misma orden: la llave foranea siempre tiene un indice.
   const [valeViejo] = await pool.query(
     `SELECT 1 FROM information_schema.STATISTICS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bomba_relacion_vales' AND INDEX_NAME = 'uq_vale_tramo'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bomba_relacion_vales' AND INDEX_NAME = 'uq_vale_tramo'`,
   );
   if ((valeViejo as unknown[]).length > 0) {
     await pool.query("ALTER TABLE bomba_relacion_vales ADD UNIQUE KEY uq_vale_tramo_tipo (cuadroAnticipoId, tipo), DROP INDEX uq_vale_tramo");
@@ -1769,7 +1794,7 @@ export async function initSchema(): Promise<void> {
   // Un recurrente crea un solo gasto por periodo (aunque dos personas abran el libro al tiempo).
   const [indiceRecurrente] = await pool.query(
     `SELECT 1 FROM information_schema.STATISTICS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gastos' AND INDEX_NAME = 'uk_gasto_recurrente'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gastos' AND INDEX_NAME = 'uk_gasto_recurrente'`,
   );
   if ((indiceRecurrente as unknown[]).length === 0) {
     await pool.query("ALTER TABLE gastos ADD UNIQUE KEY uk_gasto_recurrente (recurrenteId, periodo)");
@@ -1778,7 +1803,7 @@ export async function initSchema(): Promise<void> {
   // Un solo reconocido de Cartones America por manifiesto y tipo.
   const [indiceReconocido] = await pool.query(
     `SELECT 1 FROM information_schema.STATISTICS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND INDEX_NAME = 'uk_reconocido'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cuadro_viajes' AND INDEX_NAME = 'uk_reconocido'`,
   );
   if ((indiceReconocido as unknown[]).length === 0) {
     await pool.query("ALTER TABLE cuadro_viajes ADD UNIQUE KEY uk_reconocido (reconocidoDeViajeId, reconocidoTipo)");
@@ -1790,16 +1815,15 @@ export async function initSchema(): Promise<void> {
   // indice: se avisa en consola y el sistema sigue funcionando sin el.
   const [indice] = await pool.query(
     `SELECT 1 FROM information_schema.STATISTICS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'viajes' AND INDEX_NAME = 'uk_viaje_consecutivo'`
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'viajes' AND INDEX_NAME = 'uk_viaje_consecutivo'`,
   );
   if ((indice as unknown[]).length === 0) {
     await pool
       .query("ALTER TABLE viajes ADD UNIQUE KEY uk_viaje_consecutivo (consecutivoManifiesto)")
       .catch((err) =>
         console.warn(
-          "AVISO: no se pudo crear el indice unico de consecutivos de manifiesto " +
-            `(hay numeros repetidos en la tabla viajes): ${err?.sqlMessage ?? err}`
-        )
+          "AVISO: no se pudo crear el indice unico de consecutivos de manifiesto " + `(hay numeros repetidos en la tabla viajes): ${err?.sqlMessage ?? err}`,
+        ),
       );
   }
 
@@ -1813,27 +1837,26 @@ export async function initSchema(): Promise<void> {
        JOIN terceros tr ON tr.id = p.remitenteId
         SET p.municipioOrigen = tr.codMunicipioRndc
       WHERE p.municipioOrigen IS NULL
-        AND tr.codMunicipioRndc REGEXP '^[0-9]{8}$'`
+        AND tr.codMunicipioRndc REGEXP '^[0-9]{8}$'`,
   );
   await pool.query(
     `UPDATE plantillas_viaje p
        JOIN terceros td ON td.id = p.destinatarioId
         SET p.municipioDestino = td.codMunicipioRndc
       WHERE p.municipioDestino IS NULL
-        AND td.codMunicipioRndc REGEXP '^[0-9]{8}$'`
+        AND td.codMunicipioRndc REGEXP '^[0-9]{8}$'`,
   );
 
   // El descuento por galon era uno solo para todas las bombas; ahora va por
   // bomba y solo Chuzaca lo tiene. Una sola vez: a las bombas de Chuzaca se
   // les pasa el valor que habia (desde siempre).
   const [[migracion]] = await pool.query<RowDataPacket[]>(
-    "SELECT descuentosBombaMigrado AS hecho, descuentoGalonBomba AS valor FROM parametros_empresa WHERE id = 1"
+    "SELECT descuentosBombaMigrado AS hecho, descuentoGalonBomba AS valor FROM parametros_empresa WHERE id = 1",
   );
   if (migracion && !migracion.hecho) {
-    await pool.query(
-      "INSERT INTO descuentos_galon_bomba (bombaId, descuentoGalon) SELECT id, ? FROM bombas WHERE UPPER(nombre) REGEXP 'CHUSACA|CHUZACA'",
-      [Number(migracion.valor ?? 0)]
-    );
+    await pool.query("INSERT INTO descuentos_galon_bomba (bombaId, descuentoGalon) SELECT id, ? FROM bombas WHERE UPPER(nombre) REGEXP 'CHUSACA|CHUZACA'", [
+      Number(migracion.valor ?? 0),
+    ]);
     await pool.query("UPDATE parametros_empresa SET descuentosBombaMigrado = 1 WHERE id = 1");
   }
 
@@ -1913,7 +1936,7 @@ async function unificarCollation(): Promise<void> {
   try {
     const [ref] = await pool.query<RowDataPacket[]>(
       `SELECT TABLE_COLLATION AS collation FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'viajes'`
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'viajes'`,
     );
     const collation: string | undefined = ref[0]?.collation;
     if (!collation || !/^[a-z0-9_]+$/i.test(collation)) return;
@@ -1921,13 +1944,13 @@ async function unificarCollation(): Promise<void> {
     const [distintas] = await pool.query<RowDataPacket[]>(
       `SELECT TABLE_NAME AS tabla FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_COLLATION <> ?`,
-      [collation]
+      [collation],
     );
     // Columnas sueltas con otra collation (agregadas con ALTER en otro momento).
     const [columnas] = await pool.query<RowDataPacket[]>(
       `SELECT DISTINCT TABLE_NAME AS tabla FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE() AND COLLATION_NAME IS NOT NULL AND COLLATION_NAME <> ?`,
-      [collation]
+      [collation],
     );
     const tablas = [...new Set([...distintas, ...columnas].map((t) => String(t.tabla)))];
     for (const tabla of tablas) {

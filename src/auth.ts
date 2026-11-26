@@ -20,6 +20,7 @@ import { RowDataPacket, ResultSetHeader } from "mysql2";
 import { pool } from "./db";
 import { rolDe } from "./roles";
 import type { Rol } from "./roles";
+import { contextoPeticion } from "./contexto";
 
 export const COOKIE_SESION = "tms_sesion";
 const INACTIVIDAD_MS = 12 * 60 * 60 * 1000;
@@ -36,9 +37,7 @@ const PARAMETROS_SCRYPT = { N: 16384, r: 8, p: 1 };
  * partir de la contrasena y la sal, con los parametros de PARAMETROS_SCRYPT.
  */
 function scryptAsync(clave: string, sal: Buffer, largo: number): Promise<Buffer> {
-  return new Promise((ok, falla) =>
-    scrypt(clave, sal, largo, PARAMETROS_SCRYPT, (err, llave) => (err ? falla(err) : ok(llave)))
-  );
+  return new Promise((ok, falla) => scrypt(clave, sal, largo, PARAMETROS_SCRYPT, (err, llave) => (err ? falla(err) : ok(llave))));
 }
 
 /** "scrypt$<sal base64>$<hash base64>" */
@@ -119,7 +118,10 @@ function mapUsuario(r: any): Usuario {
 }
 
 /** Correo sin espacios y en minuscula: asi se guarda y asi se busca. */
-export const normalizarEmail = (e: unknown) => String(e ?? "").trim().toLowerCase();
+export const normalizarEmail = (e: unknown) =>
+  String(e ?? "")
+    .trim()
+    .toLowerCase();
 /** Validacion basica de formato de correo (algo@dominio.ext). */
 export const emailValido = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
@@ -145,10 +147,13 @@ export const usuarios = {
    * debeCambiar=true obliga a cambiarla al primer ingreso (clave temporal).
    */
   async crear(email: string, nombre: string, clave: string, debeCambiar: boolean, rol: Rol = "ADMINISTRATIVO"): Promise<Usuario> {
-    const [res] = await pool.query<ResultSetHeader>(
-      "INSERT INTO usuarios (email, nombre, claveHash, debeCambiarClave, rol) VALUES (?, ?, ?, ?, ?)",
-      [email, nombre, await hashClave(clave), debeCambiar ? 1 : 0, rol]
-    );
+    const [res] = await pool.query<ResultSetHeader>("INSERT INTO usuarios (email, nombre, claveHash, debeCambiarClave, rol) VALUES (?, ?, ?, ?, ?)", [
+      email,
+      nombre,
+      await hashClave(clave),
+      debeCambiar ? 1 : 0,
+      rol,
+    ]);
     return (await this.porId(res.insertId))!;
   },
   /**
@@ -156,11 +161,7 @@ export const usuarios = {
    * cambiarla en el proximo ingreso.
    */
   async cambiarClave(id: number, clave: string, debeCambiar: boolean): Promise<void> {
-    await pool.query("UPDATE usuarios SET claveHash = ?, debeCambiarClave = ? WHERE id = ?", [
-      await hashClave(clave),
-      debeCambiar ? 1 : 0,
-      id,
-    ]);
+    await pool.query("UPDATE usuarios SET claveHash = ?, debeCambiarClave = ? WHERE id = ?", [await hashClave(clave), debeCambiar ? 1 : 0, id]);
   },
   /** Cambia nombre, estado activo y/o rol. Los campos ausentes no se tocan. */
   async actualizar(id: number, datos: { nombre?: string; activo?: boolean; rol?: Rol }): Promise<void> {
@@ -199,10 +200,11 @@ export const sesiones = {
    */
   async crear(usuarioId: number): Promise<string> {
     const token = randomBytes(32).toString("base64url");
-    await pool.query(
-      "INSERT INTO sesiones (tokenHash, usuarioId, expiraEn) VALUES (?, ?, ?)",
-      [hashToken(token), usuarioId, new Date(Date.now() + INACTIVIDAD_MS)]
-    );
+    await pool.query("INSERT INTO sesiones (tokenHash, usuarioId, expiraEn) VALUES (?, ?, ?)", [
+      hashToken(token),
+      usuarioId,
+      new Date(Date.now() + INACTIVIDAD_MS),
+    ]);
     await pool.query("UPDATE usuarios SET ultimoAcceso = UTC_TIMESTAMP() WHERE id = ?", [usuarioId]);
     return token;
   },
@@ -212,13 +214,10 @@ export const sesiones = {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT u.* FROM sesiones s JOIN usuarios u ON u.id = s.usuarioId
         WHERE s.tokenHash = ? AND s.expiraEn > UTC_TIMESTAMP() AND u.activo = 1`,
-      [hashToken(token)]
+      [hashToken(token)],
     );
     if (!rows[0]) return null;
-    await pool.query("UPDATE sesiones SET expiraEn = ? WHERE tokenHash = ?", [
-      new Date(Date.now() + INACTIVIDAD_MS),
-      hashToken(token),
-    ]);
+    await pool.query("UPDATE sesiones SET expiraEn = ? WHERE tokenHash = ?", [new Date(Date.now() + INACTIVIDAD_MS), hashToken(token)]);
     return mapUsuario(rows[0]);
   },
 
@@ -289,7 +288,8 @@ export async function exigirSesion(req: Request, res: Response, next: NextFuncti
     return res.status(401).json({ error: "Tu sesion vencio o no has iniciado sesion.", sesion: false });
   }
   req.usuario = usuario;
-  next();
+  // Quien hace la peticion, para la bitacora de cambios (ver contexto.ts).
+  contextoPeticion.run({ usuarioId: usuario.id, origen: `${req.method} ${req.originalUrl.split("?")[0]}` }, next);
 }
 
 // ---------------------------------------------------------------------------
@@ -334,8 +334,7 @@ export const MINUTOS_CODIGO = 15;
 const MAX_INTENTOS_CODIGO = 5;
 
 /** El hash lleva el id del usuario: el mismo codigo no sirve para otra cuenta. */
-const hashCodigo = (usuarioId: number, codigo: string) =>
-  createHash("sha256").update(`${usuarioId}:${codigo}`).digest("hex");
+const hashCodigo = (usuarioId: number, codigo: string) => createHash("sha256").update(`${usuarioId}:${codigo}`).digest("hex");
 
 /**
  * Codigos de recuperacion de contrasena por correo (tabla recuperaciones).
@@ -361,7 +360,7 @@ export const recuperaciones = {
   async verificar(usuarioId: number, codigo: string): Promise<boolean> {
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM recuperaciones WHERE usuarioId = ? AND expiraEn > UTC_TIMESTAMP() ORDER BY id DESC LIMIT 1",
-      [usuarioId]
+      [usuarioId],
     );
     const r = rows[0];
     if (!r) return false;

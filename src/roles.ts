@@ -56,10 +56,12 @@ export type Area =
   /** Configuracion de la empresa y la empresa de cada vehiculo. */
   | "ADMINISTRACION"
   /** Usuarios y sus roles. */
-  | "USUARIOS";
+  | "USUARIOS"
+  /** Control interno: bitacora de cambios y papelera (solo acceso total). */
+  | "CONTROL";
 
 const AREAS: Record<Rol, Area[]> = {
-  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"],
+  TOTAL: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS", "CONTROL"],
   ADMINISTRATIVO: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "GASTOS", "CONDUCTORES", "ADMINISTRACION"],
   MYC: ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION"],
 };

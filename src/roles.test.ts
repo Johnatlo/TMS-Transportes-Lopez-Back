@@ -13,13 +13,13 @@ import {
 
 describe("roles", () => {
   test("cada rol entra a sus areas", () => {
-    const todas = ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS"];
+    const todas = ["RNDC", "OPERACION", "CUENTAS", "LIQUIDACION", "REPARTO", "RENTABILIDAD", "GASTOS", "CONDUCTORES", "ADMINISTRACION", "USUARIOS", "CONTROL"];
     expect(todas.every((a) => puede("TOTAL", a as never))).toBe(true);
     // Administrativas: todo menos el reparto de los socios y el cambio de roles (17/11/2026).
     // Rentabilidad: solo total y M&C; Cuentas conductores: si, pero solo las cuentas de viaje (23/11/2026).
-    expect(todas.filter((a) => !puede("ADMINISTRATIVO", a as never))).toEqual(["REPARTO", "RENTABILIDAD", "USUARIOS"]);
+    expect(todas.filter((a) => !puede("ADMINISTRATIVO", a as never))).toEqual(["REPARTO", "RENTABILIDAD", "USUARIOS", "CONTROL"]);
     // M&C: todo menos el cambio de roles (la rentabilidad de terceros se filtra por vehiculo).
-    expect(todas.filter((a) => !puede("MYC", a as never))).toEqual(["USUARIOS"]);
+    expect(todas.filter((a) => !puede("MYC", a as never))).toEqual(["USUARIOS", "CONTROL"]);
     expect([veRentabilidadTerceros("TOTAL"), veRentabilidadTerceros("ADMINISTRATIVO"), veRentabilidadTerceros("MYC")]).toEqual([true, true, false]);
     // La rentabilidad de la empresa (estado de resultados, consolidado, cascada de todos): solo el rol total.
     expect([veRentabilidadEmpresa("TOTAL"), veRentabilidadEmpresa("ADMINISTRATIVO"), veRentabilidadEmpresa("MYC")]).toEqual([true, false, false]);

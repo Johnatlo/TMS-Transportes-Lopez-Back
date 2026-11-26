@@ -401,6 +401,31 @@ Reglas:
 - Nunca `docker compose down -v`: borra la base de datos.
 - Respaldo antes de cambios grandes (sección 8).
 
+### 9.5 Control interno (bitácora de cambios)
+
+La bitácora la guardan triggers de MySQL que el backend crea solo al arrancar
+(ver `src/bitacora.ts`). MySQL 8 con el registro binario activo no deja crear
+triggers a un usuario sin privilegios de administrador; por eso, si el
+usuario de la aplicación no puede, el backend los crea con `root` usando
+`MYSQL_ROOT_PASSWORD` de `.env.production` (la misma con la que se creó la
+base). No hay que hacer nada a mano.
+
+Comprobar después de actualizar el backend:
+
+```bash
+docker compose --env-file .env.production logs backend | grep -i bitacora
+```
+
+- Sin líneas: quedó activa (en SOFI: Administración → Control interno, sin
+  aviso rojo).
+- "AVISO: la bitácora de cambios no quedó activa": revisar que
+  `MYSQL_ROOT_PASSWORD` esté en `.env.production` y volver a levantar el
+  backend. La aplicación sigue funcionando igual; solo no se registran los
+  cambios mientras tanto.
+
+La tabla `bitacora` crece con el uso (cada cambio es una fila). No borrarla:
+es el rastro de quién cambió qué.
+
 ## 10. Lista para el día del lanzamiento
 
 - [ ] Respaldo de la base actual y carga en el contenedor (sección 5).

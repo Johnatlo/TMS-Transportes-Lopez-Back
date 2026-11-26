@@ -545,12 +545,13 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1114 funciones, componentes, métodos y rutas en 73 archivos._
+_1133 funciones, componentes, métodos y rutas en 76 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (36)
+- [`src/bitacora.ts`](#srcbitacorats) (13)
 - [`src/calculoConductores.ts`](#srccalculoconductorests) (11)
 - [`src/calculoNomina.ts`](#srccalculonominats) (14)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (10)
@@ -559,6 +560,7 @@ _1114 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/conductores.ts`](#srcconductorests) (29)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
+- [`src/contexto.ts`](#srccontextots) (1)
 - [`src/contingencia.ts`](#srccontingenciats) (9)
 - [`src/correo.ts`](#srccorreots) (9)
 - [`src/cuadro.ts`](#srccuadrots) (43)
@@ -598,6 +600,7 @@ _1114 funciones, componentes, métodos y rutas en 73 archivos._
 - [`src/routes/auth.ts`](#srcroutesauthts) (6)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (19)
+- [`src/routes/control.ts`](#srcroutescontrolts) (5)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (50)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (28)
@@ -1041,6 +1044,72 @@ _1114 funciones, componentes, métodos y rutas en 73 archivos._
 
   - **`recuperaciones.borrarDe(usuarioId)`** · _método_
     Anula los codigos pendientes de un usuario (tras usarlos).
+
+### `src/bitacora.ts`
+
+> Control interno: bitacora de cambios y papelera.
+>
+> Bitacora: cada vez que se crea, cambia o borra un registro de una tabla
+> sensible (la plata y los permisos: viajes del cuadro, anticipos, bomba,
+> cartera, gastos, nomina, prestamos, socios, repartos, usuarios...), un
+> trigger de MySQL guarda en `bitacora` que tabla y registro, que paso
+> (CREAR, CAMBIAR o BORRAR), los valores de antes y de despues (al cambiar,
+> solo los campos que cambiaron), quien lo hizo y desde que ruta. Quien lo
+> hizo sale de las variables @sofi_usuario y @sofi_origen, que el pool pone
+> antes de cada escritura (ver contexto.ts y db.ts); sin ellas, "Sistema".
+> Asi queda todo: lo que se hace en las pantallas, en las importaciones y en
+> los procesos automaticos, aunque una ruta nueva se olvide de registrarlo.
+>
+> Los triggers se crean (o se rehacen con las columnas de hoy) al arrancar.
+> Las claves y contrasenas no se guardan, ni las columnas muy grandes (fotos
+> de repartos y liquidaciones). Si MySQL no deja crearlos con el usuario de
+> la aplicacion (binlog activo), se intenta con root (MYSQL_ROOT_PASSWORD);
+> si tampoco, la bitacora queda inactiva y la pantalla lo avisa.
+>
+> Papelera: lo borrado es su registro BORRAR, con todos sus datos. Se puede
+> consultar siempre; se puede restaurar (volver a crearlo igual, con el mismo
+> id) solo en las tablas simples, que no tienen otros datos que se borren o
+> cambien con ellas (MySQL no dispara triggers en los borrados en cascada).
+
+- **`id(x)`** · _función_
+  Nombre seguro de tabla o columna (solo letras, numeros y _).
+
+- **`triggersDe(tabla, columnas, pk, padre)`** · _función_
+  Arma los tres triggers (crear, cambiar, borrar) de una tabla con sus columnas de hoy.
+
+- **`crearTriggers(ejecutar, sentencias)`** · _función_
+  Ejecuta las sentencias de los triggers con una conexion (la de la aplicacion o la de root).
+
+- **`instalarBitacora()`** · _función_
+  Crea la tabla de la bitacora y los triggers de las tablas sensibles (al arrancar).
+
+- **`leerJson(v)`** · _función_
+  Texto JSON a objeto (vacio si no es valido).
+
+- **`cambiosDe(accion, antes, despues)`** · _función_
+  Los campos de un registro de la bitacora como lista de cambios.
+
+- **`iso(v)`** · _función_
+  Fecha de la base a ISO.
+
+- **`bitacora`** · _módulo_
+  Bitacora, papelera e historial de cada registro.
+
+  - **`bitacora.estado()`** · _método_
+    Si los triggers quedaron creados (o por que no).
+
+  - **`bitacora.listar(f, soloBorrados)`** · _método_
+    Los registros de la bitacora con los filtros (los mas recientes primero; hasta 2.000).
+
+  - **`bitacora.historial(tabla, registroId)`** · _método_
+    Historial de un registro: sus cambios y los de lo que cuelga de el (anticipos y notas de un viaje...).
+
+  - **`bitacora.armar(filas)`** · _método_
+    Arma los registros: nombre de la tabla, cambios, quien y una descripcion del registro.
+
+  - **`bitacora.restaurar(bitacoraId, usuarioId)`** · _método_
+    Restaura un registro borrado (solo de las tablas simples): lo vuelve a
+    crear con sus mismos datos e id. Si ya existe uno con ese id, no.
 
 ### `src/calculoConductores.ts`
 
@@ -1534,6 +1603,21 @@ _1114 funciones, componentes, métodos y rutas en 73 archivos._
   El RNDC rechaza el manifiesto completo si el consecutivo se repite, y ese
   rechazo llega despues de haber creado las remesas: mas vale atajarlo aqui.
 
+### `src/contexto.ts`
+
+> Quien hace cada peticion, para la bitacora de cambios (ver bitacora.ts).
+>
+> exigirSesion guarda aqui el usuario y la ruta (POST /api/cuadro/12...) y
+> todo lo que pase dentro de la peticion lo puede leer, aunque sea en otra
+> funcion o despues de un await (AsyncLocalStorage de Node). Antes de cada
+> escritura en la base, el pool pone esos dos datos en variables de sesion de
+> MySQL (@sofi_usuario y @sofi_origen) y los triggers de la bitacora los
+> guardan con el cambio. Lo que no viene de una peticion (la sincronizacion
+> del RNDC, el mantenimiento del cuadro) queda sin usuario: "Sistema".
+
+- **`variablesBitacora()`** · _función_
+  Los valores de @sofi_usuario y @sofi_origen para la escritura en curso (null fuera de una peticion).
+
 ### `src/contingencia.ts`
 
 > Manifiestos de contingencia (ver rndc/manifiesto-contingencia.ts): cuando
@@ -1892,7 +1976,9 @@ _1114 funciones, componentes, métodos y rutas en 73 archivos._
 
 > Conexion a MySQL y esquema de la base.
 >
-> - `pool`: conexiones compartidas (mysql2, en UTC: timezone "Z").
+> - `pool`: conexiones compartidas (mysql2, en UTC: timezone "Z"). Antes de
+>   cada escritura pone quien la hace en @sofi_usuario y @sofi_origen, para la
+>   bitacora de cambios (ver contexto.ts y bitacora.ts).
 > - `conCandado`: ejecuta una funcion con un candado de MySQL (GET_LOCK), por
 >   ejemplo para que dos despachos no tomen el mismo consecutivo.
 > - `initSchema`: crea las tablas y agrega las columnas que falten al arrancar.
@@ -4640,6 +4726,27 @@ _1114 funciones, componentes, métodos y rutas en 73 archivos._
 
 - **`DELETE /liquidacion/:empleadoId/:mes/pago`** · _ruta HTTP_
   DELETE /api/conductores/liquidacion/:empleadoId/:mes/pago: quita la marca de pagada.
+
+### `src/routes/control.ts`
+
+> Rutas de Control interno (/api/control): la bitacora de cambios, el
+> historial de un registro y la papelera (ver src/bitacora.ts). Solo el rol
+> de acceso total (area CONTROL).
+
+- **`GET /estado`** · _ruta HTTP_
+  GET /api/control/estado: si la bitacora esta activa (o por que no).
+
+- **`GET /bitacora`** · _ruta HTTP_
+  GET /api/control/bitacora?tabla&registroId&usuarioId&accion&desde&hasta&limite: los cambios, los mas recientes primero.
+
+- **`GET /historial/:tabla/:id`** · _ruta HTTP_
+  GET /api/control/historial/:tabla/:id: los cambios de un registro y de lo que cuelga de el.
+
+- **`GET /papelera`** · _ruta HTTP_
+  GET /api/control/papelera?tabla&usuarioId&desde&hasta: lo borrado, lo mas reciente primero.
+
+- **`POST /papelera/:id/restaurar`** · _ruta HTTP_
+  POST /api/control/papelera/:id/restaurar: vuelve a crear un registro borrado (solo las tablas simples).
 
 ### `src/routes/cuadro.ts`
 
