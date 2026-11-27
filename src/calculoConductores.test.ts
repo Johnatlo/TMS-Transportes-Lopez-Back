@@ -3,6 +3,8 @@ import {
   esIntegro,
   fleteConductorEn,
   liquidarConductor,
+  mesConductores,
+  periodoConductores,
   nombreComparable,
   producidoConductor,
   saldoCuenta,
@@ -118,5 +120,21 @@ describe("flete conductor INTEGRO", () => {
     });
     expect([l.producido, l.integro]).toEqual([4_200_000, 200_000]);
     expect(l.salarial + l.viaticos).toBeCloseTo(4_200_000 * 0.09 + 200_000, 2);
+  });
+});
+
+describe("corte de las cuentas de los conductores (del 27 al 26)", () => {
+  test("el periodo de un mes va del 27 del mes anterior al 26", () => {
+    expect(periodoConductores("2026-11")).toEqual({ desde: "2026-10-27", hasta: "2026-11-26" });
+    expect(periodoConductores("2026-01")).toEqual({ desde: "2025-12-27", hasta: "2026-01-26" });
+    expect(periodoConductores("2026-03")).toEqual({ desde: "2026-02-27", hasta: "2026-03-26" });
+  });
+
+  test("un viaje despues del 26 cuenta en el mes siguiente", () => {
+    expect(mesConductores("2026-11-26")).toBe("2026-11");
+    expect(mesConductores("2026-11-27")).toBe("2026-12");
+    expect(mesConductores("2026-11-30")).toBe("2026-12");
+    expect(mesConductores("2026-12-28")).toBe("2027-01");
+    expect(mesConductores("2026-11-01")).toBe("2026-11");
   });
 });

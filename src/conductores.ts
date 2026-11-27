@@ -26,6 +26,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
 import { dia, ErrorCuadro } from "./cuadro";
 import {
+  mesConductores,
+  periodoConductores,
   CONCEPTOS,
   esIntegro,
   liquidarConductor,
@@ -322,17 +324,21 @@ async function exigirSinPagar(empleadoId: number | null, mes: string, que: strin
   if (p) throw new ErrorCuadro(`La liquidacion de ${mes} de este conductor ya esta pagada: quita la marca de pagada para cambiar ${que}.`);
 }
 
-/** El producido conductor de un mes con nomina aprobada no se cambia (reabre la nomina primero). */
-async function exigirSinNominaAprobada(mes: string): Promise<void> {
+/** El producido conductor de un viaje que cae en una nomina aprobada no se cambia (reabre la nomina primero). */
+async function exigirSinNominaAprobada(fecha: string): Promise<void> {
   const [[n]] = await pool.query<RowDataPacket[]>(
-    "SELECT 1 AS si FROM nominas WHERE estado = 'APROBADA' AND DATE_FORMAT(COALESCE(producidoDesde, desde), '%Y-%m') = ? LIMIT 1",
-    [mes],
+    "SELECT 1 AS si FROM nominas WHERE estado = 'APROBADA' AND ? BETWEEN COALESCE(producidoDesde, desde) AND COALESCE(producidoHasta, hasta) LIMIT 1",
+    [fecha],
   );
-  if (n) throw new ErrorCuadro(`La nomina que cubre el producido de ${mes} esta aprobada: reabrela en Nomina para cambiar el producido conductor.`);
+  if (n) throw new ErrorCuadro("La nomina que cubre el producido de ese viaje esta aprobada: reabrela en Nomina para cambiar el producido conductor.");
 }
 
-/** Mes del producido de una nomina (el de su producidoDesde). */
-const mesProducido = (n: { producidoDesde: string }) => n.producidoDesde.slice(0, 7);
+/**
+ * Mes de las cuentas de los conductores que cubre una nomina: el de su
+ * producidoHasta (sirve con el producido del mes calendario o con el corte
+ * del 27 al 26).
+ */
+const mesProducido = (n: { producidoHasta: string }) => n.producidoHasta.slice(0, 7);
 
 /** Repositorio del modulo Cuentas vehiculos. */
 export const conductores = {
@@ -433,10 +439,17 @@ export const conductores = {
     return resultado;
   },
 
-  /** Los viajes de la flota propia de un mes con su producido conductor y su cuenta de viaje. */
-  async viajes(mes: unknown, empresa: EmpresaVehiculo | null): Promise<ViajeConductor[]> {
+  /**
+   * Los viajes de la flota propia de un mes con su producido conductor y su
+   * cuenta de viaje. porCorte (lo de Cuentas conductores): del 27 del mes
+   * anterior al 26 (ver periodoConductores); sin el, el mes calendario (la
+   * cuenta del vehiculo en Rentabilidad).
+   */
+  async viajes(mes: unknown, empresa: EmpresaVehiculo | null, porCorte = true): Promise<ViajeConductor[]> {
     const m = mesDe(mes);
-    return viajesEntre(`${m}-01`, finDeMes(m), empresa);
+    if (!porCorte) return viajesEntre(`${m}-01`, finDeMes(m), empresa);
+    const p = periodoConductores(m);
+    return viajesEntre(p.desde, p.hasta, empresa);
   },
 
   /** Producido conductor por viaje entre dos fechas y si es integro (lo usa la nomina). */
@@ -455,8 +468,8 @@ export const conductores = {
     const fecha = dia(c.fecha)!;
     const [viaje] = await viajesEntre(fecha, fecha, empresa).then((vs) => vs.filter((v) => v.cuadroViajeId === cuadroViajeId));
     if (!viaje) throw new ErrorCuadro("Ese viaje no es de la flota propia (o no es de tu empresa).");
-    await exigirSinPagar(viaje.empleadoId, fecha.slice(0, 7), "la cuenta de este viaje");
-    if ("producidoManual" in d) await exigirSinNominaAprobada(fecha.slice(0, 7));
+    await exigirSinPagar(viaje.empleadoId, mesConductores(fecha), "la cuenta de este viaje");
+    if ("producidoManual" in d) await exigirSinNominaAprobada(fecha);
     const valores: Record<string, unknown> = {};
     for (const [k, nombre] of CONCEPTOS) {
       if (k === "acpm") continue;
@@ -540,7 +553,7 @@ export const conductores = {
     empresa: EmpresaVehiculo | null,
   ): Promise<ViajeConductor> {
     const viaje = await viajeDeFlota(cuadroViajeId, empresa);
-    await exigirSinPagar(viaje.empleadoId, viaje.fecha.slice(0, 7), "las transferencias de este viaje");
+    await exigirSinPagar(viaje.empleadoId, mesConductores(viaje.fecha), "las transferencias de este viaje");
     const fecha = String(d.fecha ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha de la transferencia.");
     const valor = pesos(d.valor, "el valor de la transferencia");
@@ -564,7 +577,7 @@ export const conductores = {
     const [[t]] = await pool.query<RowDataPacket[]>("SELECT cuadroViajeId FROM transferencias_conductor WHERE id = ?", [id]);
     if (!t) throw new ErrorCuadro("Esa transferencia ya no existe.");
     const viaje = await viajeDeFlota(t.cuadroViajeId, empresa);
-    await exigirSinPagar(viaje.empleadoId, viaje.fecha.slice(0, 7), "las transferencias de este viaje");
+    await exigirSinPagar(viaje.empleadoId, mesConductores(viaje.fecha), "las transferencias de este viaje");
     await pool.query("DELETE FROM transferencias_conductor WHERE id = ?", [id]);
     return viajeDeFlota(t.cuadroViajeId, empresa);
   },
@@ -580,7 +593,7 @@ export const conductores = {
     if (!c) return;
     if (empresa && c.empresa !== empresa && !c.visibleTodos) throw new ErrorCuadro("Ese viaje es de la otra empresa.");
     const [viaje] = (await viajesEntre(dia(c.fecha)!, dia(c.fecha)!, null)).filter((v) => v.cuadroViajeId === cuadroViajeId);
-    await exigirSinPagar(viaje?.empleadoId ?? null, dia(c.fecha)!.slice(0, 7), "la cuenta de este viaje");
+    await exigirSinPagar(viaje?.empleadoId ?? null, mesConductores(dia(c.fecha)!), "la cuenta de este viaje");
     await gastos.borrarDeCuenta(c.id);
     await pool.query("DELETE FROM cuentas_viaje WHERE id = ?", [c.id]);
   },
@@ -776,8 +789,8 @@ export const conductores = {
               nominaId: linea && nominaDelMes ? nominaDelMes.id : null,
               provisional: !(linea && nominaDelMes),
               estado: linea && nominaDelMes ? nominaDelMes.estado : "PROVISIONAL",
-              desde: linea && nominaDelMes ? nominaDelMes.desde : `${m}-01`,
-              hasta: linea && nominaDelMes ? nominaDelMes.hasta : finDeMes(m),
+              desde: linea && nominaDelMes ? nominaDelMes.desde : periodoConductores(m).desde,
+              hasta: linea && nominaDelMes ? nominaDelMes.hasta : periodoConductores(m).hasta,
               devengado: calculo.devengado,
               deducciones: c2(calculo.saludEmpleado + calculo.pensionEmpleado),
               neto: calculo.neto,

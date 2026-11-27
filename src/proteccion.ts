@@ -30,7 +30,14 @@ export async function mesesCongeladosConductores(): Promise<Set<string>> {
     "SELECT DISTINCT DATE_FORMAT(COALESCE(producidoDesde, desde), '%Y-%m') AS mes FROM nominas WHERE estado = 'APROBADA'",
   );
   const [pagadas] = await pool.query<RowDataPacket[]>("SELECT DISTINCT mes FROM liquidaciones_conductor");
-  for (const f of [...nominas, ...pagadas]) meses.add(String(f.mes));
+  for (const f of nominas) meses.add(String(f.mes));
+  // Una liquidacion de un mes lleva los viajes desde el 27 del mes anterior: ese mes tambien queda congelado.
+  for (const f of pagadas) {
+    const mes = String(f.mes);
+    const [a, m] = mes.split("-").map(Number);
+    meses.add(mes);
+    meses.add(m === 1 ? `${a - 1}-12` : `${a}-${String(m - 1).padStart(2, "0")}`);
+  }
   return meses;
 }
 

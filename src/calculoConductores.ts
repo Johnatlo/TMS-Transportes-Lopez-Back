@@ -22,6 +22,32 @@
 
 import { pagoProducido } from "./calculoNomina";
 
+/**
+ * Dia de cierre de las cuentas de los conductores: el "mes" de un conductor
+ * va del dia siguiente al cierre del mes anterior hasta el cierre de este (con
+ * 26: noviembre = del 27 de octubre al 26 de noviembre). Asi los viajes de los
+ * ultimos dias del mes no quedan por fuera de ninguna liquidacion.
+ */
+export const DIA_CORTE = 26;
+
+/** El mes anterior ("AAAA-MM"). */
+const mesAnterior = (mes: string) => {
+  const [a, m] = mes.split("-").map(Number);
+  return m === 1 ? `${a - 1}-12` : `${a}-${String(m - 1).padStart(2, "0")}`;
+};
+
+/** Fechas del periodo de las cuentas de los conductores de un mes ("AAAA-MM"). */
+export function periodoConductores(mes: string): { desde: string; hasta: string } {
+  return { desde: `${mesAnterior(mes)}-${DIA_CORTE + 1}`, hasta: `${mes}-${DIA_CORTE}` };
+}
+
+/** El mes de las cuentas de los conductores al que pertenece un viaje (despues del cierre, el siguiente). */
+export function mesConductores(fecha: string): string {
+  const [a, m, d] = fecha.slice(0, 10).split("-").map(Number);
+  if (d <= DIA_CORTE) return fecha.slice(0, 7);
+  return m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, "0")}`;
+}
+
 /** Centavos exactos. */
 const c2 = (v: number) => Math.round(v * 100 + Number.EPSILON) / 100;
 /** Suma a centavos. */

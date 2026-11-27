@@ -94,7 +94,8 @@ export async function cuentasVehiculos(
 ): Promise<{ mes: string; aprobado: boolean; cerrado: boolean; vehiculos: CuentaVehiculo[] }> {
   const u = await utilidades.mes(mes, { reparto: false, terceros: false, empresa: false });
   const [viajesConductor, filasRent, [empleados]] = await Promise.all([
-    conductores.viajes(u.mes, empresa),
+    // La cuenta del vehiculo es del mes calendario (no del corte de los conductores).
+    conductores.viajes(u.mes, empresa, false),
     rentabilidad.listar(),
     pool.query<RowDataPacket[]>("SELECT nombre, pctSalarial, pctViaticos FROM empleados"),
   ]);

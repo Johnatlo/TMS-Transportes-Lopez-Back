@@ -546,14 +546,14 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1142 funciones, componentes, métodos y rutas en 76 archivos._
+_1145 funciones, componentes, métodos y rutas en 76 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (38)
 - [`src/bitacora.ts`](#srcbitacorats) (13)
-- [`src/calculoConductores.ts`](#srccalculoconductorests) (11)
+- [`src/calculoConductores.ts`](#srccalculoconductorests) (14)
 - [`src/calculoNomina.ts`](#srccalculonominats) (14)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (10)
 - [`src/cifrado.ts`](#srccifradots) (4)
@@ -1140,6 +1140,15 @@ _1142 funciones, componentes, métodos y rutas en 76 archivos._
 > - Liquidacion del mes: lo de la nomina (sueldo, % y aportes) + el saldo de
 >   las cuentas de viaje - lo que se descuenta de los prestamos.
 
+- **`mesAnterior(mes)`** · _función_
+  El mes anterior ("AAAA-MM").
+
+- **`periodoConductores(mes)`** · _función_
+  Fechas del periodo de las cuentas de los conductores de un mes ("AAAA-MM").
+
+- **`mesConductores(fecha)`** · _función_
+  El mes de las cuentas de los conductores al que pertenece un viaje (despues del cierre, el siguiente).
+
 - **`c2(v)`** · _función_
   Centavos exactos.
 
@@ -1473,11 +1482,13 @@ _1142 funciones, componentes, métodos y rutas en 76 archivos._
 - **`exigirSinPagar(empleadoId, mes, que)`** · _función_
   La liquidacion de ese conductor en ese mes no esta pagada (si lo esta, hay que quitar el pago para cambiar algo).
 
-- **`exigirSinNominaAprobada(mes)`** · _función_
-  El producido conductor de un mes con nomina aprobada no se cambia (reabre la nomina primero).
+- **`exigirSinNominaAprobada(fecha)`** · _función_
+  El producido conductor de un viaje que cae en una nomina aprobada no se cambia (reabre la nomina primero).
 
 - **`mesProducido(n)`** · _función_
-  Mes del producido de una nomina (el de su producidoDesde).
+  Mes de las cuentas de los conductores que cubre una nomina: el de su
+  producidoHasta (sirve con el producido del mes calendario o con el corte
+  del 27 al 26).
 
 - **`conductores`** · _módulo_
   Repositorio del modulo Cuentas vehiculos.
@@ -1496,8 +1507,11 @@ _1142 funciones, componentes, métodos y rutas en 76 archivos._
     cada nombre se busca entre las tarifas de la empresa (sin tildes ni
     signos). Con aplicar = false solo dice cuales encontro; con true las guarda.
 
-  - **`conductores.viajes(mes, empresa)`** · _método_
-    Los viajes de la flota propia de un mes con su producido conductor y su cuenta de viaje.
+  - **`conductores.viajes(mes, empresa, porCorte)`** · _método_
+    Los viajes de la flota propia de un mes con su producido conductor y su
+    cuenta de viaje. porCorte (lo de Cuentas conductores): del 27 del mes
+    anterior al 26 (ver periodoConductores); sin el, el mes calendario (la
+    cuenta del vehiculo en Rentabilidad).
 
   - **`conductores.producidoEntre(desde, hasta)`** · _método_
     Producido conductor por viaje entre dos fechas y si es integro (lo usa la nomina).
