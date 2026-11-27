@@ -36,6 +36,7 @@ describe("bitacora de cambios", () => {
       "notas_credito",
       "pagos_socios",
       "participaciones",
+      "transferencias_conductor",
     ]);
     // Lo que se borra con otros datos (viajes, anticipos, nominas) queda solo para consulta.
     expect(TABLAS_BITACORA.cuadro_viajes.restaurable).toBeFalsy();

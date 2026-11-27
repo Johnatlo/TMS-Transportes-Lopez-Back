@@ -546,7 +546,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1136 funciones, componentes, métodos y rutas en 76 archivos._
+_1142 funciones, componentes, métodos y rutas en 76 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -558,7 +558,7 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (10)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
-- [`src/conductores.ts`](#srcconductorests) (29)
+- [`src/conductores.ts`](#srcconductorests) (32)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/contexto.ts`](#srccontextots) (1)
@@ -575,7 +575,7 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
-- [`src/nomina.ts`](#srcnominats) (37)
+- [`src/nomina.ts`](#srcnominats) (38)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
 - [`src/preoperacional.ts`](#srcpreoperacionalts) (13)
 - [`src/prorrateo.ts`](#srcprorrateots) (12)
@@ -600,7 +600,7 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
 - [`src/roles.ts`](#srcrolests) (9)
 - [`src/routes/auth.ts`](#srcroutesauthts) (7)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/conductores.ts`](#srcroutesconductorests) (19)
+- [`src/routes/conductores.ts`](#srcroutesconductorests) (21)
 - [`src/routes/control.ts`](#srcroutescontrolts) (5)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (50)
@@ -1467,6 +1467,9 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
   (cerrados, con nomina aprobada o liquidacion pagada). Llenar un tramo que no
   tenia valor si se deja (no cambia nada ya calculado con la matriz).
 
+- **`viajeDeFlota(cuadroViajeId, empresa)`** · _función_
+  Un viaje de la flota propia (de la empresa, si se da), o error.
+
 - **`exigirSinPagar(empleadoId, mes, que)`** · _función_
   La liquidacion de ese conductor en ese mes no esta pagada (si lo esta, hay que quitar el pago para cambiar algo).
 
@@ -1509,6 +1512,14 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
     crear con el total (si es mayor que cero), en la fecha del viaje y al
     vehiculo. Si el mes esta cerrado, no deja cambiarla.
 
+  - **`conductores.agregarTransferencia(cuadroViajeId, d, usuarioId, empresa)`** · _método_
+    Agrega una transferencia del gerente a un viaje ({ fecha, valor, nota }):
+    completa el anticipo de la bomba y baja el rojo del conductor. No va al
+    Cuadro pagos. Devuelve el viaje como queda.
+
+  - **`conductores.borrarTransferencia(id, empresa)`** · _método_
+    Borra una transferencia del gerente. Devuelve el viaje como queda.
+
   - **`conductores.borrarCuenta(cuadroViajeId, empresa)`** · _método_
     Borra la cuenta de viaje de un viaje y su gasto del libro.
 
@@ -1538,7 +1549,7 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
     (sueldo, % y aportes), los prestamos y si ya se le pago.
 
   - **`conductores.pagar(empleadoId, mes, d, usuarioId, empresa)`** · _método_
-    Marca pagada la liquidacion de un conductor en un mes ({ fechaPago }), con su total de ese momento.
+    Liquida al conductor en un mes ({ fechaPago }: la fecha en que el gerente lo liquida), con su total de ese momento. No depende de la nomina.
 
   - **`conductores.quitarPago(empleadoId, mes, empresa)`** · _método_
     Quita la marca de pagada.
@@ -2539,6 +2550,12 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
 
   - **`nomina.borrarEmpleado(id)`** · _método_
     Borra un empleado que no esta en ninguna nomina.
+
+  - **`nomina.provisional(empleadoId, mes, producido, integro)`** · _método_
+    Calculo provisional de la nomina de un empleado en un mes, sin crear la
+    nomina: las mismas reglas de una linea (su sueldo, el % de su producido,
+    auxilio, salud y pension) con el mes completo (30 dias) y sin ajustes. Lo
+    usa la liquidacion de conductores mientras la nomina del mes no existe.
 
   - **`nomina.nominas(filtro)`** · _método_
     Nominas (las mas recientes primero). M&C solo ve las lineas de sus empleados.
@@ -4709,6 +4726,12 @@ _1136 funciones, componentes, métodos y rutas en 76 archivos._
 
 - **`PUT /viajes/:id/cuenta`** · _ruta HTTP_
   PUT /api/conductores/viajes/:id/cuenta: guarda la cuenta de viaje (conceptos, ACPM, producido a mano, nota).
+
+- **`POST /viajes/:id/transferencias`** · _ruta HTTP_
+  POST /api/conductores/viajes/:id/transferencias: transferencia del gerente para completar el anticipo ({ fecha, valor, nota }).
+
+- **`DELETE /viajes/transferencias/:id`** · _ruta HTTP_
+  DELETE /api/conductores/viajes/transferencias/:id: borra una transferencia del gerente.
 
 - **`DELETE /viajes/:id/cuenta`** · _ruta HTTP_
   DELETE /api/conductores/viajes/:id/cuenta: borra la cuenta de viaje y su gasto del libro.

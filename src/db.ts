@@ -1533,6 +1533,22 @@ export async function initSchema(): Promise<void> {
       CONSTRAINT fk_cuenta_viaje FOREIGN KEY (cuadroViajeId) REFERENCES cuadro_viajes(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // Transferencias que el gerente le hace al conductor en un viaje para completar el
+  // anticipo de la bomba: cuentan como lo recibido por el conductor (bajan su rojo).
+  // Son plata interna: no van al Cuadro pagos ni a los anticipos de la bomba.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS transferencias_conductor (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      cuadroViajeId INT NOT NULL,
+      fecha DATE NOT NULL,
+      valor DECIMAL(15,2) NOT NULL,
+      nota VARCHAR(300),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX ix_transferencia_viaje (cuadroViajeId),
+      CONSTRAINT fk_transferencia_viaje FOREIGN KEY (cuadroViajeId) REFERENCES cuadro_viajes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS prestamos_empleado (
       id INT AUTO_INCREMENT PRIMARY KEY,

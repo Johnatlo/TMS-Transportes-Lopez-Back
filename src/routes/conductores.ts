@@ -78,6 +78,20 @@ conductoresRouter.put("/viajes/:id/cuenta", async (req, res) => {
     return viaje && soloGastos(req) ? sinPagoConductor(viaje) : viaje;
   });
 });
+/** POST /api/conductores/viajes/:id/transferencias: transferencia del gerente para completar el anticipo ({ fecha, valor, nota }). */
+conductoresRouter.post("/viajes/:id/transferencias", async (req, res) => {
+  await responder(res, async () => {
+    const viaje = await conductores.agregarTransferencia(Number(req.params.id), req.body ?? {}, usuario(req), empresaDe(req));
+    return soloGastos(req) ? sinPagoConductor(viaje) : viaje;
+  });
+});
+/** DELETE /api/conductores/viajes/transferencias/:id: borra una transferencia del gerente. */
+conductoresRouter.delete("/viajes/transferencias/:id", async (req, res) => {
+  await responder(res, async () => {
+    const viaje = await conductores.borrarTransferencia(Number(req.params.id), empresaDe(req));
+    return soloGastos(req) ? sinPagoConductor(viaje) : viaje;
+  });
+});
 /** DELETE /api/conductores/viajes/:id/cuenta: borra la cuenta de viaje y su gasto del libro. */
 conductoresRouter.delete("/viajes/:id/cuenta", async (req, res) => {
   await responder(res, () => conductores.borrarCuenta(Number(req.params.id), empresaDe(req)).then(() => ({ ok: true })));

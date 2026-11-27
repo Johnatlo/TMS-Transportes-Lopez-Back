@@ -419,6 +419,19 @@ export const nomina = {
     await pool.query("DELETE FROM empleados WHERE id = ?", [id]);
   },
 
+  /**
+   * Calculo provisional de la nomina de un empleado en un mes, sin crear la
+   * nomina: las mismas reglas de una linea (su sueldo, el % de su producido,
+   * auxilio, salud y pension) con el mes completo (30 dias) y sin ajustes. Lo
+   * usa la liquidacion de conductores mientras la nomina del mes no existe.
+   */
+  async provisional(empleadoId: number, mes: string, producido: number, integro: number): Promise<CalculoLinea> {
+    const [e] = await this.empleados({ id: empleadoId });
+    if (!e) throw new ErrorCuadro("Ese empleado no existe.");
+    const p = await parametrosDelAnio(Number(mes.slice(0, 4)));
+    return calcularLinea(entradaDe(e, { dias: 30, producido, integro, ajuste: 0 }), p);
+  },
+
   /** Nominas (las mas recientes primero). M&C solo ve las lineas de sus empleados. */
   async nominas(filtro: { empresa?: EmpresaVehiculo | null; id?: number } = {}): Promise<Nomina[]> {
     const [filas] = await pool.query<RowDataPacket[]>(

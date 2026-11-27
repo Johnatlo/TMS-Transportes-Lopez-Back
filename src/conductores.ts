@@ -100,10 +100,12 @@ export interface ViajeConductor {
   producidoManual: boolean;
   /** Flete conductor INTEGRO: se le paga completo (no va al %). */
   integro: boolean;
-  /** Lo que recibio: anticipos de la bomba (efectivo + combustible) y transferencia. */
+  /** Lo que recibio: anticipos de la bomba (efectivo + combustible), transferencia del Cuadro pagos y las del gerente. */
   efectivo: number;
   combustible: number;
   transferencia: number;
+  /** Transferencias del gerente para completar el anticipo (no van al Cuadro pagos). */
+  transferenciasGerente: Array<{ id: number; fecha: string; valor: number; nota: string | null }>;
   recibido: number;
   /** La cuenta de viaje (null = aun no se ha llenado). */
   cuenta:
@@ -140,9 +142,23 @@ export interface LiquidacionMesConductor extends LiquidacionConductor {
   empresa: EmpresaVehiculo;
   pctSalarial: number;
   pctViaticos: number;
-  /** Lo de la nomina que cubre el producido del mes (null si aun no hay). */
+  /**
+   * Lo de la nomina que cubre el producido del mes. Si aun no hay nomina, el
+   * calculo provisional (provisional: true, nominaId null): la liquidacion no
+   * espera la nomina. null solo si faltan los parametros de nomina del ano.
+   */
   nomina:
-    | (NominaConductor & { nominaId: number; estado: string; desde: string; hasta: string; basico: number; auxilio: number; salud: number; pension: number })
+    | (NominaConductor & {
+        nominaId: number | null;
+        provisional: boolean;
+        estado: string;
+        desde: string;
+        hasta: string;
+        basico: number;
+        auxilio: number;
+        salud: number;
+        pension: number;
+      })
     | null;
   /** Prestamos con saldo o con descuento este mes. */
   prestamosDetalle: Array<{ prestamoId: number; fecha: string; monto: number; saldo: number; cuota: number | null; descuento: number | null }>;
@@ -171,6 +187,14 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
     empresa ? [desde, hasta, empresa] : [desde, hasta],
   );
   const fletes = await fletesConductor();
+  // Transferencias del gerente de esos viajes.
+  const ids = filas.map((f) => f.id);
+  const [trs] = ids.length
+    ? await pool.query<RowDataPacket[]>(
+        "SELECT id, cuadroViajeId, fecha, valor, nota FROM transferencias_conductor WHERE cuadroViajeId IN (?) ORDER BY fecha, id",
+        [ids],
+      )
+    : [[] as RowDataPacket[]];
   const [asig] = await pool.query<RowDataPacket[]>(
     `SELECT ev.empleadoId, ev.vehiculoId, ev.desde, ev.hasta, e.nombre FROM empleados_vehiculos ev JOIN empleados e ON e.id = ev.empleadoId`,
   );
@@ -186,7 +210,10 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
     const efectivo = Number(f.efectivo);
     const combustible = Number(f.combustible);
     const transferencia = Number(f.transferencia);
-    const recibido = c2(efectivo + combustible + transferencia);
+    const transferenciasGerente = trs
+      .filter((t) => t.cuadroViajeId === f.id)
+      .map((t) => ({ id: t.id, fecha: dia(t.fecha)!, valor: Number(t.valor), nota: t.nota ?? null }));
+    const recibido = c2(efectivo + combustible + transferencia + transferenciasGerente.reduce((s, t) => s + t.valor, 0));
     let cuenta: ViajeConductor["cuenta"] = null;
     if (f.cuentaId) {
       const g = Object.fromEntries(CONCEPTOS.map(([k]) => [k, Number(f[k] ?? 0)])) as GastosCuenta;
@@ -228,6 +255,7 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
       efectivo,
       combustible,
       transferencia,
+      transferenciasGerente,
       recibido,
       cuenta,
     };
@@ -275,6 +303,16 @@ async function exigirFleteLibre(tarifaFleteId: number, desde: string, accion: "n
       .reverse()
       .join("/")} (los meses anteriores conservan el suyo).`,
   );
+}
+
+/** Un viaje de la flota propia (de la empresa, si se da), o error. */
+async function viajeDeFlota(cuadroViajeId: number, empresa: EmpresaVehiculo | null): Promise<ViajeConductor> {
+  const [[c]] = await pool.query<RowDataPacket[]>("SELECT fecha FROM cuadro_viajes WHERE id = ? AND anulado = 0", [cuadroViajeId]);
+  if (!c) throw new ErrorCuadro("Ese viaje no existe en el cuadro.");
+  const fecha = dia(c.fecha)!;
+  const viaje = (await viajesEntre(fecha, fecha, empresa)).find((v) => v.cuadroViajeId === cuadroViajeId);
+  if (!viaje) throw new ErrorCuadro("Ese viaje no es de la flota propia (o no es de tu empresa).");
+  return viaje;
 }
 
 /** La liquidacion de ese conductor en ese mes no esta pagada (si lo esta, hay que quitar el pago para cambiar algo). */
@@ -490,6 +528,47 @@ export const conductores = {
     await pool.query("UPDATE cuentas_viaje SET gastoId = ? WHERE id = ?", [gastoId, viaje.cuenta.id]);
   },
 
+  /**
+   * Agrega una transferencia del gerente a un viaje ({ fecha, valor, nota }):
+   * completa el anticipo de la bomba y baja el rojo del conductor. No va al
+   * Cuadro pagos. Devuelve el viaje como queda.
+   */
+  async agregarTransferencia(
+    cuadroViajeId: number,
+    d: Record<string, unknown>,
+    usuarioId: number | null,
+    empresa: EmpresaVehiculo | null,
+  ): Promise<ViajeConductor> {
+    const viaje = await viajeDeFlota(cuadroViajeId, empresa);
+    await exigirSinPagar(viaje.empleadoId, viaje.fecha.slice(0, 7), "las transferencias de este viaje");
+    const fecha = String(d.fecha ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha de la transferencia.");
+    const valor = pesos(d.valor, "el valor de la transferencia");
+    if (!valor || valor <= 0) throw new ErrorCuadro("Escribe el valor de la transferencia (mayor que cero).");
+    const nota =
+      String(d.nota ?? "")
+        .trim()
+        .slice(0, 300) || null;
+    await pool.query("INSERT INTO transferencias_conductor (cuadroViajeId, fecha, valor, nota, creadoPorId) VALUES (?, ?, ?, ?, ?)", [
+      cuadroViajeId,
+      fecha,
+      valor,
+      nota,
+      usuarioId,
+    ]);
+    return viajeDeFlota(cuadroViajeId, empresa);
+  },
+
+  /** Borra una transferencia del gerente. Devuelve el viaje como queda. */
+  async borrarTransferencia(id: number, empresa: EmpresaVehiculo | null): Promise<ViajeConductor> {
+    const [[t]] = await pool.query<RowDataPacket[]>("SELECT cuadroViajeId FROM transferencias_conductor WHERE id = ?", [id]);
+    if (!t) throw new ErrorCuadro("Esa transferencia ya no existe.");
+    const viaje = await viajeDeFlota(t.cuadroViajeId, empresa);
+    await exigirSinPagar(viaje.empleadoId, viaje.fecha.slice(0, 7), "las transferencias de este viaje");
+    await pool.query("DELETE FROM transferencias_conductor WHERE id = ?", [id]);
+    return viajeDeFlota(t.cuadroViajeId, empresa);
+  },
+
   /** Borra la cuenta de viaje de un viaje y su gasto del libro. */
   async borrarCuenta(cuadroViajeId: number, empresa: EmpresaVehiculo | null): Promise<void> {
     const [[c]] = await pool.query<RowDataPacket[]>(
@@ -654,13 +733,24 @@ export const conductores = {
       const descuento = (p: Prestamo) => p.descuentos.find((x) => x.mes === m)?.valor ?? null;
       const visibles = susPrestamos.filter((p) => p.saldo > 0 || descuento(p) !== null);
       if (!suyos.length && !linea && !visibles.length) continue;
+      // Sin nomina del mes: el calculo provisional con su producido (no espera la nomina).
+      const viajesLiq = suyos.map((v) => ({ producido: v.producido, saldo: v.cuenta?.saldo ?? null, integro: v.integro }));
+      let calculo = linea?.calculo ?? null;
+      if (!calculo) {
+        const base = liquidarConductor({
+          viajes: viajesLiq,
+          pctSalarial: Number(e.pctSalarial),
+          pctViaticos: Number(e.pctViaticos),
+          nomina: null,
+          prestamos: 0,
+        });
+        calculo = await nomina.provisional(e.id, m, base.producido, base.integro).catch(() => null);
+      }
       const liq = liquidarConductor({
-        viajes: suyos.map((v) => ({ producido: v.producido, saldo: v.cuenta?.saldo ?? null, integro: v.integro })),
+        viajes: viajesLiq,
         pctSalarial: Number(e.pctSalarial),
         pctViaticos: Number(e.pctViaticos),
-        nomina: linea
-          ? { devengado: linea.calculo.devengado, deducciones: c2(linea.calculo.saludEmpleado + linea.calculo.pensionEmpleado), neto: linea.calculo.neto }
-          : null,
+        nomina: calculo ? { devengado: calculo.devengado, deducciones: c2(calculo.saludEmpleado + calculo.pensionEmpleado), neto: calculo.neto } : null,
         prestamos: susPrestamos.reduce((s, p) => s + (descuento(p) ?? 0), 0),
       });
       const pagada = pagadas.find((p) => p.empleadoId === e.id);
@@ -681,22 +771,22 @@ export const conductores = {
         empresa: e.empresa,
         pctSalarial: Number(e.pctSalarial),
         pctViaticos: Number(e.pctViaticos),
-        nomina:
-          linea && nominaDelMes
-            ? {
-                nominaId: nominaDelMes.id,
-                estado: nominaDelMes.estado,
-                desde: nominaDelMes.desde,
-                hasta: nominaDelMes.hasta,
-                devengado: linea.calculo.devengado,
-                deducciones: c2(linea.calculo.saludEmpleado + linea.calculo.pensionEmpleado),
-                neto: linea.calculo.neto,
-                basico: linea.calculo.basico,
-                auxilio: linea.calculo.auxilio,
-                salud: linea.calculo.saludEmpleado,
-                pension: linea.calculo.pensionEmpleado,
-              }
-            : null,
+        nomina: calculo
+          ? {
+              nominaId: linea && nominaDelMes ? nominaDelMes.id : null,
+              provisional: !(linea && nominaDelMes),
+              estado: linea && nominaDelMes ? nominaDelMes.estado : "PROVISIONAL",
+              desde: linea && nominaDelMes ? nominaDelMes.desde : `${m}-01`,
+              hasta: linea && nominaDelMes ? nominaDelMes.hasta : finDeMes(m),
+              devengado: calculo.devengado,
+              deducciones: c2(calculo.saludEmpleado + calculo.pensionEmpleado),
+              neto: calculo.neto,
+              basico: calculo.basico,
+              auxilio: calculo.auxilio,
+              salud: calculo.saludEmpleado,
+              pension: calculo.pensionEmpleado,
+            }
+          : null,
         prestamosDetalle: visibles.map((p) => ({ prestamoId: p.id, fecha: p.fecha, monto: p.monto, saldo: p.saldo, cuota: p.cuota, descuento: descuento(p) })),
         pagada: pagada ? { fechaPago: dia(pagada.fechaPago)!, total: Number(pagada.total) } : null,
       });
@@ -704,14 +794,14 @@ export const conductores = {
     return { mes: m, conductores, viajesSinConductor: viajes.filter((v) => !v.empleadoId).length };
   },
 
-  /** Marca pagada la liquidacion de un conductor en un mes ({ fechaPago }), con su total de ese momento. */
+  /** Liquida al conductor en un mes ({ fechaPago }: la fecha en que el gerente lo liquida), con su total de ese momento. No depende de la nomina. */
   async pagar(empleadoId: number, mes: unknown, d: Record<string, unknown>, usuarioId: number | null, empresa: EmpresaVehiculo | null): Promise<void> {
     const m = mesDe(mes);
     const fechaPago = String(d.fechaPago ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaPago)) throw new ErrorCuadro("Escribe la fecha en que se le pago.");
     const l = (await this.liquidacion(m, empresa)).conductores.find((c) => c.empleadoId === empleadoId);
     if (!l) throw new ErrorCuadro("Ese conductor no tiene liquidacion en el mes (o es de la otra empresa).");
-    if (l.totalAPagar === null) throw new ErrorCuadro("Aun no hay nomina que cubra el producido de ese mes: creala en Nomina.");
+    if (l.totalAPagar === null) throw new ErrorCuadro(`Faltan los parametros de nomina de ${m.slice(0, 4)}: agregalos en Nomina > Parametros.`);
     await pool.query(
       `INSERT INTO liquidaciones_conductor (empleadoId, mes, fechaPago, total, detalle, creadoPorId) VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE fechaPago = VALUES(fechaPago), total = VALUES(total), detalle = VALUES(detalle)`,
