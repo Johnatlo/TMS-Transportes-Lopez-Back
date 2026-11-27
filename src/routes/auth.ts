@@ -14,6 +14,7 @@ import {
   problemaConClave,
   registrarFallo,
   sesiones,
+  temaDe,
   usuarios,
   verificarClave,
   recuperaciones,
@@ -68,6 +69,14 @@ authRouter.post("/logout", async (req, res) => {
 /** Quien soy: lo usa el frontend al abrir para saber si hay sesion. */
 authRouter.get("/sesion", exigirSesion, (req, res) => {
   res.json(req.usuario);
+});
+
+/** Preferencias propias: por ahora el modo de la pantalla ('oscuro', 'claro' o 'auto' por la hora). */
+authRouter.put("/preferencias", exigirSesion, async (req, res) => {
+  const tema = temaDe(req.body?.tema);
+  if (!tema) return res.status(422).json({ error: "El modo debe ser 'oscuro', 'claro' o 'auto'." });
+  await usuarios.cambiarTema(req.usuario!.id, tema);
+  res.json(await usuarios.porId(req.usuario!.id));
 });
 
 /** Cambiar la propia contrasena (obligatorio tras una clave temporal). */

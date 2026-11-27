@@ -98,7 +98,14 @@ export interface Usuario {
   rol: Rol;
   ultimoAcceso: Date | null;
   creadoEn: Date;
+  /** Modo de la pantalla que eligio: fijo ('oscuro' o 'claro') o 'auto' (por la hora). null = nunca eligio (automatico). */
+  tema: Tema | null;
 }
+
+/** Modos de la pantalla: uno fijo o automatico (claro de dia, oscuro de noche). */
+export type Tema = "oscuro" | "claro" | "auto";
+/** El texto si es un modo valido; si no, null. */
+export const temaDe = (t: unknown): Tema | null => (t === "oscuro" || t === "claro" || t === "auto" ? t : null);
 
 /**
  * Fila de la tabla usuarios -> objeto Usuario (sin el hash de la clave, que
@@ -114,6 +121,7 @@ function mapUsuario(r: any): Usuario {
     rol: rolDe(r.rol),
     ultimoAcceso: r.ultimoAcceso ?? null,
     creadoEn: r.creadoEn,
+    tema: temaDe(r.tema),
   };
 }
 
@@ -162,6 +170,10 @@ export const usuarios = {
    */
   async cambiarClave(id: number, clave: string, debeCambiar: boolean): Promise<void> {
     await pool.query("UPDATE usuarios SET claveHash = ?, debeCambiarClave = ? WHERE id = ?", [await hashClave(clave), debeCambiar ? 1 : 0, id]);
+  },
+  /** Guarda el modo de la pantalla que eligio el usuario. */
+  async cambiarTema(id: number, tema: Tema): Promise<void> {
+    await pool.query("UPDATE usuarios SET tema = ? WHERE id = ?", [tema, id]);
   },
   /** Cambia nombre, estado activo y/o rol. Los campos ausentes no se tocan. */
   async actualizar(id: number, datos: { nombre?: string; activo?: boolean; rol?: Rol }): Promise<void> {

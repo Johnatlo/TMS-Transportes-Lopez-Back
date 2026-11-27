@@ -86,8 +86,8 @@ const PESADAS = new Set([
   "liquidaciones_duenos.filas",
   "liquidaciones_duenos.conceptos",
 ]);
-/** Columnas que cambian solas (no son un cambio de nadie). */
-const AUTOMATICAS = /^(actualizadoEn|modificadoEn|actualizado_en|ultimoAcceso)$/;
+/** Columnas que cambian solas o son preferencias (no son un cambio de datos de nadie). */
+const AUTOMATICAS = /^(actualizadoEn|modificadoEn|actualizado_en|ultimoAcceso|tema)$/;
 
 /** Estado de la bitacora: si los triggers quedaron creados, o por que no. */
 let estadoBitacora: { activa: boolean; error: string | null; tablas: number } = { activa: false, error: "Aun no se ha instalado.", tablas: 0 };

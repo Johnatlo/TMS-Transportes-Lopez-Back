@@ -1185,6 +1185,8 @@ export async function initSchema(): Promise<void> {
     ["cuadro_anticipos", "cruzadoManual", "DATE"],
     // Roles (ver src/roles.ts): TOTAL, ADMINISTRATIVO o MYC.
     ["usuarios", "rol", "VARCHAR(20) NOT NULL DEFAULT 'ADMINISTRATIVO'"],
+    // Modo de la pantalla que eligio cada usuario: 'oscuro' o 'claro' (vacio = el de por defecto).
+    ["usuarios", "tema", "VARCHAR(10)"],
     // Fecha desde la que se registran gastos (los de antes se cargaran despues).
     ["parametros_empresa", "gastosDesde", "DATE NOT NULL DEFAULT '2026-10-01'"],
     // Gastos de la nomina: causados por dias hasta causaHasta, y de que nomina salen.

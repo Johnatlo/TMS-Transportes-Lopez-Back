@@ -381,6 +381,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/auth/login` | Inicio de sesion con email y contrasena. El mensaje de error es el mismo para email inexistente y clave errada: no revela que correos tienen cuenta. |
 | `POST` | `/api/auth/logout` | Cierra la sesion del token de la cookie (si hay) y borra la cookie. Responde 204 sin cuerpo. |
 | `GET` | `/api/auth/sesion` | Quien soy: lo usa el frontend al abrir para saber si hay sesion. |
+| `PUT` | `/api/auth/preferencias` | Preferencias propias: por ahora el modo de la pantalla ('oscuro', 'claro' o 'auto' por la hora). |
 | `POST` | `/api/auth/cambiar-clave` | Cambiar la propia contrasena (obligatorio tras una clave temporal). |
 | `POST` | `/api/auth/recuperar` | Paso 1: pedir un codigo. La respuesta es la MISMA exista o no el correo: no revela que cuentas existen. Tras 5 pedidos seguidos para el mismo correo, se bloquea un rato. |
 | `POST` | `/api/auth/recuperar/confirmar` | Paso 2: con el codigo recibido, crear la contrasena nueva. |
@@ -545,12 +546,12 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1133 funciones, componentes, métodos y rutas en 76 archivos._
+_1136 funciones, componentes, métodos y rutas en 76 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
-- [`src/auth.ts`](#srcauthts) (36)
+- [`src/auth.ts`](#srcauthts) (38)
 - [`src/bitacora.ts`](#srcbitacorats) (13)
 - [`src/calculoConductores.ts`](#srccalculoconductorests) (11)
 - [`src/calculoNomina.ts`](#srccalculonominats) (14)
@@ -597,7 +598,7 @@ _1133 funciones, componentes, métodos y rutas en 76 archivos._
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/roles.ts`](#srcrolests) (9)
-- [`src/routes/auth.ts`](#srcroutesauthts) (6)
+- [`src/routes/auth.ts`](#srcroutesauthts) (7)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (19)
 - [`src/routes/control.ts`](#srcroutescontrolts) (5)
@@ -942,6 +943,9 @@ _1133 funciones, componentes, métodos y rutas en 76 archivos._
 - **`claveTemporal()`** · _función_
   Contrasena temporal legible (sin 0/O ni 1/l para dictarla sin confusiones).
 
+- **`temaDe(t)`** · _función_
+  El texto si es un modo valido; si no, null.
+
 - **`mapUsuario(r)`** · _función_
   Fila de la tabla usuarios -> objeto Usuario (sin el hash de la clave, que
   solo sale de este modulo en conClavePorEmail).
@@ -971,6 +975,9 @@ _1133 funciones, componentes, métodos y rutas en 76 archivos._
   - **`usuarios.cambiarClave(id, clave, debeCambiar)`** · _método_
     Reemplaza la clave de un usuario (guarda el hash nuevo) y fija si debe
     cambiarla en el proximo ingreso.
+
+  - **`usuarios.cambiarTema(id, tema)`** · _método_
+    Guarda el modo de la pantalla que eligio el usuario.
 
   - **`usuarios.actualizar(id, datos)`** · _método_
     Cambia nombre, estado activo y/o rol. Los campos ausentes no se tocan.
@@ -4448,6 +4455,9 @@ _1133 funciones, componentes, métodos y rutas en 76 archivos._
 
 - **`GET /sesion`** · _ruta HTTP_
   Quien soy: lo usa el frontend al abrir para saber si hay sesion.
+
+- **`PUT /preferencias`** · _ruta HTTP_
+  Preferencias propias: por ahora el modo de la pantalla ('oscuro', 'claro' o 'auto' por la hora).
 
 - **`POST /cambiar-clave`** · _ruta HTTP_
   Cambiar la propia contrasena (obligatorio tras una clave temporal).
