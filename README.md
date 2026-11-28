@@ -382,6 +382,9 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `POST` | `/api/auth/logout` | Cierra la sesion del token de la cookie (si hay) y borra la cookie. Responde 204 sin cuerpo. |
 | `GET` | `/api/auth/sesion` | Quien soy: lo usa el frontend al abrir para saber si hay sesion. |
 | `PUT` | `/api/auth/preferencias` | Preferencias propias: por ahora el modo de la pantalla ('oscuro', 'claro' o 'auto' por la hora). |
+| `GET` | `/api/auth/inicio` | Su inicio personalizado: { tarjetas } (null = usa el inicio de su rol). |
+| `PUT` | `/api/auth/inicio` | Guarda su inicio personalizado ({ tarjetas: [{ id, x, y, w, h }] }). |
+| `DELETE` | `/api/auth/inicio` | Vuelve al inicio de su rol. |
 | `POST` | `/api/auth/cambiar-clave` | Cambiar la propia contrasena (obligatorio tras una clave temporal). |
 | `POST` | `/api/auth/recuperar` | Paso 1: pedir un codigo. La respuesta es la MISMA exista o no el correo: no revela que cuentas existen. Tras 5 pedidos seguidos para el mismo correo, se bloquea un rato. |
 | `POST` | `/api/auth/recuperar/confirmar` | Paso 2: con el codigo recibido, crear la contrasena nueva. |
@@ -546,7 +549,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1145 funciones, componentes, métodos y rutas en 76 archivos._
+_1158 funciones, componentes, métodos y rutas en 77 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -554,7 +557,7 @@ _1145 funciones, componentes, métodos y rutas en 76 archivos._
 - [`src/auth.ts`](#srcauthts) (38)
 - [`src/bitacora.ts`](#srcbitacorats) (13)
 - [`src/calculoConductores.ts`](#srccalculoconductorests) (14)
-- [`src/calculoNomina.ts`](#srccalculonominats) (14)
+- [`src/calculoNomina.ts`](#srccalculonominats) (18)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (10)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
@@ -574,6 +577,7 @@ _1145 funciones, componentes, métodos y rutas en 76 archivos._
 - [`src/gastos.ts`](#srcgastosts) (38)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
+- [`src/inicioUsuario.ts`](#srciniciousuariots) (6)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
 - [`src/nomina.ts`](#srcnominats) (38)
 - [`src/perfilVehiculos.ts`](#srcperfilvehiculosts) (3)
@@ -598,7 +602,7 @@ _1145 funciones, componentes, métodos y rutas en 76 archivos._
 - [`src/rndc/sicetac.ts`](#srcrndcsicetacts) (14)
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/roles.ts`](#srcrolests) (9)
-- [`src/routes/auth.ts`](#srcroutesauthts) (7)
+- [`src/routes/auth.ts`](#srcroutesauthts) (10)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (21)
 - [`src/routes/control.ts`](#srcroutescontrolts) (5)
@@ -1255,10 +1259,33 @@ _1145 funciones, componentes, métodos y rutas en 76 archivos._
 - **`diasPeriodo(desde, hasta)`** · _función_
   Dias de nomina de un periodo (mes comercial de 30 dias): del 21/10 al 20/11 son 30.
 
+- **`nombreNormal(n)`** · _función_
+  Nombre para comparar: mayusculas, sin tildes y un espacio entre palabras ("Jose  Muñoz" = "JOSE MUNOZ").
+
+- **`cedulaNormal(c)`** · _función_
+  Solo los digitos de una cedula ("1.022.944.480" = "1022944480").
+
+- **`conductorDelViaje(f, catalogoPorNombre)`** · _función_
+  Quien manejo un viaje, con lo que trae el viaje: si en el Cuadro le
+  cambiaron el conductor (distinto al del manifiesto), ese, con su cedula si
+  esta en el catalogo de conductores; si no, el conductor del manifiesto (su
+  id y cedula del RNDC). Si el texto del manifiesto es una cedula, se usa como
+  cedula. null si el viaje no dice nada.
+
+- **`reconocerConductor(viaje, empleados, asignaciones)`** · _función_
+  A que empleado se le cuenta un viaje (producido, cuenta de viaje y
+  liquidacion). Primero quien lo manejo: el empleado con su cedula, con su
+  conductor del RNDC o, si no, con el mismo nombre (solo si hay uno). Si el
+  viaje no dice quien lo manejo o esa persona no esta en Nomina, la
+  asignacion del vehiculo en esa fecha (si dos, la que empezo despues). Entre
+  empleados con la misma identidad (reingresos) gana el vigente en la fecha.
+  Sin ninguno, el motivo para mostrarlo.
+
 - **`producidoPorConductor(viajes, asignaciones)`** · _función_
   Producido de cada conductor (como el Excel): la suma del flete de los
-  viajes de los vehiculos que manejaba, segun la fecha del viaje y su
-  asignacion de vehiculo. Si un conductor cambio de carro en el mes, suma los
+  viajes que manejo (el empleado ya reconocido en cada viaje, ver
+  reconocerConductor) o, si el viaje no lo trae, de los vehiculos que tenia
+  asignados segun la fecha del viaje. Si un conductor cambio de carro en el mes, suma los
   dos (Ferney en octubre: SZX-880 y SOR-429). Si dos asignaciones cubren la
   misma fecha, gana la que empezo despues. Los viajes sin tarifa no suman y
   se cuentan aparte.
@@ -2432,6 +2459,33 @@ _1145 funciones, componentes, métodos y rutas en 76 archivos._
      las rutas de React.
   5. Manejador de errores comun y escucha en el puerto configurado.
 
+### `src/inicioUsuario.ts`
+
+> Inicio personalizado de cada usuario: que tarjetas tiene en su pagina de
+> inicio y donde (columna, fila, ancho y alto en la rejilla de 12 columnas).
+> Es una preferencia: no va a la bitacora.
+
+- **`entero(v, min, max)`** · _función_
+  v si es un entero entre min y max; si no, null.
+
+- **`limpiarDisposicion(entrada)`** · _función_
+  Valida la disposicion que manda el navegador: una lista de tarjetas con id
+  corto (letras minusculas, numeros, guion y dos puntos) y un lugar dentro de
+  la rejilla. Sin ids repetidos ni mas de MAXIMO_TARJETAS. Devuelve null si
+  algo no cuadra (no guarda a medias).
+
+- **`inicioUsuario`** · _módulo_
+  Lectura y guardado del inicio de cada usuario (tabla inicio_usuario).
+
+  - **`inicioUsuario.leer(usuarioId)`** · _método_
+    El inicio guardado del usuario, o null si usa el de su rol.
+
+  - **`inicioUsuario.guardar(usuarioId, tarjetas)`** · _método_
+    Guarda (o reemplaza) el inicio del usuario.
+
+  - **`inicioUsuario.borrar(usuarioId)`** · _método_
+    Vuelve al inicio de su rol (borra el guardado).
+
 ### `src/liquidacionDuenos.ts`
 
 > Liquidacion a los duenos (docs/Liq duenos ejemplo.xlsx, "CUENTAS MILLER A
@@ -2617,7 +2671,9 @@ _1145 funciones, componentes, métodos y rutas en 76 archivos._
 - **`viajesDelCuadro(desde, hasta)`** · _función_
   Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su
   PRODUCIDO CONDUCTOR como flete (matriz de fletes conductor o el escrito a
-  mano en su cuenta de viaje; null = sin valor, no suma).
+  mano en su cuenta de viaje; null = sin valor, no suma) y el empleado al
+  que se le cuenta: quien lo manejo o el asignado al vehiculo, igual que en
+  Cuentas conductores (conductores.producidoEntre).
 
 - **`repartoAutomatico(calculo, sistema, e, desde, hasta, vehiculoId)`** · _función_
   A quien va el costo de un conductor: si manejo varios carros en el periodo,
@@ -4489,6 +4545,15 @@ _1145 funciones, componentes, métodos y rutas en 76 archivos._
 
 - **`PUT /preferencias`** · _ruta HTTP_
   Preferencias propias: por ahora el modo de la pantalla ('oscuro', 'claro' o 'auto' por la hora).
+
+- **`GET /inicio`** · _ruta HTTP_
+  Su inicio personalizado: { tarjetas } (null = usa el inicio de su rol).
+
+- **`PUT /inicio`** · _ruta HTTP_
+  Guarda su inicio personalizado ({ tarjetas: [{ id, x, y, w, h }] }).
+
+- **`DELETE /inicio`** · _ruta HTTP_
+  Vuelve al inicio de su rol.
 
 - **`POST /cambiar-clave`** · _ruta HTTP_
   Cambiar la propia contrasena (obligatorio tras una clave temporal).

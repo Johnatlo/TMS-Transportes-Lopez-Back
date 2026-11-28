@@ -40,6 +40,8 @@ import {
 } from "./calculoConductores";
 import type { Concepto, FleteConductor, TipoFleteConductor, GastosCuenta, LiquidacionConductor, NominaConductor } from "./calculoConductores";
 import { finDeMes } from "./calculoUtilidades";
+import { conductorDelViaje, nombreNormal, reconocerConductor } from "./calculoNomina";
+import type { EmpleadoIdentidad } from "./calculoNomina";
 import { gastos } from "./gastos";
 import { mesesCongeladosConductores } from "./proteccion";
 import { mesesTocados } from "./proteccionMeses";
@@ -93,9 +95,18 @@ export interface ViajeConductor {
   pesoKg: number | null;
   tarifaFleteId: number | null;
   tarifa: string | null;
-  /** Conductor segun la asignacion de vehiculos de Nomina (null = sin asignar). */
+  /**
+   * Empleado al que se le cuenta: quien manejo el viaje (Cuadro o manifiesto)
+   * o, si no esta en Nomina, el asignado al vehiculo (null = de nadie).
+   */
   empleadoId: number | null;
   conductor: string | null;
+  /** Como se reconocio: por quien manejo o por la asignacion del vehiculo. */
+  conductorPor: "conductor" | "vehiculo" | null;
+  /** Quien manejo segun el viaje (puede no ser empleado). */
+  conductorViaje: string | null;
+  /** Por que no tiene conductor (null si tiene). */
+  motivoSinConductor: string | null;
   /** Producido conductor: de la matriz o escrito a mano (null = sin valor). */
   producido: number | null;
   producidoMatriz: number | null;
@@ -178,11 +189,14 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
             (SELECT COALESCE(SUM(a.efectivo), 0) FROM cuadro_anticipos a WHERE a.cuadroViajeId = c.id) AS efectivo,
             (SELECT COALESCE(SUM(a.combustible), 0) FROM cuadro_anticipos a WHERE a.cuadroViajeId = c.id) AS combustible,
             cv.id AS cuentaId, cv.producidoManual, cv.acpm, cv.peajes, cv.cargue, cv.descargue, cv.parqueo, cv.llantas, cv.lavada, cv.comision,
-            cv.engrase, cv.propinas, cv.arreglos, cv.accesorios, cv.otros, cv.otrosConcepto, cv.nota, cv.gastoId
+            cv.engrase, cv.propinas, cv.arreglos, cv.accesorios, cv.otros, cv.otrosConcepto, cv.nota, cv.gastoId,
+            c.conductor AS conductorCuadro, c.conductorManifiesto, vj.conductorId AS conductorRndcId, co.cedula AS conductorCedula, co.nombre AS conductorNombre
        FROM cuadro_viajes c
        JOIN vehiculos v ON v.id = COALESCE(c.vehiculoId, (SELECT x.id FROM vehiculos x WHERE x.placa = c.placa AND x.eliminado = 0 LIMIT 1))
        LEFT JOIN tarifas_flete tf ON tf.id = c.tarifaFleteId
        LEFT JOIN cuentas_viaje cv ON cv.cuadroViajeId = c.id
+       LEFT JOIN viajes vj ON vj.id = c.viajeId
+       LEFT JOIN conductores co ON co.id = vj.conductorId
       WHERE c.anulado = 0 AND c.reconocidoDeViajeId IS NULL AND c.fecha BETWEEN ? AND ?
         AND v.empresa IS NOT NULL ${empresa ? "AND (v.empresa = ? OR v.visibleTodos = 1)" : ""}
       ORDER BY c.fecha, c.placa, c.id`,
@@ -197,15 +211,42 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
         [ids],
       )
     : [[] as RowDataPacket[]];
-  const [asig] = await pool.query<RowDataPacket[]>(
-    `SELECT ev.empleadoId, ev.vehiculoId, ev.desde, ev.hasta, e.nombre FROM empleados_vehiculos ev JOIN empleados e ON e.id = ev.empleadoId`,
-  );
+  const [asig] = await pool.query<RowDataPacket[]>(`SELECT empleadoId, vehiculoId, desde, hasta FROM empleados_vehiculos`);
+  const asignaciones = asig.map((x) => ({ empleadoId: x.empleadoId as number, vehiculoId: x.vehiculoId as number, desde: dia(x.desde)!, hasta: dia(x.hasta) }));
+  const [emps] = await pool.query<RowDataPacket[]>("SELECT id, nombre, cedula, conductorId, fechaIngreso, fechaRetiro FROM empleados WHERE tipo = 'CONDUCTOR'");
+  const empleados: EmpleadoIdentidad[] = emps.map((e) => ({
+    id: e.id,
+    nombre: e.nombre,
+    cedula: e.cedula ?? null,
+    conductorId: e.conductorId ?? null,
+    fechaIngreso: dia(e.fechaIngreso)!,
+    fechaRetiro: dia(e.fechaRetiro),
+  }));
+  const nombreEmpleado = new Map(empleados.map((e) => [e.id, e.nombre]));
+  // Conductores del RNDC por nombre (solo los nombres sin repetir), para los cambiados a mano en el Cuadro.
+  const [cats] = await pool.query<RowDataPacket[]>("SELECT id, nombre, cedula FROM conductores");
+  const repetidos = new Set<string>();
+  const catalogo = new Map<string, { id: number; cedula: string | null }>();
+  for (const c of cats) {
+    const k = nombreNormal(c.nombre);
+    if (catalogo.has(k)) repetidos.add(k);
+    catalogo.set(k, { id: c.id, cedula: c.cedula ?? null });
+  }
+  for (const k of repetidos) catalogo.delete(k);
   return filas.map((f) => {
     const fecha = dia(f.fecha)!;
-    // Conductor: la asignacion de ese vehiculo en esa fecha (si dos, la que empezo despues), como en la nomina.
-    const a = asig
-      .filter((x) => x.vehiculoId === f.vehiculoId && dia(x.desde)! <= fecha && (!x.hasta || dia(x.hasta)! >= fecha))
-      .sort((x, y) => dia(y.desde)!.localeCompare(dia(x.desde)!))[0];
+    // A quien se le cuenta: quien lo manejo y, si no esta en Nomina, el asignado al vehiculo (como en la nomina).
+    const manejo = conductorDelViaje(
+      {
+        cuadro: f.conductorCuadro ?? null,
+        manifiesto: f.conductorManifiesto ?? null,
+        conductorId: f.conductorRndcId ?? null,
+        cedula: f.conductorCedula ?? null,
+        nombre: f.conductorNombre ?? null,
+      },
+      catalogo,
+    );
+    const r = reconocerConductor({ vehiculoId: f.vehiculoId, fecha, conductor: manejo }, empleados, asignaciones);
     const viaje = { fecha, tarifaFleteId: f.tarifaFleteId ?? null, pesoKg: Number(f.pesoKg) || null };
     const matriz = producidoConductor(viaje, fletes);
     const manual = num(f.producidoManual);
@@ -248,8 +289,11 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
       pesoKg: num(f.pesoKg),
       tarifaFleteId: f.tarifaFleteId ?? null,
       tarifa: f.tarifa ?? null,
-      empleadoId: a?.empleadoId ?? null,
-      conductor: a?.nombre ?? null,
+      empleadoId: r.empleadoId,
+      conductor: r.empleadoId ? (nombreEmpleado.get(r.empleadoId) ?? null) : null,
+      conductorPor: r.por,
+      conductorViaje: manejo?.nombre ?? manejo?.cedula ?? null,
+      motivoSinConductor: r.motivo,
       producido: manual ?? matriz,
       producidoMatriz: matriz,
       producidoManual: manual !== null,
@@ -453,8 +497,8 @@ export const conductores = {
   },
 
   /** Producido conductor por viaje entre dos fechas y si es integro (lo usa la nomina). */
-  async producidoEntre(desde: string, hasta: string): Promise<Map<number, { valor: number | null; integro: boolean }>> {
-    return new Map((await viajesEntre(desde, hasta, null)).map((v) => [v.cuadroViajeId, { valor: v.producido, integro: v.integro }]));
+  async producidoEntre(desde: string, hasta: string): Promise<Map<number, { valor: number | null; integro: boolean; empleadoId: number | null }>> {
+    return new Map((await viajesEntre(desde, hasta, null)).map((v) => [v.cuadroViajeId, { valor: v.producido, integro: v.integro, empleadoId: v.empleadoId }]));
   },
 
   /**
@@ -725,7 +769,12 @@ export const conductores = {
   async liquidacion(
     mes: unknown,
     empresa: EmpresaVehiculo | null,
-  ): Promise<{ mes: string; conductores: LiquidacionMesConductor[]; viajesSinConductor: number }> {
+  ): Promise<{
+    mes: string;
+    conductores: LiquidacionMesConductor[];
+    viajesSinConductor: number;
+    motivosSinConductor: Array<{ motivo: string; viajes: number }>;
+  }> {
     const m = mesDe(mes);
     const viajes = await this.viajes(m, empresa);
     const { nomina } = await import("./nomina");
@@ -804,7 +853,16 @@ export const conductores = {
         pagada: pagada ? { fechaPago: dia(pagada.fechaPago)!, total: Number(pagada.total) } : null,
       });
     }
-    return { mes: m, conductores, viajesSinConductor: viajes.filter((v) => !v.empleadoId).length };
+    // Por que quedan viajes sin conductor (los motivos que mas se repiten primero).
+    const motivos = new Map<string, number>();
+    for (const v of viajes)
+      if (!v.empleadoId) motivos.set(v.motivoSinConductor ?? "Sin conductor", (motivos.get(v.motivoSinConductor ?? "Sin conductor") ?? 0) + 1);
+    return {
+      mes: m,
+      conductores,
+      viajesSinConductor: viajes.filter((v) => !v.empleadoId).length,
+      motivosSinConductor: [...motivos].map(([motivo, n]) => ({ motivo, viajes: n })).sort((a, b) => b.viajes - a.viajes),
+    };
   },
 
   /** Liquida al conductor en un mes ({ fechaPago }: la fecha en que el gerente lo liquida), con su total de ese momento. No depende de la nomina. */

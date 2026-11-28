@@ -775,6 +775,17 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Inicio personalizado de cada usuario (sus tarjetas y donde van). Es una
+  // preferencia: no va a la bitacora. Se borra con el usuario.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inicio_usuario (
+      usuarioId INT PRIMARY KEY,
+      disposicion TEXT NOT NULL,
+      actualizadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_inicio_usuario FOREIGN KEY (usuarioId) REFERENCES usuarios(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Codigos para recuperar la contrasena por correo. Se guarda el hash del
   // codigo, cuando vence y cuantos intentos fallidos lleva.
   await pool.query(`

@@ -13,8 +13,11 @@ import {
   pila,
   porcentajesDe,
   producidoPorConductor,
+  conductorDelViaje,
+  nombreNormal,
+  reconocerConductor,
 } from "./calculoNomina";
-import type { AsignacionVehiculo, EntradaLinea, ParametrosNomina, ViajeProducido } from "./calculoNomina";
+import type { AsignacionVehiculo, EmpleadoIdentidad, EntradaLinea, ParametrosNomina, ViajeProducido } from "./calculoNomina";
 
 /** Parametros 2026 del Excel. */
 const P2026: ParametrosNomina = {
@@ -315,5 +318,85 @@ describe("viajes con flete conductor INTEGRO (se pagan completos, sin %)", () =>
     ).get(7)!;
     expect([p.total, p.integro]).toEqual([4_400_000, 200_000]);
     expect(p.porVehiculo[0]).toMatchObject({ producido: 4_400_000, integro: 200_000, viajes: 2 });
+  });
+});
+
+describe("a quien se le cuenta un viaje (quien lo manejo, luego el vehiculo)", () => {
+  const empleados: EmpleadoIdentidad[] = [
+    { id: 1, nombre: "HOLMAN HERNAN HERNANDEZ REINA", cedula: "2.964.552", conductorId: null, fechaIngreso: "2025-01-01", fechaRetiro: null },
+    { id: 2, nombre: "Ferney Camilo Becerra Muñoz", cedula: null, conductorId: 23, fechaIngreso: "2025-01-01", fechaRetiro: null },
+    { id: 3, nombre: "MILLER JAVIER LOPEZ CUENCA", cedula: "1022944480", conductorId: null, fechaIngreso: "2025-01-01", fechaRetiro: "2026-06-30" },
+    { id: 4, nombre: "MILLER JAVIER LOPEZ CUENCA", cedula: "1022944480", conductorId: null, fechaIngreso: "2026-08-01", fechaRetiro: null },
+  ];
+  // SZX-880 asignado a Ferney desde octubre.
+  const asignaciones: AsignacionVehiculo[] = [{ empleadoId: 2, vehiculoId: 45, desde: "2026-10-01", hasta: null }];
+  const viaje = (conductor: Parameters<typeof reconocerConductor>[0]["conductor"], fecha = "2026-11-20", vehiculoId = 45) => ({ vehiculoId, fecha, conductor });
+
+  test("gana quien manejo (por cedula, aunque el carro sea de otro), no el asignado", () => {
+    expect(reconocerConductor(viaje({ nombre: "HOLMAN", cedula: "2964552", conductorId: 77 }), empleados, asignaciones)).toEqual({
+      empleadoId: 1,
+      por: "conductor",
+      motivo: null,
+    });
+  });
+
+  test("por el conductor del RNDC enlazado o por el nombre sin tildes", () => {
+    expect(reconocerConductor(viaje({ nombre: null, cedula: null, conductorId: 23 }, "2026-11-20", 99), empleados, []).empleadoId).toBe(2);
+    expect(
+      reconocerConductor(viaje({ nombre: "ferney  camilo becerra munoz", cedula: null, conductorId: null }, "2026-11-20", 99), empleados, []).empleadoId,
+    ).toBe(2);
+  });
+
+  test("con dos registros de la misma persona (reingreso), el vigente en la fecha", () => {
+    const c = { nombre: null, cedula: "1022944480", conductorId: null };
+    expect(reconocerConductor(viaje(c, "2026-05-10"), empleados, []).empleadoId).toBe(3);
+    expect(reconocerConductor(viaje(c, "2026-11-10"), empleados, []).empleadoId).toBe(4);
+  });
+
+  test("si quien manejo no esta en Nomina, la asignacion del vehiculo; si tampoco, el motivo", () => {
+    const juan = { nombre: "JUAN PEREZ", cedula: "555555", conductorId: 9 };
+    expect(reconocerConductor(viaje(juan), empleados, asignaciones)).toEqual({ empleadoId: 2, por: "vehiculo", motivo: null });
+    expect(reconocerConductor(viaje(juan, "2026-09-15"), empleados, asignaciones).motivo).toBe(
+      "JUAN PEREZ (CC 555555) no esta registrado como empleado en Nomina > Empleados",
+    );
+    expect(reconocerConductor(viaje(null, "2026-09-15"), empleados, asignaciones).motivo).toMatch(/no dice quien lo manejo/);
+  });
+
+  test("quien manejo: el cambiado en el Cuadro, o el del manifiesto (con su cedula)", () => {
+    const catalogo = new Map([[nombreNormal("KEVIN JAVIER SOTO NIÑO"), { id: 5, cedula: "79832822" }]]);
+    // Cambiado en el Cuadro: se busca en el catalogo de conductores.
+    expect(
+      conductorDelViaje({ cuadro: "Kevin Javier Soto Niño", manifiesto: "OTRO SEÑOR", conductorId: 12, cedula: "111", nombre: "OTRO SEÑOR" }, catalogo),
+    ).toEqual({
+      nombre: "Kevin Javier Soto Niño",
+      cedula: "79832822",
+      conductorId: 5,
+    });
+    // Igual al manifiesto: el del RNDC.
+    expect(
+      conductorDelViaje({ cuadro: "HOLMAN HERNAN", manifiesto: "HOLMAN HERNAN", conductorId: 77, cedula: "2964552", nombre: "HOLMAN HERNAN" }, catalogo),
+    ).toEqual({
+      nombre: "HOLMAN HERNAN",
+      cedula: "2964552",
+      conductorId: 77,
+    });
+    // El manifiesto trae una cedula en vez del nombre.
+    expect(conductorDelViaje({ cuadro: null, manifiesto: "79832822", conductorId: null, cedula: null, nombre: null }, catalogo)).toEqual({
+      nombre: null,
+      cedula: "79832822",
+      conductorId: null,
+    });
+    expect(conductorDelViaje({ cuadro: "", manifiesto: null, conductorId: null, cedula: null, nombre: null }, catalogo)).toBeNull();
+  });
+
+  test("el producido de la nomina usa el empleado ya reconocido en cada viaje", () => {
+    const viajes: ViajeProducido[] = [
+      { id: 1, fecha: "2026-11-02", vehiculoId: 45, flete: 100, empleadoId: 1 },
+      { id: 2, fecha: "2026-11-03", vehiculoId: 45, flete: 50, empleadoId: null },
+      { id: 3, fecha: "2026-11-04", vehiculoId: 45, flete: 70 },
+    ];
+    const p = producidoPorConductor(viajes, asignaciones);
+    expect(p.get(1)?.total).toBe(100);
+    expect(p.get(2)?.total).toBe(70);
   });
 });

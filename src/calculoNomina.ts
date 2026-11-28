@@ -253,6 +253,8 @@ export interface ViajeProducido {
   flete: number | null;
   /** Flete conductor INTEGRO: se paga completo, no va al %. */
   integro?: boolean;
+  /** Empleado ya reconocido (reconocerConductor); sin esto, por la asignacion del vehiculo. null = de nadie. */
+  empleadoId?: number | null;
 }
 
 /** Vehiculo de un conductor con fechas (empleados_vehiculos). */
@@ -261,6 +263,111 @@ export interface AsignacionVehiculo {
   vehiculoId: number;
   desde: string;
   hasta: string | null;
+}
+
+/** Un empleado conductor con lo que lo identifica en un viaje. */
+export interface EmpleadoIdentidad {
+  id: number;
+  nombre: string;
+  cedula: string | null;
+  /** Su conductor en el catalogo de conductores del RNDC. */
+  conductorId: number | null;
+  fechaIngreso: string;
+  fechaRetiro: string | null;
+}
+
+/** Quien manejo un viaje (el del Cuadro o el del manifiesto). */
+export interface ConductorViaje {
+  nombre: string | null;
+  cedula: string | null;
+  conductorId: number | null;
+}
+
+/** A quien se le cuenta un viaje: el empleado y por que, o el motivo de que no tenga. */
+export type ConductorReconocido = { empleadoId: number; por: "conductor" | "vehiculo"; motivo: null } | { empleadoId: null; por: null; motivo: string };
+
+/** Nombre para comparar: mayusculas, sin tildes y un espacio entre palabras ("Jose  Muñoz" = "JOSE MUNOZ"). */
+export function nombreNormal(n: string | null | undefined): string {
+  return (n ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Solo los digitos de una cedula ("1.022.944.480" = "1022944480"). */
+export function cedulaNormal(c: string | null | undefined): string {
+  return (c ?? "").replace(/\D/g, "");
+}
+
+/**
+ * Quien manejo un viaje, con lo que trae el viaje: si en el Cuadro le
+ * cambiaron el conductor (distinto al del manifiesto), ese, con su cedula si
+ * esta en el catalogo de conductores; si no, el conductor del manifiesto (su
+ * id y cedula del RNDC). Si el texto del manifiesto es una cedula, se usa como
+ * cedula. null si el viaje no dice nada.
+ */
+export function conductorDelViaje(
+  f: { cuadro: string | null; manifiesto: string | null; conductorId: number | null; cedula: string | null; nombre: string | null },
+  catalogoPorNombre: Map<string, { id: number; cedula: string | null }>,
+): ConductorViaje | null {
+  const cuadro = nombreNormal(f.cuadro);
+  const manifiestoEsCedula = /^\d{5,}$/.test(cedulaNormal(f.manifiesto)) && !/[A-Za-z]/.test(f.manifiesto ?? "");
+  const cambiado = cuadro !== "" && cuadro !== nombreNormal(f.manifiesto) && cuadro !== nombreNormal(f.nombre);
+  if (cambiado) {
+    const c = catalogoPorNombre.get(cuadro);
+    return { nombre: f.cuadro!.trim(), cedula: c?.cedula ?? null, conductorId: c?.id ?? null };
+  }
+  const nombre = f.nombre ?? (f.cuadro?.trim() || null) ?? (manifiestoEsCedula ? null : f.manifiesto?.trim() || null);
+  const cedula = f.cedula ?? (manifiestoEsCedula ? cedulaNormal(f.manifiesto) : null);
+  if (!nombre && !cedula && !f.conductorId) return null;
+  return { nombre, cedula, conductorId: f.conductorId };
+}
+
+/**
+ * A que empleado se le cuenta un viaje (producido, cuenta de viaje y
+ * liquidacion). Primero quien lo manejo: el empleado con su cedula, con su
+ * conductor del RNDC o, si no, con el mismo nombre (solo si hay uno). Si el
+ * viaje no dice quien lo manejo o esa persona no esta en Nomina, la
+ * asignacion del vehiculo en esa fecha (si dos, la que empezo despues). Entre
+ * empleados con la misma identidad (reingresos) gana el vigente en la fecha.
+ * Sin ninguno, el motivo para mostrarlo.
+ */
+export function reconocerConductor(
+  viaje: { vehiculoId: number; fecha: string; conductor: ConductorViaje | null },
+  empleados: EmpleadoIdentidad[],
+  asignaciones: AsignacionVehiculo[],
+): ConductorReconocido {
+  const c = viaje.conductor;
+  if (c) {
+    const vigente = (e: EmpleadoIdentidad) => e.fechaIngreso <= viaje.fecha && (!e.fechaRetiro || e.fechaRetiro >= viaje.fecha);
+    const elegir = (lista: EmpleadoIdentidad[]) => {
+      if (!lista.length) return null;
+      const vigentes = lista.filter(vigente);
+      return (vigentes.length ? vigentes : lista).sort((a, b) => b.fechaIngreso.localeCompare(a.fechaIngreso))[0];
+    };
+    const ced = cedulaNormal(c.cedula);
+    const nom = nombreNormal(c.nombre);
+    const porNombre = nom ? empleados.filter((e) => nombreNormal(e.nombre) === nom) : [];
+    const e =
+      (ced && elegir(empleados.filter((x) => cedulaNormal(x.cedula) === ced))) ||
+      (c.conductorId && elegir(empleados.filter((x) => x.conductorId === c.conductorId))) ||
+      (new Set(porNombre.map((x) => cedulaNormal(x.cedula) || x.id)).size === 1 ? elegir(porNombre) : null);
+    if (e) return { empleadoId: e.id, por: "conductor", motivo: null };
+  }
+  const a = asignaciones
+    .filter((x) => x.vehiculoId === viaje.vehiculoId && x.desde <= viaje.fecha && (!x.hasta || x.hasta >= viaje.fecha))
+    .sort((x, y) => y.desde.localeCompare(x.desde))[0];
+  if (a) return { empleadoId: a.empleadoId, por: "vehiculo", motivo: null };
+  if (c && (c.nombre || c.cedula))
+    return {
+      empleadoId: null,
+      por: null,
+      motivo: `${c.nombre ?? "El conductor"}${c.cedula ? ` (CC ${cedulaNormal(c.cedula)})` : ""} no esta registrado como empleado en Nomina > Empleados`,
+    };
+  return { empleadoId: null, por: null, motivo: "El viaje no dice quien lo manejo y su vehiculo no esta asignado a nadie en esa fecha (Nomina > Empleados)" };
 }
 
 /** Producido de un conductor: el total y cuanto en cada vehiculo. */
@@ -276,8 +383,9 @@ export interface ProducidoConductor {
 
 /**
  * Producido de cada conductor (como el Excel): la suma del flete de los
- * viajes de los vehiculos que manejaba, segun la fecha del viaje y su
- * asignacion de vehiculo. Si un conductor cambio de carro en el mes, suma los
+ * viajes que manejo (el empleado ya reconocido en cada viaje, ver
+ * reconocerConductor) o, si el viaje no lo trae, de los vehiculos que tenia
+ * asignados segun la fecha del viaje. Si un conductor cambio de carro en el mes, suma los
  * dos (Ferney en octubre: SZX-880 y SOR-429). Si dos asignaciones cubren la
  * misma fecha, gana la que empezo despues. Los viajes sin tarifa no suman y
  * se cuentan aparte.
@@ -285,9 +393,14 @@ export interface ProducidoConductor {
 export function producidoPorConductor(viajes: ViajeProducido[], asignaciones: AsignacionVehiculo[]): Map<number, ProducidoConductor> {
   const resultado = new Map<number, ProducidoConductor>();
   for (const v of viajes) {
-    const a = asignaciones
-      .filter((x) => x.vehiculoId === v.vehiculoId && x.desde <= v.fecha && (!x.hasta || x.hasta >= v.fecha))
-      .sort((x, y) => y.desde.localeCompare(x.desde))[0];
+    const a =
+      v.empleadoId !== undefined
+        ? v.empleadoId === null
+          ? undefined
+          : { empleadoId: v.empleadoId }
+        : asignaciones
+            .filter((x) => x.vehiculoId === v.vehiculoId && x.desde <= v.fecha && (!x.hasta || x.hasta >= v.fecha))
+            .sort((x, y) => y.desde.localeCompare(x.desde))[0];
     if (!a) continue;
     const p = resultado.get(a.empleadoId) ?? { total: 0, integro: 0, porVehiculo: [], viajes: [] };
     let pv = p.porVehiculo.find((x) => x.vehiculoId === v.vehiculoId);

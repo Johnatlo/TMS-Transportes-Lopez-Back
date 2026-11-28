@@ -901,7 +901,9 @@ function periodoProducido(n: RowDataPacket): { desde: string; hasta: string } {
 /**
  * Viajes del cuadro (no anulados) de la flota propia entre dos fechas, con su
  * PRODUCIDO CONDUCTOR como flete (matriz de fletes conductor o el escrito a
- * mano en su cuenta de viaje; null = sin valor, no suma).
+ * mano en su cuenta de viaje; null = sin valor, no suma) y el empleado al
+ * que se le cuenta: quien lo manejo o el asignado al vehiculo, igual que en
+ * Cuentas conductores (conductores.producidoEntre).
  */
 async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProducido[]> {
   const [filas] = await pool.query<RowDataPacket[]>(
@@ -919,6 +921,8 @@ async function viajesDelCuadro(desde: string, hasta: string): Promise<ViajeProdu
       vehiculoId: f.vehiculoId,
       flete: producido.get(f.id)?.valor ?? null,
       integro: producido.get(f.id)?.integro ?? false,
+      // Los viajes que no son de la flota propia no estan en producido: van por la asignacion del vehiculo.
+      empleadoId: producido.has(f.id) ? producido.get(f.id)!.empleadoId : undefined,
     }));
 }
 

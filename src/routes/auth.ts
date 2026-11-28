@@ -21,6 +21,7 @@ import {
   MINUTOS_CODIGO,
 } from "../auth";
 import { correoCodigoRecuperacion, correoConfigurado, enviarCorreo } from "../correo";
+import { inicioUsuario, limpiarDisposicion } from "../inicioUsuario";
 
 export const authRouter = Router();
 
@@ -77,6 +78,25 @@ authRouter.put("/preferencias", exigirSesion, async (req, res) => {
   if (!tema) return res.status(422).json({ error: "El modo debe ser 'oscuro', 'claro' o 'auto'." });
   await usuarios.cambiarTema(req.usuario!.id, tema);
   res.json(await usuarios.porId(req.usuario!.id));
+});
+
+/** Su inicio personalizado: { tarjetas } (null = usa el inicio de su rol). */
+authRouter.get("/inicio", exigirSesion, async (req, res) => {
+  res.json({ tarjetas: await inicioUsuario.leer(req.usuario!.id) });
+});
+
+/** Guarda su inicio personalizado ({ tarjetas: [{ id, x, y, w, h }] }). */
+authRouter.put("/inicio", exigirSesion, async (req, res) => {
+  const tarjetas = limpiarDisposicion(req.body?.tarjetas);
+  if (!tarjetas) return res.status(422).json({ error: "El inicio no es valido: cada tarjeta debe quedar dentro de la rejilla y sin repetirse." });
+  await inicioUsuario.guardar(req.usuario!.id, tarjetas);
+  res.json({ tarjetas });
+});
+
+/** Vuelve al inicio de su rol. */
+authRouter.delete("/inicio", exigirSesion, async (req, res) => {
+  await inicioUsuario.borrar(req.usuario!.id);
+  res.json({ tarjetas: null });
 });
 
 /** Cambiar la propia contrasena (obligatorio tras una clave temporal). */
