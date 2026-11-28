@@ -294,11 +294,15 @@ export interface FilaCuadro {
   producto: string | null;
   /** El flete se escribio o se eligio a mano: la deduccion no lo toca. */
   fleteManual: boolean;
+  /** El flete lo puso SOFI con la tarifa que dedujo y nadie lo ha revisado (se muestra como automatico). */
+  fleteAutomatico?: boolean;
   /**
    * Sin flete y sin una tarifa exacta: las tarifas de la matriz que podrian
    * ser, para elegir a mano (ver src/tarifasFlete.ts). Vacio si ya tiene flete.
    */
   tarifasPosibles: TarifaPosible[];
+  /** Anulado: el manifiesto que parece reemplazarlo (solo en el detalle; se une a mano). */
+  reemplazoSugerido?: { id: number; manifiesto: string | null; fecha: string } | null;
   /** Nota de la factura para la contadora (remision, toneladas, valor, placa). */
   notaFactura: string | null;
   /** Cuando se envio en el cuadro de facturacion. */
@@ -511,6 +515,7 @@ export function mapear(r: RowDataPacket): FilaCuadro {
     tarifaFlete: r.tarifaFlete ?? null,
     producto: r.producto ?? null,
     fleteManual: !!r.fleteManual,
+    fleteAutomatico: !!r.fleteAutomatico,
     tarifasPosibles: [],
     notaFactura: r.notaFactura ?? null,
     enviadoFacturarEn: r.enviadoFacturarEn ? new Date(r.enviadoFacturarEn).toISOString() : null,
@@ -782,7 +787,6 @@ export const cuadro = {
           SET cv.conductor = IF(cv.conductor <=> cv.conductorManifiesto, cr.nombre, cv.conductor), cv.conductorManifiesto = cr.nombre
         WHERE cv.conductorManifiesto REGEXP '^[0-9]+$'`,
     );
-    await this.reemplazarAnulados();
     await this.generarReconocidosCorame();
     return res.affectedRows;
   },
@@ -828,7 +832,7 @@ export const cuadro = {
       );
     }
     const [existentes] = await pool.query<RowDataPacket[]>(
-      `SELECT id, reconocidoDeViajeId, reconocidoTipo, pesoKg, anulado, facturado, facturaNumero
+      `SELECT id, reconocidoDeViajeId, reconocidoTipo, pesoKg, pesoManual, anulado, facturado, facturaNumero
          FROM cuadro_viajes WHERE reconocidoDeViajeId IS NOT NULL`,
     );
     const llave = (viajeId: number, tipo: string) => `${viajeId}|${tipo}`;
@@ -850,7 +854,8 @@ export const cuadro = {
           );
           continue;
         }
-        const sinFacturar = !Number(e.facturado) && !e.facturaNumero;
+        // El peso se recalcula solo si nadie lo escribio a mano y aun no se facturo.
+        const sinFacturar = !Number(e.facturado) && !e.facturaNumero && !Number(e.pesoManual);
         if (Number(e.anulado) || (sinFacturar && Number(e.pesoKg) !== r.pesoKg)) {
           await pool.query(`UPDATE cuadro_viajes SET anulado = 0, pesoKg = IF(?, ?, pesoKg), fechaDescargue = COALESCE(fechaDescargue, ?) WHERE id = ?`, [
             sinFacturar ? 1 : 0,
@@ -870,69 +875,84 @@ export const cuadro = {
   },
 
   /**
-   * Un manifiesto anulado y vuelto a expedir es el MISMO viaje: en el cuadro
-   * debe quedar una sola fila, la del manifiesto nuevo.
+   * Un manifiesto anulado y vuelto a expedir es el MISMO viaje, pero SOFI no
+   * lo une solo: sugiere el reemplazo y alguien lo confirma (unirConReemplazo).
    *
-   * Como funciona: para cada fila anulada busca la de un manifiesto vigente de
-   * la misma placa y empresa expedido despues, dentro de DIAS_REEXPEDICION
-   * dias (el mas cercano). Si la hay, en una transaccion le pasa lo que se
-   * habia diligenciado (datosAHeredar), le mueve los anticipos y las notas,
-   * deja una nota de que reemplaza al anulado y borra la fila anulada. Si no
-   * la hay (se anulo y no se volvio a expedir), la fila sigue como anulada.
+   * El sugerido: un manifiesto vigente de la misma placa y empresa expedido
+   * despues, dentro de DIAS_REEXPEDICION dias (el mas cercano; con varias
+   * remesas de la misma empresa, la del mismo orden). null si no hay.
    */
-  async reemplazarAnulados(): Promise<number> {
-    const [anuladas] = await pool.query<RowDataPacket[]>(
-      `SELECT cv.*, v.fechaCreacion AS creadoViaje, vr.orden AS ordenRemesa
+  async reemplazoSugerido(anuladaId: number): Promise<{ id: number; manifiesto: string | null; fecha: string } | null> {
+    const [[anulada]] = await pool.query<RowDataPacket[]>(
+      `SELECT cv.placa, cv.empresa, v.fechaCreacion AS creadoViaje, vr.orden AS ordenRemesa
          FROM cuadro_viajes cv
          JOIN viajes v ON v.id = cv.viajeId
          LEFT JOIN viaje_remesas vr ON vr.id = cv.viajeRemesaId
-        WHERE cv.anulado = 1`,
+        WHERE cv.id = ? AND cv.anulado = 1`,
+      [anuladaId],
     );
-    let reemplazadas = 0;
-    for (const anulada of anuladas) {
-      const [candidatas] = await pool.query<RowDataPacket[]>(
-        // Con varias remesas de la misma empresa se empareja por el orden de la
-        // remesa (la 1 con la 1, la 2 con la 2).
-        `SELECT cv.* FROM cuadro_viajes cv
-           JOIN viajes v ON v.id = cv.viajeId
-           LEFT JOIN viaje_remesas vr ON vr.id = cv.viajeRemesaId
-          WHERE cv.anulado = 0 AND cv.placa = ? AND cv.empresa = ?
-            AND v.fechaCreacion > ? AND v.fechaCreacion <= DATE_ADD(?, INTERVAL ? DAY)
-          ORDER BY (vr.orden <=> ?) DESC, v.fechaCreacion, cv.id
-          LIMIT 1`,
-        [anulada.placa, anulada.empresa, anulada.creadoViaje, anulada.creadoViaje, DIAS_REEXPEDICION, anulada.ordenRemesa],
-      );
-      const nueva = candidatas[0];
-      if (!nueva) continue;
+    if (!anulada) return null;
+    const [[nueva]] = await pool.query<RowDataPacket[]>(
+      `SELECT cv.id, cv.manifiesto, cv.fecha FROM cuadro_viajes cv
+         JOIN viajes v ON v.id = cv.viajeId
+         LEFT JOIN viaje_remesas vr ON vr.id = cv.viajeRemesaId
+        WHERE cv.anulado = 0 AND cv.placa = ? AND cv.empresa = ?
+          AND v.fechaCreacion > ? AND v.fechaCreacion <= DATE_ADD(?, INTERVAL ? DAY)
+        ORDER BY (vr.orden <=> ?) DESC, v.fechaCreacion, cv.id
+        LIMIT 1`,
+      [anulada.placa, anulada.empresa, anulada.creadoViaje, anulada.creadoViaje, DIAS_REEXPEDICION, anulada.ordenRemesa],
+    );
+    return nueva ? { id: nueva.id, manifiesto: nueva.manifiesto ?? null, fecha: dia(nueva.fecha)! } : null;
+  },
 
-      const conexion = await pool.getConnection();
-      try {
-        await conexion.beginTransaction();
-        const cambios = datosAHeredar(anulada, nueva);
-        const campos = Object.keys(cambios);
-        if (campos.length) {
-          await conexion.query(`UPDATE cuadro_viajes SET ${campos.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`, [
-            ...campos.map((c) => cambios[c]),
-            nueva.id,
-          ]);
-        }
-        await conexion.query("UPDATE cuadro_anticipos SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
-        await conexion.query("UPDATE cuadro_notas SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
-        await conexion.query("INSERT INTO cuadro_notas (cuadroViajeId, texto) VALUES (?, ?)", [
-          nueva.id,
-          `Reemplaza al manifiesto anulado ${anulada.manifiesto ?? ""}${anulada.remesa && anulada.remesa !== anulada.manifiesto ? ` (remesa ${anulada.remesa})` : ""}: se trajo lo que se habia registrado alla.`,
-        ]);
-        await conexion.query("DELETE FROM cuadro_viajes WHERE id = ?", [anulada.id]);
-        await conexion.commit();
-        reemplazadas++;
-      } catch (exc) {
-        await conexion.rollback();
-        console.warn(`Cuadro: no se pudo reemplazar la fila anulada ${anulada.id}:`, (exc as Error).message);
-      } finally {
-        conexion.release();
+  /**
+   * Une la fila de un manifiesto anulado con la de su reemplazo (lo confirma
+   * una persona): en una transaccion le pasa lo que se habia diligenciado y
+   * que en la nueva esta vacio (datosAHeredar), le mueve los anticipos, las
+   * notas, la cuenta de viaje, las transferencias del gerente y el mes de la
+   * liquidacion del conductor (si la nueva no los tiene), deja una nota y
+   * borra la fila anulada. Devuelve el id de la fila que queda.
+   */
+  async unirConReemplazo(anuladaId: number, nuevaId: number): Promise<number> {
+    const [[anulada]] = await pool.query<RowDataPacket[]>("SELECT * FROM cuadro_viajes WHERE id = ?", [anuladaId]);
+    const [[nueva]] = await pool.query<RowDataPacket[]>("SELECT * FROM cuadro_viajes WHERE id = ?", [nuevaId]);
+    if (!anulada || !Number(anulada.anulado)) throw new ErrorCuadro("Solo se une un viaje anulado con su reemplazo.");
+    if (!nueva || Number(nueva.anulado)) throw new ErrorCuadro("El reemplazo debe ser un viaje vigente.");
+    if (anuladaId === nuevaId) throw new ErrorCuadro("Elige otro viaje.");
+    if (String(anulada.placa).replace(/-/g, "") !== String(nueva.placa).replace(/-/g, "")) throw new ErrorCuadro("Los dos viajes deben ser de la misma placa.");
+    const conexion = await pool.getConnection();
+    try {
+      await conexion.beginTransaction();
+      const cambios = datosAHeredar(anulada, nueva);
+      const campos = Object.keys(cambios);
+      if (campos.length) {
+        await conexion.query(`UPDATE cuadro_viajes SET ${campos.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`, [...campos.map((c) => cambios[c]), nueva.id]);
       }
+      await conexion.query("UPDATE cuadro_anticipos SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
+      await conexion.query("UPDATE cuadro_notas SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
+      await conexion.query("UPDATE transferencias_conductor SET cuadroViajeId = ? WHERE cuadroViajeId = ?", [nueva.id, anulada.id]);
+      // La cuenta de viaje y el mes del conductor son uno por viaje: pasan solo si la nueva no tiene.
+      await conexion.query(
+        "UPDATE cuentas_viaje SET cuadroViajeId = ? WHERE cuadroViajeId = ? AND NOT EXISTS (SELECT 1 FROM (SELECT cuadroViajeId FROM cuentas_viaje WHERE cuadroViajeId = ?) x)",
+        [nueva.id, anulada.id, nueva.id],
+      );
+      await conexion.query(
+        "UPDATE viajes_mes_conductor SET cuadroViajeId = ? WHERE cuadroViajeId = ? AND NOT EXISTS (SELECT 1 FROM (SELECT cuadroViajeId FROM viajes_mes_conductor WHERE cuadroViajeId = ?) x)",
+        [nueva.id, anulada.id, nueva.id],
+      );
+      await conexion.query("INSERT INTO cuadro_notas (cuadroViajeId, texto) VALUES (?, ?)", [
+        nueva.id,
+        `Reemplaza al manifiesto anulado ${anulada.manifiesto ?? ""}${anulada.remesa && anulada.remesa !== anulada.manifiesto ? ` (remesa ${anulada.remesa})` : ""}: se trajo lo que se habia registrado alla.`,
+      ]);
+      await conexion.query("DELETE FROM cuadro_viajes WHERE id = ?", [anulada.id]);
+      await conexion.commit();
+    } catch (exc) {
+      await conexion.rollback();
+      throw exc;
+    } finally {
+      conexion.release();
     }
-    return reemplazadas;
+    return nueva.id;
   },
 
   /**
@@ -951,8 +971,6 @@ export const cuadro = {
       do {
         otraVuelta = false;
         await cuadro.sincronizarManifiestos();
-        // Las vueltas de anticipos de ida y vuelta pasan al proximo viaje de la placa.
-        await anticipos.asignarVueltasPendientes();
         const [rows] = await pool.query<RowDataPacket[]>(SELECT_CUADRO);
         await cuadro.deducirFletes(rows.map(mapear));
         ultimoMantenimiento = Date.now();
@@ -1000,6 +1018,9 @@ export const cuadro = {
     const tarifas = await cargarTarifas();
     for (const f of filas) if (!f.urbano && f.tarifaFleteId === null && clienteSoloUrbano(f.empresa, tarifas)) f.urbano = true;
     await this.agregarTarifasPosibles(filas);
+    // Anulados de los ultimos 60 dias con un posible reemplazo (para la pestana "Anulados por unir"; no se unen solos).
+    const desde = new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10);
+    for (const f of filas) if (f.anulado && f.viajeId && f.fecha >= desde) f.reemplazoSugerido = await this.reemplazoSugerido(f.id);
     return filas;
   },
 
@@ -1024,8 +1045,10 @@ export const cuadro = {
   /**
    * Deduce el flete de la matriz (ver src/tarifasFlete.ts) de los viajes sin
    * flete, sin tarifa, no anulados, no enviados a facturar y no puestos a
-   * mano. Solo se guarda el exacto; los demas quedan para elegir (ver
-   * agregarTarifasPosibles). Devuelve cuantos se guardaron.
+   * mano. Solo se guarda el exacto, marcado como automatico (fleteAutomatico)
+   * para que se vea y se confirme o cambie; los demas quedan para elegir (ver
+   * agregarTarifasPosibles). Nunca cambia un flete que ya tenga. Devuelve
+   * cuantos se guardaron.
    */
   async deducirFletes(filas: FilaCuadro[]): Promise<number> {
     const pendientes = filas.filter(
@@ -1043,13 +1066,19 @@ export const cuadro = {
       if (!d.exacta) continue;
       const v = fleteDeTarifa(d.exacta, f.pesoKg);
       const [res] = await pool.query<ResultSetHeader>(
-        `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?
+        `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?,
+                fleteAutomatico = 1
           WHERE id = ? AND tarifaFleteId IS NULL AND tarifaKilo IS NULL AND valorFijo IS NULL AND fleteManual = 0 AND anulado = 0`,
         [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, f.id],
       );
       guardados += res.affectedRows;
     }
     return guardados;
+  },
+
+  /** Deja como revisado el flete que puso SOFI (sin cambiar su valor): ya no se muestra como automatico. */
+  async confirmarFlete(id: number): Promise<void> {
+    await pool.query("UPDATE cuadro_viajes SET fleteAutomatico = 0, fleteManual = 1 WHERE id = ?", [id]);
   },
 
   /**
@@ -1066,7 +1095,7 @@ export const cuadro = {
     const v = fleteDeTarifa(tarifa, fila.pesoKg === null ? null : Number(fila.pesoKg));
     await pool.query(
       `UPDATE cuadro_viajes SET tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?,
-              fleteManual = 1 WHERE id = ?`,
+              fleteManual = 1, fleteAutomatico = 0 WHERE id = ?`,
       [v.tarifaFleteId, v.tipoFlete, v.tarifaKilo, v.valorFijo, v.fleteAdicional, v.pesoFacturadoKg, id],
     );
   },
@@ -1088,6 +1117,8 @@ export const cuadro = {
     const fila = mapear(rows[0]);
     // Sin flete: las tarifas de la matriz que podrian ser (para elegir en la ventana del viaje).
     await this.agregarTarifasPosibles([fila]);
+    // Anulado: el manifiesto que parece reemplazarlo (solo sugerencia; se une con un clic).
+    if (fila.anulado && fila.viajeId) fila.reemplazoSugerido = await this.reemplazoSugerido(fila.id);
     return {
       ...fila,
       anticipos: await anticipos.delViaje(id),
@@ -1140,6 +1171,11 @@ export const cuadro = {
       sets.push(`${campo} = ?`);
       valores.push(valorCampo(campo, tipo, datos[campo]));
     }
+    // Peso cambiado a mano: lo automatico ya no lo cambia. Va primero: MySQL compara con el peso de antes.
+    if ("pesoKg" in datos) {
+      sets.unshift("pesoManual = IF(pesoKg <=> ?, pesoManual, 1)");
+      valores.unshift(valorCampo("pesoKg", CAMPOS_EDITABLES.pesoKg, datos.pesoKg));
+    }
     // Radicado sin fecha: hoy. Volver atras borra la fecha.
     if (papelesListos(String(datos.estadoPapeles)) && !("fechaRadicado" in datos)) {
       sets.push("fechaRadicado = COALESCE(fechaRadicado, ?)");
@@ -1154,7 +1190,7 @@ export const cuadro = {
     // Flete escrito a mano: queda manual (la deduccion no lo toca). La tarifa se queda: dice la ruta del viaje y
     // de ahi sale el flete conductor (Cuentas conductores) y la rentabilidad. Para cambiarla, elegir otra tarifa.
     if (["tipoFlete", "tarifaKilo", "valorFijo", "fleteAdicional"].some((c) => c in datos)) {
-      sets.push("fleteManual = 1");
+      sets.push("fleteManual = 1", "fleteAutomatico = 0");
     }
     if (sets.length === 0) return false;
     const [res] = await pool.query<ResultSetHeader>(`UPDATE cuadro_viajes SET ${sets.join(", ")} WHERE id = ?`, [...valores, id]);

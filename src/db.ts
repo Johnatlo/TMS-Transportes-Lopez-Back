@@ -1126,6 +1126,10 @@ export async function initSchema(): Promise<void> {
     // Conductor que dice el manifiesto. El cuadro muestra el habitual del
     // vehiculo en la flota (conductor); este queda como referencia.
     ["cuadro_viajes", "conductorManifiesto", "VARCHAR(150)"],
+    // 1 = alguien escribio el peso a mano: lo automatico (reconocidos de Cartones America) ya no lo cambia.
+    ["cuadro_viajes", "pesoManual", "TINYINT(1) NOT NULL DEFAULT 0"],
+    // 1 = el flete lo puso SOFI con la tarifa que dedujo (nadie lo ha revisado): se muestra como automatico.
+    ["cuadro_viajes", "fleteAutomatico", "TINYINT(1) NOT NULL DEFAULT 0"],
     // Dueno del vehiculo para separar la cartera (MAURICIO, CELSO, MILLER o
     // LUISA). NULL = tercero.
     ["vehiculos", "dueno", "VARCHAR(20)"],
@@ -1849,6 +1853,17 @@ export async function initSchema(): Promise<void> {
           AND (cv.conductor IS NULL OR cv.conductor = '' OR cv.conductor <=> cv.conductorManifiesto OR cv.conductor <=> ch.nombre)`,
     );
     await pool.query("INSERT INTO correcciones_datos (nombre) VALUES ('cuadro-conductor-del-manifiesto')");
+  }
+
+  // Marca una sola vez como automaticos los fletes que puso SOFI antes de existir la marca: con tarifa,
+  // no escritos a mano y aun no enviados a facturar (lo enviado a facturar ya lo reviso alguien).
+  const [[fletesMarcados]] = await pool.query<RowDataPacket[]>("SELECT 1 AS si FROM correcciones_datos WHERE nombre = 'flete-automatico-marcado'");
+  if (!fletesMarcados) {
+    await pool.query(
+      `UPDATE cuadro_viajes SET fleteAutomatico = 1
+        WHERE tarifaFleteId IS NOT NULL AND fleteManual = 0 AND enviadoFacturarEn IS NULL AND facturaNumero IS NULL AND anulado = 0`,
+    );
+    await pool.query("INSERT INTO correcciones_datos (nombre) VALUES ('flete-automatico-marcado')");
   }
 
   // Un tramo puede tener un vale de combustible y otro de efectivo: el indice

@@ -301,7 +301,7 @@ export const facturacion = {
         const [res] = await conexion.query<ResultSetHeader>(
           `UPDATE cuadro_viajes SET
               tarifaFleteId = ?, tipoFlete = ?, tarifaKilo = ?, valorFijo = ?, fleteAdicional = ?, pesoFacturadoKg = ?,
-              remision = ?, notaFactura = ?, facturaNumero = COALESCE(?, facturaNumero), enviadoFacturarEn = ?
+              remision = ?, notaFactura = ?, facturaNumero = COALESCE(?, facturaNumero), enviadoFacturarEn = ?, fleteAutomatico = 0
             WHERE id = ? AND anulado = 0`,
           [
             numero(f.tarifaFleteId),

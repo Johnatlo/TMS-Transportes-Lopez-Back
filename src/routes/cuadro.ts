@@ -304,6 +304,26 @@ cuadroRouter.put("/:id", async (req, res) => {
   });
 });
 
+/** POST /api/cuadro/:id/confirmar-flete: deja como revisado el flete que puso SOFI (no cambia el valor). */
+cuadroRouter.post("/:id/confirmar-flete", async (req, res) => {
+  const id = Number(req.params.id);
+  await responder(res, async () => {
+    await cuadro.confirmarFlete(id);
+    return cuadro.obtener(id);
+  });
+});
+
+/**
+ * POST /api/cuadro/:id/unir: une un viaje anulado con su reemplazo ({ nuevaId }),
+ * lo que sugiere el detalle del anulado. Devuelve el viaje que queda.
+ */
+cuadroRouter.post("/:id/unir", async (req, res) => {
+  await responder(res, async () => {
+    const id = await cuadro.unirConReemplazo(Number(req.params.id), Number(req.body?.nuevaId));
+    return cuadro.obtener(id);
+  });
+});
+
 /**
  * POST /api/cuadro/:id/tarifa: pone el flete de una tarifa de la matriz
  * elegida a mano ({ tarifaFleteId }) y devuelve el viaje actualizado.

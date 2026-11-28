@@ -468,6 +468,8 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/cuadro/:id` | Un viaje con sus anticipos y notas (404 si no existe). |
 | `POST` | `/api/cuadro` | Crea un viaje sin manifiesto (urbano o planillado por el cliente). Placa, empresa y fecha obligatorias. Devuelve el viaje creado. |
 | `PUT` | `/api/cuadro/:id` | Guarda los campos enviados (papeles, flete, factura, pagos...) y devuelve el viaje actualizado. |
+| `POST` | `/api/cuadro/:id/confirmar-flete` | Deja como revisado el flete que puso SOFI (no cambia el valor). |
+| `POST` | `/api/cuadro/:id/unir` | Une un viaje anulado con su reemplazo ({ nuevaId }), lo que sugiere el detalle del anulado. Devuelve el viaje que queda. |
 | `POST` | `/api/cuadro/:id/tarifa` | Pone el flete de una tarifa de la matriz elegida a mano ({ tarifaFleteId }) y devuelve el viaje actualizado. |
 | `DELETE` | `/api/cuadro/:id` | Borra un viaje creado a mano. Los que tienen manifiesto no se borran aqui (409): se anulan desde Viajes. |
 | `POST` | `/api/cuadro/:id/revision` | Marca o quita la revision de CONTABILIDAD o GERENCIA ({ quien, revisado }), con el usuario y la hora. |
@@ -496,7 +498,7 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/despacho/:id/manifiesto-contingencia` | Manifiesto de contingencia (HTML para imprimir): cuando el RNDC no deja expedir el manifiesto o no entrega su PDF. Lleva los mismos datos que se envian al RNDC, sin QR y con el aviso de contingencia. El viaje queda marcado y con alerta hasta que se imprime el oficial. ?motivo= el error que se vio. |
 | `GET` | `/api/despacho/remesas/:remesaId/imprimir` | Impresion de una remesa. |
 | `GET` | `/api/despacho/:id/remesas` | Remesas de un viaje, con su consecutivo y radicado. |
-| `GET` | `/api/despacho/sugerencias/:vehiculoId` | Remolque y conductor sugeridos para un vehiculo: el que mas ha usado en sus ultimos viajes; si no tiene historial, el habitual del catalogo (placaRemolque y cedulaConductorHabitual). Solo sugiere: el despachador puede cambiarlos. |
+| `GET` | `/api/despacho/sugerencias/:vehiculoId` | Remolque y conductor para un vehiculo: primero el habitual que se configuro en Flota (placaRemolque y cedulaConductorHabitual), que siempre prevalece; si no hay, el que mas ha usado en sus ultimos viajes. Si el mas usado es otro, va aparte como alternativa (masUsado) para mostrarla como sugerencia, sin cambiar lo configurado. El despachador puede cambiar todo. |
 | `GET` | `/api/despacho/siguiente-consecutivo` | Siguiente numero disponible, para precargar el campo del despacho. Se puede cambiar: lo devuelto es una sugerencia, no una reserva. |
 | `GET` | `/api/despacho/consecutivos` | Libro de consecutivos: una fila por remesa (la hoja de control de la empresa). |
 | `GET` | `/api/despacho/:id/detalle` | Todo lo que se registro al despachar un viaje, para leerlo en una sola ventana: documentos y radicados, vehiculo y conductores, cada remesa con sus partes y su mercancia, valores, tiempos pactados, y quien hizo que. |
@@ -549,11 +551,11 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1169 funciones, componentes, métodos y rutas en 77 archivos._
+_1172 funciones, componentes, métodos y rutas en 77 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
-- [`src/anticipos.ts`](#srcanticiposts) (38)
+- [`src/anticipos.ts`](#srcanticiposts) (37)
 - [`src/auth.ts`](#srcauthts) (38)
 - [`src/bitacora.ts`](#srcbitacorats) (13)
 - [`src/calculoConductores.ts`](#srccalculoconductorests) (18)
@@ -567,7 +569,7 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
 - [`src/contexto.ts`](#srccontextots) (1)
 - [`src/contingencia.ts`](#srccontingenciats) (9)
 - [`src/correo.ts`](#srccorreots) (9)
-- [`src/cuadro.ts`](#srccuadrots) (43)
+- [`src/cuadro.ts`](#srccuadrots) (45)
 - [`src/cuentasVehiculo.ts`](#srccuentasvehiculots) (2)
 - [`src/db.ts`](#srcdbts) (4)
 - [`src/duenos.ts`](#srcduenosts) (1)
@@ -606,7 +608,7 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (24)
 - [`src/routes/control.ts`](#srcroutescontrolts) (5)
-- [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
+- [`src/routes/cuadro.ts`](#srcroutescuadrots) (54)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (50)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (28)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (23)
@@ -710,16 +712,15 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
 > - Por viaje (cuadro_anticipos): cada tramo (IDA o VUELTA) con su efectivo y
 >   su combustible, sumado al viaje (recorrido / empresa) del cuadro pagos.
 >
-> Si el anticipo es de ida y vuelta, la vuelta se guarda sin viaje y se
-> asigna sola al proximo viaje de esa placa (asignarVueltasPendientes), con
-> su valor, su bomba y su fecha.
+> Si el anticipo es de ida y vuelta, la vuelta se guarda sin viaje y queda
+> pendiente hasta que alguien la asigna; SOFI sugiere el proximo viaje de esa
+> placa (viajeSugerido), pero no la asigna solo.
 >
 > Ida y vuelta en el Excel (y en lo que se cargo de el): no hay columna que lo
 > diga; son dos anticipos de la misma placa, el mismo dia y en la misma
-> bomba. juntarIdaYVuelta los deja en un solo tanqueo: la ida es la del viaje
-> despachado mas cerca del dia del tanqueo (el que sale de Bogota / Soacha);
-> la otra es la vuelta (ver elegirIdaYVuelta). Si son 3 o mas el mismo dia,
-> no se juntan solos: la pantalla los muestra como posible vuelta.
+> bomba. La pantalla los muestra como posible vuelta para juntarlos con un
+> clic (juntarManual); SOFI no los junta solo. parejasIdaYVuelta y
+> elegirIdaYVuelta dicen cual seria la ida y cual la vuelta.
 >
 > Cuentas con la bomba (resumirBomba): lo que se le debe (todo lo entregado en
 > la bomba), lo pagado, lo que abono un socio (el Zorro) por algunos viajes y
@@ -815,10 +816,11 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
     Revisa si el anticipo que se va a registrar en un viaje se repite con los
     de la misma placa ese dia (ver avisosRepetido). No guarda nada.
 
-  - **`anticipos.asignarVueltasPendientes()`** · _método_
-    Asigna cada vuelta pendiente al proximo viaje de su placa: el primero del
-    cuadro (no anulado) despues del viaje de ida, por fecha y luego por orden
-    de creacion. Si aun no hay, sigue pendiente. Devuelve cuantas asigno.
+  - **`anticipos.vueltasSugeridas()`** · _método_
+    Sugerencia para cada vuelta pendiente: el proximo viaje de su placa (el
+    primero del cuadro, no anulado, despues del viaje de ida, por fecha y
+    luego por orden de creacion). No asigna nada: se muestra para que alguien
+    la confirme. Devuelve el viaje sugerido por id de tramo.
 
   - **`anticipos.sueltos()`** · _método_
     Tanqueos de un solo tramo de IDA (sin juntar), con su viaje.
@@ -828,9 +830,6 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
     pasa al tanqueo de la ida como VUELTA y el tanqueo de la vuelta se borra.
     Si los dos estaban en el mismo viaje, la vuelta queda para el proximo
     viaje de la placa.
-
-  - **`anticipos.juntarIdaYVuelta()`** · _método_
-    Junta solos los pares de ida y vuelta (ver parejasIdaYVuelta). Devuelve cuantos junto.
 
   - **`anticipos.juntarManual(idaTanqueoId, vueltaTanqueoId)`** · _método_
     Junta a mano dos tanqueos de la misma placa (la posible vuelta que muestra
@@ -844,7 +843,8 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
     Los tramos de un viaje (para su detalle), por fecha.
 
   - **`anticipos.cuadro()`** · _método_
-    El cuadro de anticipos completo (una fila por tramo), lo mas reciente primero.
+    El cuadro de anticipos completo (una fila por tramo), lo mas reciente
+    primero. Las vueltas pendientes llevan el viaje sugerido (no se asigna solo).
 
   - **`anticipos.actualizarTanqueo(id, d)`** · _método_
     Datos de la factura de la bomba de un tanqueo (para corroborarlo): numero,
@@ -1950,16 +1950,21 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
     clientes) y el reconocido aun no se factura, se actualiza su peso; si ya
     no le toca o el manifiesto se anulo, queda anulado.
 
-  - **`cuadro.reemplazarAnulados()`** · _método_
-    Un manifiesto anulado y vuelto a expedir es el MISMO viaje: en el cuadro
-    debe quedar una sola fila, la del manifiesto nuevo.
+  - **`cuadro.reemplazoSugerido(anuladaId)`** · _método_
+    Un manifiesto anulado y vuelto a expedir es el MISMO viaje, pero SOFI no
+    lo une solo: sugiere el reemplazo y alguien lo confirma (unirConReemplazo).
 
-    Como funciona: para cada fila anulada busca la de un manifiesto vigente de
-    la misma placa y empresa expedido despues, dentro de DIAS_REEXPEDICION
-    dias (el mas cercano). Si la hay, en una transaccion le pasa lo que se
-    habia diligenciado (datosAHeredar), le mueve los anticipos y las notas,
-    deja una nota de que reemplaza al anulado y borra la fila anulada. Si no
-    la hay (se anulo y no se volvio a expedir), la fila sigue como anulada.
+    El sugerido: un manifiesto vigente de la misma placa y empresa expedido
+    despues, dentro de DIAS_REEXPEDICION dias (el mas cercano; con varias
+    remesas de la misma empresa, la del mismo orden). null si no hay.
+
+  - **`cuadro.unirConReemplazo(anuladaId, nuevaId)`** · _método_
+    Une la fila de un manifiesto anulado con la de su reemplazo (lo confirma
+    una persona): en una transaccion le pasa lo que se habia diligenciado y
+    que en la nueva esta vacio (datosAHeredar), le mueve los anticipos, las
+    notas, la cuenta de viaje, las transferencias del gerente y el mes de la
+    liquidacion del conductor (si la nueva no los tiene), deja una nota y
+    borra la fila anulada. Devuelve el id de la fila que queda.
 
   - **`cuadro.mantener()`** · _método_
     Mantenimiento del cuadro, aparte de las lecturas: pasa al cuadro los
@@ -1988,8 +1993,13 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
   - **`cuadro.deducirFletes(filas)`** · _método_
     Deduce el flete de la matriz (ver src/tarifasFlete.ts) de los viajes sin
     flete, sin tarifa, no anulados, no enviados a facturar y no puestos a
-    mano. Solo se guarda el exacto; los demas quedan para elegir (ver
-    agregarTarifasPosibles). Devuelve cuantos se guardaron.
+    mano. Solo se guarda el exacto, marcado como automatico (fleteAutomatico)
+    para que se vea y se confirme o cambie; los demas quedan para elegir (ver
+    agregarTarifasPosibles). Nunca cambia un flete que ya tenga. Devuelve
+    cuantos se guardaron.
+
+  - **`cuadro.confirmarFlete(id)`** · _método_
+    Deja como revisado el flete que puso SOFI (sin cambiar su valor): ya no se muestra como automatico.
 
   - **`cuadro.aplicarTarifa(id, tarifaId)`** · _método_
     Pone en un viaje el flete de una tarifa de la matriz elegida a mano (una
@@ -5060,6 +5070,13 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
   PUT /api/cuadro/:id: guarda los campos enviados (papeles, flete, factura,
   pagos...) y devuelve el viaje actualizado.
 
+- **`POST /:id/confirmar-flete`** · _ruta HTTP_
+  POST /api/cuadro/:id/confirmar-flete: deja como revisado el flete que puso SOFI (no cambia el valor).
+
+- **`POST /:id/unir`** · _ruta HTTP_
+  POST /api/cuadro/:id/unir: une un viaje anulado con su reemplazo ({ nuevaId }),
+  lo que sugiere el detalle del anulado. Devuelve el viaje que queda.
+
 - **`POST /:id/tarifa`** · _ruta HTTP_
   POST /api/cuadro/:id/tarifa: pone el flete de una tarifa de la matriz
   elegida a mano ({ tarifaFleteId }) y devuelve el viaje actualizado.
@@ -5386,10 +5403,11 @@ _1169 funciones, componentes, métodos y rutas en 77 archivos._
   Remesas de un viaje, con su consecutivo y radicado.
 
 - **`GET /sugerencias/:vehiculoId`** · _ruta HTTP_
-  Remolque y conductor sugeridos para un vehiculo: el que mas ha usado en sus
-  ultimos viajes; si no tiene historial, el habitual del catalogo
-  (placaRemolque y cedulaConductorHabitual). Solo sugiere: el despachador
-  puede cambiarlos.
+  Remolque y conductor para un vehiculo: primero el habitual que se configuro
+  en Flota (placaRemolque y cedulaConductorHabitual), que siempre prevalece; si
+  no hay, el que mas ha usado en sus ultimos viajes. Si el mas usado es otro,
+  va aparte como alternativa (masUsado) para mostrarla como sugerencia, sin
+  cambiar lo configurado. El despachador puede cambiar todo.
 
 - **`GET /siguiente-consecutivo`** · _ruta HTTP_
   Siguiente numero disponible, para precargar el campo del despacho.

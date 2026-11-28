@@ -8,16 +8,15 @@
  * - Por viaje (cuadro_anticipos): cada tramo (IDA o VUELTA) con su efectivo y
  *   su combustible, sumado al viaje (recorrido / empresa) del cuadro pagos.
  *
- * Si el anticipo es de ida y vuelta, la vuelta se guarda sin viaje y se
- * asigna sola al proximo viaje de esa placa (asignarVueltasPendientes), con
- * su valor, su bomba y su fecha.
+ * Si el anticipo es de ida y vuelta, la vuelta se guarda sin viaje y queda
+ * pendiente hasta que alguien la asigna; SOFI sugiere el proximo viaje de esa
+ * placa (viajeSugerido), pero no la asigna solo.
  *
  * Ida y vuelta en el Excel (y en lo que se cargo de el): no hay columna que lo
  * diga; son dos anticipos de la misma placa, el mismo dia y en la misma
- * bomba. juntarIdaYVuelta los deja en un solo tanqueo: la ida es la del viaje
- * despachado mas cerca del dia del tanqueo (el que sale de Bogota / Soacha);
- * la otra es la vuelta (ver elegirIdaYVuelta). Si son 3 o mas el mismo dia,
- * no se juntan solos: la pantalla los muestra como posible vuelta.
+ * bomba. La pantalla los muestra como posible vuelta para juntarlos con un
+ * clic (juntarManual); SOFI no los junta solo. parejasIdaYVuelta y
+ * elegirIdaYVuelta dicen cual seria la ida y cual la vuelta.
  *
  * Cuentas con la bomba (resumirBomba): lo que se le debe (todo lo entregado en
  * la bomba), lo pagado, lo que abono un socio (el Zorro) por algunos viajes y
@@ -188,8 +187,10 @@ export interface FilaAnticipo {
   tramo: Tramo;
   fecha: string;
   placa: string | null;
-  /** Viaje al que se suma; null = vuelta pendiente del proximo viaje. */
+  /** Viaje al que se suma; null = vuelta pendiente (se asigna a mano). */
   cuadroViajeId: number | null;
+  /** Vuelta pendiente: el viaje que SOFI sugiere (el siguiente de la placa despues de la ida). Solo sugerencia. */
+  viajeSugerido?: { id: number; fecha: string; empresa: string; manifiesto: string | null } | null;
   empresa: string | null;
   manifiesto: string | null;
   /** Remision del viaje en el Cuadro pagos (para buscar por ella). */
@@ -517,7 +518,6 @@ export const anticipos = {
     } finally {
       conexion.release();
     }
-    await this.asignarVueltasPendientes();
   },
 
   /**
@@ -543,11 +543,13 @@ export const anticipos = {
   },
 
   /**
-   * Asigna cada vuelta pendiente al proximo viaje de su placa: el primero del
-   * cuadro (no anulado) despues del viaje de ida, por fecha y luego por orden
-   * de creacion. Si aun no hay, sigue pendiente. Devuelve cuantas asigno.
+   * Sugerencia para cada vuelta pendiente: el proximo viaje de su placa (el
+   * primero del cuadro, no anulado, despues del viaje de ida, por fecha y
+   * luego por orden de creacion). No asigna nada: se muestra para que alguien
+   * la confirme. Devuelve el viaje sugerido por id de tramo.
    */
-  async asignarVueltasPendientes(): Promise<number> {
+  async vueltasSugeridas(): Promise<Map<number, { id: number; fecha: string; empresa: string; manifiesto: string | null }>> {
+    const r = new Map<number, { id: number; fecha: string; empresa: string; manifiesto: string | null }>();
     const [pendientes] = await pool.query<RowDataPacket[]>(
       `SELECT v.id, v.placa, ida.cuadroViajeId AS viajeIda, c.fecha AS fechaIda
          FROM cuadro_anticipos v
@@ -555,20 +557,18 @@ export const anticipos = {
          JOIN cuadro_viajes c ON c.id = ida.cuadroViajeId
         WHERE v.tramo = 'VUELTA' AND v.cuadroViajeId IS NULL`,
     );
-    let asignadas = 0;
     for (const p of pendientes) {
       const [siguiente] = await pool.query<RowDataPacket[]>(
-        `SELECT id FROM cuadro_viajes
+        `SELECT id, fecha, empresa, manifiesto FROM cuadro_viajes
           WHERE anulado = 0 AND REPLACE(placa, '-', '') = ? AND id <> ?
             AND (fecha > ? OR (fecha = ? AND id > ?))
           ORDER BY fecha, id LIMIT 1`,
         [p.placa, p.viajeIda, p.fechaIda, p.fechaIda, p.viajeIda],
       );
-      if (!siguiente[0]) continue;
-      await pool.query("UPDATE cuadro_anticipos SET cuadroViajeId = ? WHERE id = ? AND cuadroViajeId IS NULL", [siguiente[0].id, p.id]);
-      asignadas++;
+      const s = siguiente[0];
+      if (s) r.set(p.id, { id: s.id, fecha: dia(s.fecha)!, empresa: s.empresa, manifiesto: s.manifiesto ?? null });
     }
-    return asignadas;
+    return r;
   },
 
   /** Tanqueos de un solo tramo de IDA (sin juntar), con su viaje. */
@@ -628,14 +628,6 @@ export const anticipos = {
     }
   },
 
-  /** Junta solos los pares de ida y vuelta (ver parejasIdaYVuelta). Devuelve cuantos junto. */
-  async juntarIdaYVuelta(): Promise<number> {
-    const parejas = parejasIdaYVuelta(await this.sueltos());
-    for (const p of parejas) await this.juntar(p.ida, p.vuelta);
-    if (parejas.length) await this.asignarVueltasPendientes();
-    return parejas.length;
-  },
-
   /**
    * Junta a mano dos tanqueos de la misma placa (la posible vuelta que muestra
    * la pantalla): el primero es la ida. Los dos deben ser de un solo tramo.
@@ -647,7 +639,6 @@ export const anticipos = {
     if (!ida || !vuelta || ida === vuelta) throw new ErrorCuadro("Solo se pueden juntar dos tanqueos de un solo tramo.");
     if (placaNormal(ida.placa) !== placaNormal(vuelta.placa)) throw new ErrorCuadro("Los dos tanqueos deben ser de la misma placa.");
     await this.juntar(ida, vuelta);
-    await this.asignarVueltasPendientes();
   },
 
   /**
@@ -675,12 +666,14 @@ export const anticipos = {
     return rows.map(mapear);
   },
 
-  /** El cuadro de anticipos completo (una fila por tramo), lo mas reciente primero. */
+  /**
+   * El cuadro de anticipos completo (una fila por tramo), lo mas reciente
+   * primero. Las vueltas pendientes llevan el viaje sugerido (no se asigna solo).
+   */
   async cuadro(): Promise<FilaAnticipo[]> {
-    await this.juntarIdaYVuelta();
-    await this.asignarVueltasPendientes();
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT_ANTICIPOS} ORDER BY a.fecha DESC, a.tanqueoId DESC, a.id`);
-    return rows.map(mapear);
+    const sugeridos = await this.vueltasSugeridas();
+    return rows.map(mapear).map((f) => (f.cuadroViajeId ? f : { ...f, viajeSugerido: sugeridos.get(f.id) ?? null }));
   },
 
   /**
