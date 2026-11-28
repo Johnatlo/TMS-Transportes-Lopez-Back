@@ -24,7 +24,8 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool } from "./db";
-import { dia, ErrorCuadro } from "./cuadro";
+import { dia, ErrorCuadro, hoyColombia, mapear, SELECT_CUADRO } from "./cuadro";
+import { cargarTarifas, clienteSoloUrbano, deducirConMatriz } from "./tarifasFlete";
 import {
   mesConductores,
   periodoConductores,
@@ -35,6 +36,7 @@ import {
   producidoConductor,
   saldoCuenta,
   saldoPrestamo,
+  tarifaConductorDeducida,
   tipoFleteConductor,
   totalGastos,
 } from "./calculoConductores";
@@ -95,6 +97,8 @@ export interface ViajeConductor {
   pesoKg: number | null;
   tarifaFleteId: number | null;
   tarifa: string | null;
+  /** true: el viaje no tiene tarifa en el Cuadro y la del flete conductor es la deducida (ver tarifaConductorDeducida). */
+  tarifaDeducida: boolean;
   /**
    * Empleado al que se le cuenta: quien manejo el viaje (Cuadro o manifiesto)
    * o, si no esta en Nomina, el asignado al vehiculo (null = de nadie).
@@ -203,6 +207,11 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
     empresa ? [desde, hasta, empresa] : [desde, hasta],
   );
   const fletes = await fletesConductor();
+  // Los viajes sin tarifa en el Cuadro: la tarifa que se deduce para su flete conductor.
+  const deducidas = await tarifasDeducidas(
+    filas.filter((f) => !f.tarifaFleteId).map((f) => f.id),
+    fletes,
+  );
   // Transferencias del gerente de esos viajes.
   const ids = filas.map((f) => f.id);
   const [trs] = ids.length
@@ -247,7 +256,8 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
       catalogo,
     );
     const r = reconocerConductor({ vehiculoId: f.vehiculoId, fecha, conductor: manejo }, empleados, asignaciones);
-    const viaje = { fecha, tarifaFleteId: f.tarifaFleteId ?? null, pesoKg: Number(f.pesoKg) || null };
+    const deducida = f.tarifaFleteId ? null : (deducidas.get(f.id) ?? null);
+    const viaje = { fecha, tarifaFleteId: f.tarifaFleteId ?? deducida?.id ?? null, pesoKg: Number(f.pesoKg) || null };
     const matriz = producidoConductor(viaje, fletes);
     const manual = num(f.producidoManual);
     const efectivo = Number(f.efectivo);
@@ -287,8 +297,9 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
       remisionUrl: f.remisionUrl ?? null,
       facturaUrl: f.facturaUrl ?? null,
       pesoKg: num(f.pesoKg),
-      tarifaFleteId: f.tarifaFleteId ?? null,
-      tarifa: f.tarifa ?? null,
+      tarifaFleteId: f.tarifaFleteId ?? deducida?.id ?? null,
+      tarifa: f.tarifa ?? deducida?.nombre ?? null,
+      tarifaDeducida: !!deducida,
       empleadoId: r.empleadoId,
       conductor: r.empleadoId ? (nombreEmpleado.get(r.empleadoId) ?? null) : null,
       conductorPor: r.por,
@@ -306,6 +317,31 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
       cuenta,
     };
   });
+}
+
+/**
+ * Tarifa del flete conductor de los viajes que no tienen tarifa en el Cuadro
+ * (flete del Excel o sin elegir entre varias): la que deduce el Cuadro con su
+ * cliente, ruta, configuracion y producto (ver tarifaConductorDeducida).
+ */
+async function tarifasDeducidas(ids: number[], fletes: FleteConductor[]): Promise<Map<number, { id: number; nombre: string }>> {
+  const r = new Map<number, { id: number; nombre: string }>();
+  if (!ids.length) return r;
+  const [filas] = await pool.query<RowDataPacket[]>(`${SELECT_CUADRO} WHERE c.id IN (?)`, [ids]);
+  const tarifas = await cargarTarifas();
+  const nombre = new Map(tarifas.map((t) => [t.id, t.nombre]));
+  for (const fila of filas.map(mapear)) {
+    const urbano = fila.urbano || clienteSoloUrbano(fila.empresa, tarifas);
+    const d = await deducirConMatriz({ empresa: fila.empresa, ruta: fila.ruta, urbano, configuracion: fila.configuracion, producto: fila.producto });
+    const id = tarifaConductorDeducida(
+      fila.fecha,
+      d.exacta?.id ?? null,
+      d.posibles.map((p) => p.id),
+      fletes,
+    );
+    if (id) r.set(fila.id, { id, nombre: nombre.get(id) ?? "" });
+  }
+  return r;
 }
 
 /** Toda la matriz de fletes conductor. */
@@ -412,6 +448,27 @@ export const conductores = {
         viajesRecientes: Number(t.recientes),
       };
     });
+  },
+
+  /**
+   * Viajes de la flota propia de los ultimos `dias` que no tienen tarifa (ni en
+   * el Cuadro ni deducida): no salen en la matriz y no tienen producido
+   * conductor. Por cliente, con cuantos son, sus placas y el ultimo.
+   */
+  async viajesSinTarifa(dias = 90): Promise<Array<{ cliente: string; viajes: number; placas: string[]; ultimo: string; ids: number[] }>> {
+    const hasta = hoyColombia();
+    const desde = new Date(Date.parse(hasta) - dias * 86_400_000).toISOString().slice(0, 10);
+    const r = new Map<string, { cliente: string; viajes: number; placas: string[]; ultimo: string; ids: number[] }>();
+    for (const v of await viajesEntre(desde, hasta, null)) {
+      if (v.tarifaFleteId || v.producidoManual) continue;
+      const x = r.get(v.cliente) ?? { cliente: v.cliente, viajes: 0, placas: [], ultimo: v.fecha, ids: [] };
+      x.viajes += 1;
+      if (!x.placas.includes(v.placa)) x.placas.push(v.placa);
+      if (v.fecha > x.ultimo) x.ultimo = v.fecha;
+      x.ids.push(v.cuadroViajeId);
+      r.set(v.cliente, x);
+    }
+    return [...r.values()].sort((a, b) => b.viajes - a.viajes);
   },
 
   /** Guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo TON/FIJO/INTEGRO, desde }). */

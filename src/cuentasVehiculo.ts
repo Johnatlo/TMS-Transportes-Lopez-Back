@@ -97,13 +97,14 @@ export async function cuentasVehiculos(
     // La cuenta del vehiculo es del mes calendario (no del corte de los conductores).
     conductores.viajes(u.mes, empresa, false),
     rentabilidad.listar(),
-    pool.query<RowDataPacket[]>("SELECT nombre, pctSalarial, pctViaticos FROM empleados"),
+    pool.query<RowDataPacket[]>("SELECT id, pctSalarial, pctViaticos FROM empleados"),
   ]);
   const [marcados] = await pool.query<RowDataPacket[]>("SELECT id FROM vehiculos WHERE visibleTodos = 1");
   const visibles = new Set(marcados.map((x) => x.id as number));
   const deConductor = new Map(viajesConductor.map((v) => [v.cuadroViajeId, v]));
   const deRent = new Map(filasRent.map((f) => [f.id, f]));
-  const pct = new Map(empleados.map((e) => [e.nombre as string, (Number(e.pctSalarial) + Number(e.pctViaticos)) / 100]));
+  // El % (salarial + viaticos) de cada empleado, por su id (no por el nombre: puede repetirse).
+  const pct = new Map(empleados.map((e) => [e.id as number, (Number(e.pctSalarial) + Number(e.pctViaticos)) / 100]));
   const vehiculos: CuentaVehiculo[] = [];
   for (const v of u.vehiculos) {
     // M&C: sus vehiculos y los visibles para todos (XGJ-197).
@@ -118,7 +119,7 @@ export async function cuentasVehiculos(
       const descuentos = c2(Object.values(detalle).reduce((s, x) => s + x, 0));
       const fleteConductor = k?.producido ?? null;
       const integro = k?.integro ?? false;
-      const pctConductor = k?.conductor ? pct.get(k.conductor) : undefined;
+      const pctConductor = k?.empleadoId ? pct.get(k.empleadoId) : undefined;
       const pagoConductor = fleteConductor === null ? null : integro ? fleteConductor : pctConductor === undefined ? null : c2(fleteConductor * pctConductor);
       return {
         id: d.id,

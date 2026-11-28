@@ -100,6 +100,22 @@ export function fleteConductorEn(fletes: FleteConductor[], tarifaFleteId: number
 }
 
 /**
+ * Tarifa con que se saca el flete conductor de un viaje que no tiene tarifa
+ * en el Cuadro (flete traido del Excel o sin elegir): la que el Cuadro deduce
+ * exacta o, si quedan varias posibles y todas tienen el mismo flete conductor
+ * en esa fecha (por ejemplo las urbanas de un cliente), la primera. null si
+ * no hay forma de saberlo.
+ */
+export function tarifaConductorDeducida(fecha: string, exacta: number | null, posibles: number[], fletes: FleteConductor[]): number | null {
+  if (exacta) return exacta;
+  if (!posibles.length) return null;
+  const valores = posibles.map((id) => fleteConductorEn(fletes, id, fecha));
+  if (valores.some((v) => !v)) return null;
+  const mismo = valores.every((v) => v!.valor === valores[0]!.valor && v!.tipo === valores[0]!.tipo);
+  return mismo ? posibles[0] : null;
+}
+
+/**
  * Producido conductor de un viaje: el escrito a mano (si lo hay) o el de la
  * matriz (por tonelada: valor x toneladas reales; fijo: el valor). null si no
  * hay valor (sin tarifa en la matriz o sin peso).

@@ -40,6 +40,11 @@ conductoresRouter.use((req, res, next) => {
 conductoresRouter.get("/fletes", async (_req, res) => {
   res.json(await conductores.fletes());
 });
+/** GET /api/conductores/fletes/sin-tarifa: viajes de los ultimos 90 dias sin tarifa (no salen en la matriz ni tienen producido conductor), por cliente. */
+conductoresRouter.get("/fletes/sin-tarifa", async (_req, res) => {
+  res.json(await conductores.viajesSinTarifa());
+});
+
 /** PUT /api/conductores/fletes: guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }). */
 conductoresRouter.put("/fletes", async (req, res) => {
   await responder(res, async () => {

@@ -5,6 +5,7 @@ import {
   liquidarConductor,
   mesConductores,
   periodoConductores,
+  tarifaConductorDeducida,
   nombreComparable,
   producidoConductor,
   saldoCuenta,
@@ -136,5 +137,30 @@ describe("corte de las cuentas de los conductores (del 27 al 26)", () => {
     expect(mesConductores("2026-11-30")).toBe("2026-12");
     expect(mesConductores("2026-12-28")).toBe("2027-01");
     expect(mesConductores("2026-11-01")).toBe("2026-11");
+  });
+});
+
+describe("flete conductor de los viajes sin tarifa en el Cuadro", () => {
+  const fletes = [
+    { tarifaFleteId: 300, valor: 120000, tipo: "FIJO" as const, desde: "2026-01-01" },
+    { tarifaFleteId: 425, valor: 90000, tipo: "FIJO" as const, desde: "2026-01-01" },
+    { tarifaFleteId: 426, valor: 90000, tipo: "FIJO" as const, desde: "2026-01-01" },
+    { tarifaFleteId: 427, valor: 95000, tipo: "FIJO" as const, desde: "2026-01-01" },
+  ];
+
+  test("la tarifa exacta que deduce el Cuadro", () => {
+    expect(tarifaConductorDeducida("2026-11-10", 300, [], fletes)).toBe(300);
+  });
+
+  test("varias posibles con el mismo flete conductor: sirve cualquiera", () => {
+    expect(tarifaConductorDeducida("2026-11-10", null, [425, 426], fletes)).toBe(425);
+  });
+
+  test("varias posibles con distinto valor, alguna sin valor o ninguna: no se sabe", () => {
+    expect(tarifaConductorDeducida("2026-11-10", null, [425, 427], fletes)).toBeNull();
+    expect(tarifaConductorDeducida("2026-11-10", null, [425, 999], fletes)).toBeNull();
+    expect(tarifaConductorDeducida("2026-11-10", null, [], fletes)).toBeNull();
+    // Antes de que rija el valor, tampoco.
+    expect(tarifaConductorDeducida("2025-12-31", null, [425, 426], fletes)).toBeNull();
   });
 });

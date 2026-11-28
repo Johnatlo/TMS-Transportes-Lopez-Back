@@ -1134,9 +1134,10 @@ export const cuadro = {
       sets.push("vehiculoId = (SELECT id FROM vehiculos WHERE placa = ?)");
       valores.push(datos.placa);
     }
-    // Flete escrito a mano: queda manual (la deduccion no lo toca) y sin la tarifa de la matriz.
+    // Flete escrito a mano: queda manual (la deduccion no lo toca). La tarifa se queda: dice la ruta del viaje y
+    // de ahi sale el flete conductor (Cuentas conductores) y la rentabilidad. Para cambiarla, elegir otra tarifa.
     if (["tipoFlete", "tarifaKilo", "valorFijo", "fleteAdicional"].some((c) => c in datos)) {
-      sets.push("fleteManual = 1", "tarifaFleteId = NULL");
+      sets.push("fleteManual = 1");
     }
     if (sets.length === 0) return false;
     const [res] = await pool.query<ResultSetHeader>(`UPDATE cuadro_viajes SET ${sets.join(", ")} WHERE id = ?`, [...valores, id]);

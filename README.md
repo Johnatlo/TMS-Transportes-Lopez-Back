@@ -549,19 +549,19 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1158 funciones, componentes, métodos y rutas en 77 archivos._
+_1162 funciones, componentes, métodos y rutas en 77 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (38)
 - [`src/bitacora.ts`](#srcbitacorats) (13)
-- [`src/calculoConductores.ts`](#srccalculoconductorests) (14)
+- [`src/calculoConductores.ts`](#srccalculoconductorests) (15)
 - [`src/calculoNomina.ts`](#srccalculonominats) (18)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (10)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
-- [`src/conductores.ts`](#srcconductorests) (32)
+- [`src/conductores.ts`](#srcconductorests) (34)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/contexto.ts`](#srccontextots) (1)
@@ -604,7 +604,7 @@ _1158 funciones, componentes, métodos y rutas en 77 archivos._
 - [`src/roles.ts`](#srcrolests) (9)
 - [`src/routes/auth.ts`](#srcroutesauthts) (10)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/conductores.ts`](#srcroutesconductorests) (21)
+- [`src/routes/conductores.ts`](#srcroutesconductorests) (22)
 - [`src/routes/control.ts`](#srcroutescontrolts) (5)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (50)
@@ -1165,6 +1165,13 @@ _1158 funciones, componentes, métodos y rutas en 77 archivos._
 - **`fleteConductorEn(fletes, tarifaFleteId, fecha)`** · _función_
   El flete conductor vigente de una tarifa en una fecha (el ultimo que empezo antes o ese dia).
 
+- **`tarifaConductorDeducida(fecha, exacta, posibles, fletes)`** · _función_
+  Tarifa con que se saca el flete conductor de un viaje que no tiene tarifa
+  en el Cuadro (flete traido del Excel o sin elegir): la que el Cuadro deduce
+  exacta o, si quedan varias posibles y todas tienen el mismo flete conductor
+  en esa fecha (por ejemplo las urbanas de un cliente), la primera. null si
+  no hay forma de saberlo.
+
 - **`producidoConductor(viaje, fletes, manual)`** · _función_
   Producido conductor de un viaje: el escrito a mano (si lo hay) o el de la
   matriz (por tonelada: valor x toneladas reales; fijo: el valor). null si no
@@ -1494,6 +1501,11 @@ _1158 funciones, componentes, métodos y rutas en 77 archivos._
 - **`viajesEntre(desde, hasta, empresa)`** · _función_
   Los viajes de la flota propia (no anulados, sin reconocidos) entre dos fechas, con su cuenta.
 
+- **`tarifasDeducidas(ids, fletes)`** · _función_
+  Tarifa del flete conductor de los viajes que no tienen tarifa en el Cuadro
+  (flete del Excel o sin elegir entre varias): la que deduce el Cuadro con su
+  cliente, ruta, configuracion y producto (ver tarifaConductorDeducida).
+
 - **`fletesConductor()`** · _función_
   Toda la matriz de fletes conductor.
 
@@ -1522,6 +1534,11 @@ _1158 funciones, componentes, métodos y rutas en 77 archivos._
 
   - **`conductores.fletes()`** · _método_
     La matriz: cada tarifa de la empresa con su flete conductor vigente y su historial.
+
+  - **`conductores.viajesSinTarifa(dias)`** · _método_
+    Viajes de la flota propia de los ultimos `dias` que no tienen tarifa (ni en
+    el Cuadro ni deducida): no salen en la matriz y no tienen producido
+    conductor. Por cliente, con cuantos son, sus placas y el ultimo.
 
   - **`conductores.guardarFlete(d, usuarioId)`** · _método_
     Guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo TON/FIJO/INTEGRO, desde }).
@@ -4790,6 +4807,9 @@ _1158 funciones, componentes, métodos y rutas en 77 archivos._
 
 - **`GET /fletes`** · _ruta HTTP_
   GET /api/conductores/fletes: la matriz de fletes conductor (cada tarifa de la empresa con su valor e historial).
+
+- **`GET /fletes/sin-tarifa`** · _ruta HTTP_
+  GET /api/conductores/fletes/sin-tarifa: viajes de los ultimos 90 dias sin tarifa (no salen en la matriz ni tienen producido conductor), por cliente.
 
 - **`PUT /fletes`** · _ruta HTTP_
   PUT /api/conductores/fletes: guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }).
