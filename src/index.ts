@@ -15,6 +15,7 @@ import { config, describirAmbiente } from "./config";
 import { initSchema } from "./db";
 import { instalarBitacora } from "./bitacora";
 import { controlRouter } from "./routes/control";
+import { inicioRouter } from "./routes/inicio";
 import { catalogoRouter } from "./routes/catalogo";
 import { despachoRouter } from "./routes/despacho";
 import { authRouter } from "./routes/auth";
@@ -86,6 +87,7 @@ async function main() {
   app.use("/api/conductores", exigirSesion, exigirArea("CONDUCTORES"), conductoresRouter);
   app.use("/api/utilidades", exigirSesion, exigirArea("LIQUIDACION"), utilidadesRouter);
   app.use("/api/control", exigirSesion, exigirArea("CONTROL"), controlRouter);
+  app.use("/api/inicio", exigirSesion, inicioRouter);
 
   /**
    * Frontend compilado (despliegue).

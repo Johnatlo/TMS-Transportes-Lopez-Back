@@ -32,6 +32,7 @@ describe("bitacora de cambios", () => {
     expect(restaurables).toEqual([
       "cartera_anticipos_cliente_registros",
       "cuadro_notas",
+      "documentos_empresa",
       "fletes_conductor",
       "notas_credito",
       "pagos_socios",

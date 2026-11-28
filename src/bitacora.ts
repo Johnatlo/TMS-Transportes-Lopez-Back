@@ -76,6 +76,7 @@ export const TABLAS_BITACORA: Record<string, { nombre: string; restaurable?: boo
   repartos_utilidades: { nombre: "Reparto aprobado", describe: ["mes"] },
   usuarios: { nombre: "Usuario", describe: ["nombre", "email", "rol"] },
   vehiculos: { nombre: "Vehiculo", describe: ["placa"] },
+  documentos_empresa: { nombre: "Documento de la empresa", restaurable: true, describe: ["empresa", "nombre"] },
 };
 
 /** Columnas que nunca se guardan (claves, contrasenas, tokens). */

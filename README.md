@@ -420,6 +420,10 @@ Todas las rutas, salvo login y recuperación de contraseña, exigen sesión.
 | `GET` | `/api/catalogo/alertas` | El RNDC valida SOAT, tecnomecanica y licencia contra la fecha de descargue, no contra hoy: conviene ver lo que vence pronto y no solo lo vencido. |
 | `GET` | `/api/catalogo/parametros` | Parametros de la empresa, sus datos fijos (nombre, NIT) y el aviso de vigencia de la poliza de carga. |
 | `PUT` | `/api/catalogo/parametros` | Guarda los parametros de la empresa. Solo cambian los campos que llegan: un guardado parcial no borra la poliza. |
+| `GET` | `/api/catalogo/documentos-empresa` | Documentos con vencimiento de Transportes Lopez y M&C. |
+| `POST` | `/api/catalogo/documentos-empresa` | Agrega uno ({ empresa, nombre, numero?, fechaVencimiento?, nota? }). Devuelve la lista. |
+| `PUT` | `/api/catalogo/documentos-empresa/:id` | Lo cambia (por ejemplo, la fecha al renovarlo). Devuelve la lista. |
+| `DELETE` | `/api/catalogo/documentos-empresa/:id` | Lo borra (queda en la papelera). Devuelve la lista. |
 | `GET` | `/api/catalogo/plantillas` | Plantillas activas con sus terceros. |
 | `DELETE` | `/api/catalogo/plantillas/:id` | "Elimina" una plantilla (en realidad la desactiva: ver plantillas.desactivar en el repo). No se borra de verdad porque el historial de viajes y remesas la referencia por id. |
 | `POST` | `/api/catalogo/plantillas` | Valida el cuerpo (plantillaDesdeCuerpo) y crea la plantilla. 422 con el problema si algo no es valido. |
@@ -551,7 +555,7 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1172 funciones, componentes, métodos y rutas en 77 archivos._
+_1203 funciones, componentes, métodos y rutas en 80 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
@@ -572,6 +576,7 @@ _1172 funciones, componentes, métodos y rutas en 77 archivos._
 - [`src/cuadro.ts`](#srccuadrots) (45)
 - [`src/cuentasVehiculo.ts`](#srccuentasvehiculots) (2)
 - [`src/db.ts`](#srcdbts) (4)
+- [`src/documentosEmpresa.ts`](#srcdocumentosempresats) (7)
 - [`src/duenos.ts`](#srcduenosts) (1)
 - [`src/facturacion.ts`](#srcfacturacionts) (13)
 - [`src/fechas.ts`](#srcfechasts) (1)
@@ -579,6 +584,7 @@ _1172 funciones, componentes, métodos y rutas en 77 archivos._
 - [`src/gastos.ts`](#srcgastosts) (38)
 - [`src/importaciones.ts`](#srcimportacionests) (14)
 - [`src/index.ts`](#srcindexts) (1)
+- [`src/inicioResumen.ts`](#srcinicioresuments) (19)
 - [`src/inicioUsuario.ts`](#srciniciousuariots) (6)
 - [`src/liquidacionDuenos.ts`](#srcliquidacionduenosts) (8)
 - [`src/nomina.ts`](#srcnominats) (38)
@@ -605,12 +611,13 @@ _1172 funciones, componentes, métodos y rutas en 77 archivos._
 - [`src/rndc/sincronizacion.ts`](#srcrndcsincronizacionts) (26)
 - [`src/roles.ts`](#srcrolests) (9)
 - [`src/routes/auth.ts`](#srcroutesauthts) (10)
-- [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
+- [`src/routes/catalogo.ts`](#srcroutescatalogots) (52)
 - [`src/routes/conductores.ts`](#srcroutesconductorests) (24)
 - [`src/routes/control.ts`](#srcroutescontrolts) (5)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (54)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (50)
 - [`src/routes/gastos.ts`](#srcroutesgastosts) (28)
+- [`src/routes/inicio.ts`](#srcroutesiniciots) (1)
 - [`src/routes/nomina.ts`](#srcroutesnominats) (23)
 - [`src/routes/preoperacional.ts`](#srcroutespreoperacionalts) (7)
 - [`src/routes/seguimiento.ts`](#srcroutesseguimientots) (28)
@@ -2139,6 +2146,35 @@ _1172 funciones, componentes, métodos y rutas en 77 archivos._
   coinciden, todas quedan iguales (solo se tocan las distintas, que suelen ser
   las nuevas y pequenas). Si algo falla se avisa y el sistema sigue.
 
+### `src/documentosEmpresa.ts`
+
+> Documentos con vencimiento de las dos empresas (Transportes Lopez y M&C):
+> camara de comercio, habilitacion, polizas, certificados... Se guarda solo el
+> nombre, el numero y la fecha de vencimiento (el sistema no guarda archivos).
+> Se editan en Configuracion y avisan en "Sofi te cuenta" del Inicio.
+
+- **`texto(v, max)`** · _función_
+  Texto recortado o null si viene vacio.
+
+- **`validarDocumento(d)`** · _función_
+  Valida lo que llega del formulario: empresa LOPEZ o MYC, nombre obligatorio
+  y fecha "AAAA-MM-DD" (o vacia). Exportado para las pruebas.
+
+- **`documentosEmpresa`** · _módulo_
+  Lectura y escritura de los documentos de las empresas.
+
+  - **`documentosEmpresa.listar()`** · _método_
+    Todos, por empresa y por vencimiento (los sin fecha al final).
+
+  - **`documentosEmpresa.crear(d)`** · _método_
+    Agrega un documento. Devuelve su id.
+
+  - **`documentosEmpresa.actualizar(id, d)`** · _método_
+    Cambia un documento (por ejemplo, la fecha al renovarlo).
+
+  - **`documentosEmpresa.borrar(id)`** · _método_
+    Borra un documento (queda en la papelera de Control interno).
+
 ### `src/duenos.ts`
 
 > Duenos de los vehiculos, para separar la cartera por socio (filtro de
@@ -2512,6 +2548,94 @@ _1172 funciones, componentes, métodos y rutas en 77 archivos._
   4. Si existe el frontend compilado, lo sirve, con caida a index.html para
      las rutas de React.
   5. Manejador de errores comun y escucha en el puerto configurado.
+
+### `src/inicioResumen.ts`
+
+> Resumen del Inicio (GET /api/inicio/resumen): lo que necesitan las tarjetas
+> de "Sofi te cuenta" y de dinero, armado en el servidor con los mismos
+> calculos de cada modulo (alertas de documentos, seguimiento de papeles y
+> facturacion, cartera, rentabilidad y reparto). Solo se calcula lo que pide
+> el Inicio (las tarjetas que el usuario tiene) y lo que su rol puede ver.
+>
+> "Sofi te cuenta" ordena lo pendiente en cuatro prioridades:
+> 1. Documentos por vencer: de la flota (SOAT y tecnomecanica), de los
+>    conductores (licencia) y de las dos empresas (poliza de carga y los
+>    documentos de Configuracion > Documentos de las empresas). De la flota y
+>    los conductores, solo los propios y los que viajaron hace poco (vigilados).
+> 2. Papeles: los que se deben (el viaje descargo y los papeles no han
+>    llegado) y el seguimiento de los que ya entrego el conductor.
+> 3. Facturacion: listos para facturar, enviados sin factura y facturados sin
+>    numero o sin fecha.
+> 4. Incidencias del sistema: errores del RNDC que quedaron de dias
+>    anteriores, manifiestos de contingencia, cumplidos con el plazo vencido,
+>    la sincronizacion con el RNDC y lo que SOFI dejo para revisar.
+
+- **`vigilados()`** · _función_
+  Los vehiculos y conductores cuyos documentos importan: la flota propia y
+  los empleados (sin retiro), y los de afuera que viajaron en los ultimos
+  DIAS_RECIENTE dias. Un tercero que no volvio no es una alarma.
+
+- **`alertasVigiladas(alertas, v)`** · _función_
+  Solo las alertas de los vehiculos y conductores vigilados (la de la empresa siempre). Exportado para las pruebas.
+
+- **`grupo(titulo, items, ruta)`** · _función_
+  Arma un grupo: urgentes primero, cortado en MAX_ITEMS_GRUPO.
+
+- **`cuandoVence(dias)`** · _función_
+  "vence en 3 dia(s)", "vence hoy" o "vencio hace 2 dia(s)".
+
+- **`rutaDocumento(a)`** · _función_
+  Pantalla donde se corrige la fecha de un documento.
+
+- **`prioridadDocumentos(alertas, empresa, hoy)`** · _función_
+  Prioridad 1: documentos vencidos o por vencer. Los de la flota y los
+  conductores salen de las alertas de documentos (30 dias); los de las
+  empresas, de su fecha (DIAS_AVISO_EMPRESA). Urgente si faltan
+  DIAS_DOCUMENTO_URGENTE dias o menos.
+
+- **`tituloViaje(f)`** · _función_
+  "SKN250 · CLIENTE · manifiesto 123".
+
+- **`sinFactura(f)`** · _función_
+  Viaje sin factura y no anulado (lo mismo que mira el seguimiento de papeles).
+
+- **`prioridadPapeles(filas, hoy, desde)`** · _función_
+  Prioridad 2: papeles. "Se deben": el viaje descargo y los papeles no han
+  llegado (alerta de papeles del seguimiento). "Entregados": el conductor ya
+  los dejo en el parqueadero o donde Don Alexander y falta pasarlos a listos
+  para facturar (urgente desde DIAS_PAPELES_DEMORADOS dias del descargue).
+
+- **`prioridadFacturacion(filas, hoy, desde)`** · _función_
+  Prioridad 3: facturacion (la alerta de facturacion del seguimiento de cada viaje).
+
+- **`diaCorto(d)`** · _función_
+  "2026-11-25" -> "25/11".
+
+- **`prioridadIncidencias(e)`** · _función_
+  Prioridad 4: incidencias del sistema que quedaron pendientes. Los errores
+  del RNDC son de dias anteriores (los de hoy se ven al despachar).
+
+- **`leerIncidencias(filas, hoy)`** · _función_
+  Lee lo que alimenta las incidencias (prioridad 4).
+
+- **`mesAnterior(mes)`** · _función_
+  "2026-11" -> "2026-10".
+
+- **`cifrasDelMes(filas, hoy, ve, desde)`** · _función_
+  Cifras del mes de los viajes que el rol ve (exportado para las pruebas).
+
+- **`diasDeCobro(facturas, hoy, dias)`** · _función_
+  Agrupa la cartera por dia de vencimiento (exportado para las pruebas).
+
+- **`resumirRentabilidad(u, conEmpresa)`** · _función_
+  Resume la rentabilidad del mes (exportado para las pruebas).
+
+- **`partesDelRol(rol)`** · _función_
+  Las partes que el rol puede ver.
+
+- **`resumenInicio(rol, pedidas)`** · _función_
+  Arma el resumen con las partes pedidas que el rol puede ver (las demas no
+  se calculan ni se devuelven).
 
 ### `src/inicioUsuario.ts`
 
@@ -4792,6 +4916,18 @@ _1172 funciones, componentes, métodos y rutas en 77 archivos._
   PUT /api/catalogo/parametros: guarda los parametros de la empresa. Solo
   cambian los campos que llegan: un guardado parcial no borra la poliza.
 
+- **`GET /documentos-empresa`** · _ruta HTTP_
+  GET /api/catalogo/documentos-empresa: documentos con vencimiento de Transportes Lopez y M&C.
+
+- **`POST /documentos-empresa`** · _ruta HTTP_
+  POST /api/catalogo/documentos-empresa: agrega uno ({ empresa, nombre, numero?, fechaVencimiento?, nota? }). Devuelve la lista.
+
+- **`PUT /documentos-empresa/:id`** · _ruta HTTP_
+  PUT /api/catalogo/documentos-empresa/:id: lo cambia (por ejemplo, la fecha al renovarlo). Devuelve la lista.
+
+- **`DELETE /documentos-empresa/:id`** · _ruta HTTP_
+  DELETE /api/catalogo/documentos-empresa/:id: lo borra (queda en la papelera). Devuelve la lista.
+
 - **`GET /plantillas`** · _ruta HTTP_
   GET /api/catalogo/plantillas: plantillas activas con sus terceros.
 
@@ -5533,6 +5669,12 @@ _1172 funciones, componentes, métodos y rutas en 77 archivos._
 
 - **`DELETE /creditos/:id/cuotas/:numero/pago`** · _ruta HTTP_
   DELETE /api/gastos/creditos/:id/cuotas/:numero/pago: quita el pago de la cuota y borra su gasto.
+
+### `src/routes/inicio.ts`
+
+- **`GET /resumen`** · _ruta HTTP_
+  GET /api/inicio/resumen?partes=sofi,cifras,cobros,rentabilidad,reparto: las
+  partes pedidas que el rol puede ver (sin partes, todas las suyas).
 
 ### `src/routes/nomina.ts`
 

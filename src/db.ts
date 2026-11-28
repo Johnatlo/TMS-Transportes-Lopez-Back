@@ -800,6 +800,21 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Documentos con vencimiento de cada empresa (Transportes Lopez y M&C):
+  // camara de comercio, habilitacion, polizas... Solo el nombre, el numero y
+  // la fecha (el sistema no guarda archivos). Avisan en "Sofi te cuenta".
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS documentos_empresa (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      empresa VARCHAR(10) NOT NULL,
+      nombre VARCHAR(100) NOT NULL,
+      numero VARCHAR(60),
+      fechaVencimiento DATE,
+      nota VARCHAR(255),
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Codigos para recuperar la contrasena por correo. Se guarda el hash del
   // codigo, cuando vence y cuantos intentos fallidos lleva.
   await pool.query(`

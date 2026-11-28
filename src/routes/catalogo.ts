@@ -40,6 +40,8 @@ import {
 } from "../repo";
 import { clienteSicetac, credencialesRndc } from "../rndc/conexion";
 import { DUENOS } from "../duenos";
+import { documentosEmpresa } from "../documentosEmpresa";
+import { responder } from "./cuadro";
 
 export const catalogoRouter = Router();
 
@@ -50,11 +52,7 @@ export const catalogoRouter = Router();
  * 404 si no existe, 409 si choca con otro registro (placa/cedula/NIT
  * repetidos) y 422 si un dato no tiene el formato esperado.
  */
-async function responderEdicion<T>(
-  res: Response,
-  editar: () => Promise<T | null>,
-  extra: Record<string, unknown> = {}
-) {
+async function responderEdicion<T>(res: Response, editar: () => Promise<T | null>, extra: Record<string, unknown> = {}) {
   try {
     const actualizado = await editar();
     if (!actualizado) return res.status(404).json({ error: "Registro no encontrado" });
@@ -102,9 +100,7 @@ catalogoRouter.post("/remolques", async (req, res) => {
 
 /** PUT /api/catalogo/remolques/:id: edita solo los campos enviados. */
 catalogoRouter.put("/remolques/:id", async (req, res) => {
-  const datos = soloPresentes(req.body ?? {}, [
-    "placa", "numEjes", "capacidadKg", "pesoVehiculoVacio", "fechaVencSoat", "fechaVencTecnomecanica", "activo",
-  ]);
+  const datos = soloPresentes(req.body ?? {}, ["placa", "numEjes", "capacidadKg", "pesoVehiculoVacio", "fechaVencSoat", "fechaVencTecnomecanica", "activo"]);
   if ("placa" in datos) datos.placa = mayusculas(datos.placa);
   await responderEdicion(res, () => remolques.update(Number(req.params.id), datos));
 });
@@ -266,10 +262,27 @@ catalogoRouter.delete("/vehiculos/:id", async (req, res) => {
  */
 catalogoRouter.put("/vehiculos/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
-    "placa", "placaRemolque", "marca", "configuracion", "capacidadKg", "pesoVehiculoVacio",
-    "codTipoCarroceria", "propietarioNit", "codTipoIdTenedor", "numIdTenedor", "nombreTenedor",
-    "fechaVencSoat", "fechaVencTecnomecanica", "aplicaFopat", "nitMonitoreoFlota", "activo",
-    "cedulaConductorHabitual", "flota", "dueno", "empresa", "visibleTodos",
+    "placa",
+    "placaRemolque",
+    "marca",
+    "configuracion",
+    "capacidadKg",
+    "pesoVehiculoVacio",
+    "codTipoCarroceria",
+    "propietarioNit",
+    "codTipoIdTenedor",
+    "numIdTenedor",
+    "nombreTenedor",
+    "fechaVencSoat",
+    "fechaVencTecnomecanica",
+    "aplicaFopat",
+    "nitMonitoreoFlota",
+    "activo",
+    "cedulaConductorHabitual",
+    "flota",
+    "dueno",
+    "empresa",
+    "visibleTodos",
   ]);
   // La empresa del vehiculo (y si lo ven todos) solo la cambian los roles de administracion.
   if (("empresa" in datos || "visibleTodos" in datos) && !puede(rolDePeticion(req), "ADMINISTRACION")) {
@@ -286,7 +299,9 @@ catalogoRouter.put("/vehiculos/:id", async (req, res) => {
   }
   // Dueno para la cartera: un socio o vacio (tercero).
   if ("dueno" in datos) {
-    const dueno = String(datos.dueno ?? "").trim().toUpperCase();
+    const dueno = String(datos.dueno ?? "")
+      .trim()
+      .toUpperCase();
     if (dueno && !(DUENOS as readonly string[]).includes(dueno)) {
       return res.status(422).json({ error: `El dueno es ${DUENOS.join(", ")} o vacio (tercero).` });
     }
@@ -351,8 +366,16 @@ catalogoRouter.post("/conductores", async (req, res) => {
  */
 catalogoRouter.put("/conductores/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
-    "codTipoId", "cedula", "nombre", "licencia", "categoriaLicencia", "fechaVencLicencia", "activo",
-    "direccion", "ciudad", "codMunicipioRndc",
+    "codTipoId",
+    "cedula",
+    "nombre",
+    "licencia",
+    "categoriaLicencia",
+    "fechaVencLicencia",
+    "activo",
+    "direccion",
+    "ciudad",
+    "codMunicipioRndc",
   ]);
   if ("codMunicipioRndc" in datos && datos.codMunicipioRndc && !/^\d{8}$/.test(String(datos.codMunicipioRndc))) {
     return res.status(422).json({ error: "El codigo de municipio debe ser DIVIPOLA de 8 digitos (ej. 11001000)." });
@@ -423,8 +446,17 @@ catalogoRouter.post("/terceros", async (req, res) => {
  */
 catalogoRouter.put("/terceros/:id", async (req, res) => {
   const datos = soloPresentes(req.body ?? {}, [
-    "codTipoId", "nit", "nombre", "codSede", "direccion", "ciudad", "telefono",
-    "codMunicipioRndc", "latitud", "longitud", "nombreSede",
+    "codTipoId",
+    "nit",
+    "nombre",
+    "codSede",
+    "direccion",
+    "ciudad",
+    "telefono",
+    "codMunicipioRndc",
+    "latitud",
+    "longitud",
+    "nombreSede",
   ]);
   if ("nit" in datos) datos.nit = soloDigitos(datos.nit);
   if (("nit" in datos && !datos.nit) || ("nombre" in datos && !String(datos.nombre ?? "").trim())) {
@@ -437,8 +469,8 @@ catalogoRouter.put("/terceros/:id", async (req, res) => {
   }
   // Igual que al crear: la coordenada rara se avisa pero no se rechaza.
   const actual = await terceros.findById(Number(req.params.id));
-  const lat = "latitud" in datos ? (datos.latitud === "" ? null : Number(datos.latitud)) : actual?.latitud ?? null;
-  const lon = "longitud" in datos ? (datos.longitud === "" ? null : Number(datos.longitud)) : actual?.longitud ?? null;
+  const lat = "latitud" in datos ? (datos.latitud === "" ? null : Number(datos.latitud)) : (actual?.latitud ?? null);
+  const lon = "longitud" in datos ? (datos.longitud === "" ? null : Number(datos.longitud)) : (actual?.longitud ?? null);
   const revision = revisarCoordenadaSede(lat, lon, `Sede ${datos.codSede ?? actual?.codSede ?? "0"}`);
   await responderEdicion(res, () => terceros.update(Number(req.params.id), datos), {
     avisoCoordenada: revision.problema,
@@ -551,9 +583,7 @@ catalogoRouter.delete("/monitoreo/:id", async (req, res) => {
 
 /** Fija el proveedor de GPS por defecto de un vehiculo. */
 catalogoRouter.put("/vehiculos/:id/monitoreo", async (req, res) => {
-  const nit = req.body?.nitMonitoreoFlota
-    ? String(req.body.nitMonitoreoFlota).replace(/\D/g, "")
-    : null;
+  const nit = req.body?.nitMonitoreoFlota ? String(req.body.nitMonitoreoFlota).replace(/\D/g, "") : null;
   await vehiculos.fijarMonitoreo(Number(req.params.id), nit);
   res.json(await vehiculos.findById(Number(req.params.id)));
 });
@@ -581,8 +611,7 @@ catalogoRouter.get("/vias/sicetac", async (req, res) => {
   }
   if (!configuracion) {
     return res.status(422).json({
-      error:
-        "Falta la configuracion del vehiculo (3S3, 2S2, 3...). Revisala en el catalogo o corre npm run verificar.",
+      error: "Falta la configuracion del vehiculo (3S3, 2S2, 3...). Revisala en el catalogo o corre npm run verificar.",
     });
   }
 
@@ -602,14 +631,10 @@ catalogoRouter.get("/vias/sicetac", async (req, res) => {
         destino,
         condicionCarga: CONDICION_CARGA.CARGADO,
       },
-      config.sicetac.mesesHaciaAtras
+      config.sicetac.mesesHaciaAtras,
     );
 
-    const propias = filasDeLaOperacion(
-      resultado.filas,
-      config.sicetac.unidadTransporte,
-      config.sicetac.tipoCarga
-    );
+    const propias = filasDeLaOperacion(resultado.filas, config.sicetac.unidadTransporte, config.sicetac.tipoCarga);
 
     const salida = propias.map((f) => ({
       codVia: f.rutasId,
@@ -647,10 +672,7 @@ catalogoRouter.get("/vias/sicetac", async (req, res) => {
   } catch (exc) {
     // Queda en el log del backend: sin esto no habia forma de saber por que
     // Despachar mostraba "No se pudo consultar SICETAC".
-    console.warn(
-      `SICETAC: fallo la consulta de vias ${origen} -> ${destino} (${configuracion}):`,
-      (exc as Error).message
-    );
+    console.warn(`SICETAC: fallo la consulta de vias ${origen} -> ${destino} (${configuracion}):`, (exc as Error).message);
     // Sin conexion se cae a lo ultimo consultado: es preferible una tarifa de
     // hace unos dias a no poder despachar.
     const enCache = await vias.findByRuta(origen, destino);
@@ -675,9 +697,7 @@ catalogoRouter.get("/vias", async (req, res) => {
   const origen = String(req.query.origen ?? "");
   const destino = String(req.query.destino ?? "");
   if (!/^\d{8}$/.test(origen) || !/^\d{8}$/.test(destino)) {
-    return res
-      .status(422)
-      .json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
+    return res.status(422).json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
   }
   res.json(await vias.findByRuta(origen, destino));
 });
@@ -719,9 +739,7 @@ catalogoRouter.get("/tarifas/previsualizar", async (req, res) => {
   const origen = String(req.query.origen ?? "");
   const destino = String(req.query.destino ?? "");
   if (!/^\d{8}$/.test(origen) || !/^\d{8}$/.test(destino)) {
-    return res
-      .status(422)
-      .json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
+    return res.status(422).json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
   }
   const afectadas = await plantillas.buscarPorRuta(origen, destino);
   res.json(
@@ -732,7 +750,7 @@ catalogoRouter.get("/tarifas/previsualizar", async (req, res) => {
       fleteActualizadoEn: p.fleteActualizadoEn,
       municipioCargue: (p as any).municipioCargue,
       municipioDescargue: (p as any).municipioDescargue,
-    }))
+    })),
   );
 });
 
@@ -740,20 +758,14 @@ catalogoRouter.get("/tarifas/previsualizar", async (req, res) => {
 catalogoRouter.put("/tarifas", async (req, res) => {
   const { origen, destino, valorFleteBase } = req.body ?? {};
   if (!/^\d{8}$/.test(String(origen ?? "")) || !/^\d{8}$/.test(String(destino ?? ""))) {
-    return res
-      .status(422)
-      .json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
+    return res.status(422).json({ error: "Origen y destino deben ser codigos DIVIPOLA de 8 digitos" });
   }
   const valor = Number(valorFleteBase);
   if (!Number.isFinite(valor) || valor <= 0) {
     return res.status(422).json({ error: "El valor del flete debe ser mayor a cero" });
   }
 
-  const actualizadas = await plantillas.actualizarFletePorRuta(
-    String(origen),
-    String(destino),
-    valor
-  );
+  const actualizadas = await plantillas.actualizarFletePorRuta(String(origen), String(destino), valor);
   res.json({ actualizadas, valorFleteBase: valor });
 });
 
@@ -812,10 +824,39 @@ catalogoRouter.put("/parametros", exigirArea("ADMINISTRACION"), async (req, res)
         : null
       : undefined,
     aplicaFopat: b.aplicaFopat !== undefined ? !!b.aplicaFopat : undefined,
-    tarifaRetencionFuente:
-      b.tarifaRetencionFuente !== undefined ? Number(b.tarifaRetencionFuente) : undefined,
+    tarifaRetencionFuente: b.tarifaRetencionFuente !== undefined ? Number(b.tarifaRetencionFuente) : undefined,
   });
   res.json({ ...guardados, ...datosFijosEmpresa(), avisoPoliza: await parametros.revisarVigenciaPoliza() });
+});
+
+// ---------- DOCUMENTOS DE LAS EMPRESAS ----------
+/** GET /api/catalogo/documentos-empresa: documentos con vencimiento de Transportes Lopez y M&C. */
+catalogoRouter.get("/documentos-empresa", async (_req, res) => {
+  res.json(await documentosEmpresa.listar());
+});
+
+/** POST /api/catalogo/documentos-empresa: agrega uno ({ empresa, nombre, numero?, fechaVencimiento?, nota? }). Devuelve la lista. */
+catalogoRouter.post("/documentos-empresa", exigirArea("ADMINISTRACION"), async (req, res) => {
+  await responder(res, async () => {
+    await documentosEmpresa.crear(req.body ?? {});
+    return documentosEmpresa.listar();
+  });
+});
+
+/** PUT /api/catalogo/documentos-empresa/:id: lo cambia (por ejemplo, la fecha al renovarlo). Devuelve la lista. */
+catalogoRouter.put("/documentos-empresa/:id", exigirArea("ADMINISTRACION"), async (req, res) => {
+  await responder(res, async () => {
+    await documentosEmpresa.actualizar(Number(req.params.id), req.body ?? {});
+    return documentosEmpresa.listar();
+  });
+});
+
+/** DELETE /api/catalogo/documentos-empresa/:id: lo borra (queda en la papelera). Devuelve la lista. */
+catalogoRouter.delete("/documentos-empresa/:id", exigirArea("ADMINISTRACION"), async (req, res) => {
+  await responder(res, async () => {
+    await documentosEmpresa.borrar(Number(req.params.id));
+    return documentosEmpresa.listar();
+  });
 });
 
 // ---------- PLANTILLAS DE VIAJE ----------
@@ -842,20 +883,13 @@ catalogoRouter.delete("/plantillas/:id", async (req, res) => {
  * Devuelve un mensaje de error si falta algo sin lo cual no se puede
  * despachar.
  */
-async function plantillaDesdeCuerpo(
-  b: any
-): Promise<{ datos: NuevaPlantilla } | { error: string }> {
+async function plantillaDesdeCuerpo(b: any): Promise<{ datos: NuevaPlantilla } | { error: string }> {
   const params = await parametros.obtener();
 
   // Ruta explicita. Lo que no llegue se precarga con el municipio del
   // remitente y del destinatario; si aun asi falta, no se guarda: sin ruta no
   // se pueden pedir las vias a SICETAC ni validar el manifiesto.
-  const ruta = await plantillas.resolverRuta(
-    Number(b.remitenteId),
-    Number(b.destinatarioId),
-    b.municipioOrigen,
-    b.municipioDestino
-  );
+  const ruta = await plantillas.resolverRuta(Number(b.remitenteId), Number(b.destinatarioId), b.municipioOrigen, b.municipioDestino);
   for (const [etiqueta, codigo] of [
     ["origen", ruta.municipioOrigen],
     ["destino", ruta.municipioDestino],
@@ -912,8 +946,7 @@ async function plantillaDesdeCuerpo(
       horasPactoCargue: b.horasPactoCargue !== undefined ? Number(b.horasPactoCargue) : 1,
       minutosPactoCargue: b.minutosPactoCargue !== undefined ? Number(b.minutosPactoCargue) : 0,
       horasPactoDescargue: b.horasPactoDescargue !== undefined ? Number(b.horasPactoDescargue) : 1,
-      minutosPactoDescargue:
-        b.minutosPactoDescargue !== undefined ? Number(b.minutosPactoDescargue) : 0,
+      minutosPactoDescargue: b.minutosPactoDescargue !== undefined ? Number(b.minutosPactoDescargue) : 0,
 
       // Factor de ICA (por mil) del municipio donde carga esta remesa. Con varias
       // remesas de municipios distintos, el manifiesto lleva el promedio ponderado.
@@ -921,10 +954,7 @@ async function plantillaDesdeCuerpo(
       retencionIcaManifiesto: b.factorIcaCargue !== undefined ? Number(b.factorIcaCargue) : 0,
 
       // Si la plantilla no la especifica, se hereda la tarifa de la empresa.
-      tarifaRetencionFuente:
-        b.tarifaRetencionFuente !== undefined
-          ? Number(b.tarifaRetencionFuente)
-          : params.tarifaRetencionFuente,
+      tarifaRetencionFuente: b.tarifaRetencionFuente !== undefined ? Number(b.tarifaRetencionFuente) : params.tarifaRetencionFuente,
       titularEsRegimenSimple: !!b.titularEsRegimenSimple,
 
       // Solo admiten R (remitente) o D (destinatario).
