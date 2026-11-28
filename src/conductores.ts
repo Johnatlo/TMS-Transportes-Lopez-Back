@@ -28,7 +28,9 @@ import { dia, ErrorCuadro, hoyColombia, mapear, SELECT_CUADRO } from "./cuadro";
 import { cargarTarifas, clienteSoloUrbano, deducirConMatriz } from "./tarifasFlete";
 import {
   mesConductores,
+  mesesDelViaje,
   periodoConductores,
+  problemaAlMover,
   CONCEPTOS,
   esIntegro,
   liquidarConductor,
@@ -99,6 +101,11 @@ export interface ViajeConductor {
   tarifa: string | null;
   /** true: el viaje no tiene tarifa en el Cuadro y la del flete conductor es la deducida (ver tarifaConductorDeducida). */
   tarifaDeducida: boolean;
+  /** Mes de las cuentas de los conductores en que cuenta (el de su fecha, o al que se paso). */
+  mesConductor: string;
+  /** El mes al que se paso a mano (null si cuenta en el de su fecha). */
+  mesMovido: string | null;
+  notaMovido: string | null;
   /**
    * Empleado al que se le cuenta: quien manejo el viaje (Cuadro o manifiesto)
    * o, si no esta en Nomina, el asignado al vehiculo (null = de nadie).
@@ -194,6 +201,7 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
             (SELECT COALESCE(SUM(a.combustible), 0) FROM cuadro_anticipos a WHERE a.cuadroViajeId = c.id) AS combustible,
             cv.id AS cuentaId, cv.producidoManual, cv.acpm, cv.peajes, cv.cargue, cv.descargue, cv.parqueo, cv.llantas, cv.lavada, cv.comision,
             cv.engrase, cv.propinas, cv.arreglos, cv.accesorios, cv.otros, cv.otrosConcepto, cv.nota, cv.gastoId,
+            vm.mes AS mesMovido, vm.nota AS notaMovido,
             c.conductor AS conductorCuadro, c.conductorManifiesto, vj.conductorId AS conductorRndcId, co.cedula AS conductorCedula, co.nombre AS conductorNombre
        FROM cuadro_viajes c
        JOIN vehiculos v ON v.id = COALESCE(c.vehiculoId, (SELECT x.id FROM vehiculos x WHERE x.placa = c.placa AND x.eliminado = 0 LIMIT 1))
@@ -201,6 +209,7 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
        LEFT JOIN cuentas_viaje cv ON cv.cuadroViajeId = c.id
        LEFT JOIN viajes vj ON vj.id = c.viajeId
        LEFT JOIN conductores co ON co.id = vj.conductorId
+       LEFT JOIN viajes_mes_conductor vm ON vm.cuadroViajeId = c.id
       WHERE c.anulado = 0 AND c.reconocidoDeViajeId IS NULL AND c.fecha BETWEEN ? AND ?
         AND v.empresa IS NOT NULL ${empresa ? "AND (v.empresa = ? OR v.visibleTodos = 1)" : ""}
       ORDER BY c.fecha, c.placa, c.id`,
@@ -300,6 +309,9 @@ async function viajesEntre(desde: string, hasta: string, empresa: EmpresaVehicul
       tarifaFleteId: f.tarifaFleteId ?? deducida?.id ?? null,
       tarifa: f.tarifa ?? deducida?.nombre ?? null,
       tarifaDeducida: !!deducida,
+      mesConductor: f.mesMovido ?? mesConductores(fecha),
+      mesMovido: f.mesMovido && f.mesMovido !== mesConductores(fecha) ? f.mesMovido : null,
+      notaMovido: f.mesMovido ? (f.notaMovido ?? null) : null,
       empleadoId: r.empleadoId,
       conductor: r.empleadoId ? (nombreEmpleado.get(r.empleadoId) ?? null) : null,
       conductorPor: r.por,
@@ -550,7 +562,55 @@ export const conductores = {
     const m = mesDe(mes);
     if (!porCorte) return viajesEntre(`${m}-01`, finDeMes(m), empresa);
     const p = periodoConductores(m);
-    return viajesEntre(p.desde, p.hasta, empresa);
+    // Los del periodo y los que se pasaron a este mes desde los vecinos; sin los que se pasaron a otro.
+    const [[r]] = await pool.query<RowDataPacket[]>(
+      "SELECT MIN(c.fecha) AS desde, MAX(c.fecha) AS hasta FROM viajes_mes_conductor vm JOIN cuadro_viajes c ON c.id = vm.cuadroViajeId WHERE vm.mes = ?",
+      [m],
+    );
+    const desde = r?.desde && dia(r.desde)! < p.desde ? dia(r.desde)! : p.desde;
+    const hasta = r?.hasta && dia(r.hasta)! > p.hasta ? dia(r.hasta)! : p.hasta;
+    return (await viajesEntre(desde, hasta, empresa)).filter((v) => v.mesConductor === m);
+  },
+
+  /**
+   * Viajes cerca del cierre de un mes que se pueden traer a su liquidacion o
+   * que se sacaron de ella: los de la ultima semana del periodo anterior y de
+   * la primera del siguiente que cuentan en otro mes, y los del mes que se
+   * pasaron a otro.
+   */
+  async viajesCercanos(mes: unknown, empresa: EmpresaVehiculo | null): Promise<ViajeConductor[]> {
+    const m = mesDe(mes);
+    const p = periodoConductores(m);
+    const correr = (f: string, dias: number) => new Date(Date.parse(f) + dias * 86_400_000).toISOString().slice(0, 10);
+    const todos = await viajesEntre(correr(p.desde, -7), correr(p.hasta, 7), empresa);
+    return todos.filter((v) => v.mesConductor !== m && (v.fecha < correr(p.desde, 0) || v.fecha > p.hasta || v.mesMovido !== null));
+  },
+
+  /**
+   * Pasa un viaje a la liquidacion de otro mes ({ mes, nota }): al anterior
+   * (ya se le pago ahi, por ejemplo antes del corte del 27 al 26) o al
+   * siguiente; el mes del viaje (o vacio) lo devuelve a su mes. Solo a los
+   * meses vecinos y sin tocar liquidaciones ya hechas (ver problemaAlMover).
+   */
+  async moverDeMes(cuadroViajeId: number, d: Record<string, unknown>, usuarioId: number | null, empresa: EmpresaVehiculo | null): Promise<ViajeConductor> {
+    const viaje = await viajeDeFlota(cuadroViajeId, empresa);
+    const meses = mesesDelViaje(viaje.fecha);
+    const hasta = d.mes ? String(d.mes) : meses.suyo;
+    if (![meses.anterior, meses.suyo, meses.siguiente].includes(hasta))
+      throw new ErrorCuadro(`Este viaje solo puede contar en ${meses.anterior}, ${meses.suyo} o ${meses.siguiente}.`);
+    if (viaje.empleadoId) {
+      const [hechas] = await pool.query<RowDataPacket[]>("SELECT mes FROM liquidaciones_conductor WHERE empleadoId = ?", [viaje.empleadoId]);
+      const problema = problemaAlMover(viaje.mesConductor, hasta, new Set(hechas.map((x) => String(x.mes))));
+      if (problema) throw new ErrorCuadro(problema);
+    }
+    const nota = d.nota ? String(d.nota).trim().slice(0, 300) || null : null;
+    if (hasta === meses.suyo) await pool.query("DELETE FROM viajes_mes_conductor WHERE cuadroViajeId = ?", [cuadroViajeId]);
+    else
+      await pool.query(
+        "INSERT INTO viajes_mes_conductor (cuadroViajeId, mes, nota, creadoPorId) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE mes = VALUES(mes), nota = VALUES(nota), creadoPorId = VALUES(creadoPorId)",
+        [cuadroViajeId, hasta, nota, usuarioId],
+      );
+    return viajeDeFlota(cuadroViajeId, empresa);
   },
 
   /** Producido conductor por viaje entre dos fechas y si es integro (lo usa la nomina). */
@@ -569,7 +629,7 @@ export const conductores = {
     const fecha = dia(c.fecha)!;
     const [viaje] = await viajesEntre(fecha, fecha, empresa).then((vs) => vs.filter((v) => v.cuadroViajeId === cuadroViajeId));
     if (!viaje) throw new ErrorCuadro("Ese viaje no es de la flota propia (o no es de tu empresa).");
-    await exigirSinPagar(viaje.empleadoId, mesConductores(fecha), "la cuenta de este viaje");
+    await exigirSinPagar(viaje.empleadoId, viaje.mesConductor, "la cuenta de este viaje");
     if ("producidoManual" in d) await exigirSinNominaAprobada(fecha);
     const valores: Record<string, unknown> = {};
     for (const [k, nombre] of CONCEPTOS) {
@@ -654,7 +714,7 @@ export const conductores = {
     empresa: EmpresaVehiculo | null,
   ): Promise<ViajeConductor> {
     const viaje = await viajeDeFlota(cuadroViajeId, empresa);
-    await exigirSinPagar(viaje.empleadoId, mesConductores(viaje.fecha), "las transferencias de este viaje");
+    await exigirSinPagar(viaje.empleadoId, viaje.mesConductor, "las transferencias de este viaje");
     const fecha = String(d.fecha ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new ErrorCuadro("Escribe la fecha de la transferencia.");
     const valor = pesos(d.valor, "el valor de la transferencia");
@@ -678,7 +738,7 @@ export const conductores = {
     const [[t]] = await pool.query<RowDataPacket[]>("SELECT cuadroViajeId FROM transferencias_conductor WHERE id = ?", [id]);
     if (!t) throw new ErrorCuadro("Esa transferencia ya no existe.");
     const viaje = await viajeDeFlota(t.cuadroViajeId, empresa);
-    await exigirSinPagar(viaje.empleadoId, mesConductores(viaje.fecha), "las transferencias de este viaje");
+    await exigirSinPagar(viaje.empleadoId, viaje.mesConductor, "las transferencias de este viaje");
     await pool.query("DELETE FROM transferencias_conductor WHERE id = ?", [id]);
     return viajeDeFlota(t.cuadroViajeId, empresa);
   },
@@ -694,7 +754,7 @@ export const conductores = {
     if (!c) return;
     if (empresa && c.empresa !== empresa && !c.visibleTodos) throw new ErrorCuadro("Ese viaje es de la otra empresa.");
     const [viaje] = (await viajesEntre(dia(c.fecha)!, dia(c.fecha)!, null)).filter((v) => v.cuadroViajeId === cuadroViajeId);
-    await exigirSinPagar(viaje?.empleadoId ?? null, mesConductores(dia(c.fecha)!), "la cuenta de este viaje");
+    await exigirSinPagar(viaje?.empleadoId ?? null, viaje?.mesConductor ?? mesConductores(dia(c.fecha)!), "la cuenta de este viaje");
     await gastos.borrarDeCuenta(c.id);
     await pool.query("DELETE FROM cuentas_viaje WHERE id = ?", [c.id]);
   },

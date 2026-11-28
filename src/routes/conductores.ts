@@ -45,6 +45,16 @@ conductoresRouter.get("/fletes/sin-tarifa", async (_req, res) => {
   res.json(await conductores.viajesSinTarifa());
 });
 
+/** GET /api/conductores/liquidacion/:mes/cercanos: viajes del cierre que se pueden traer a ese mes o que se sacaron de el. */
+conductoresRouter.get("/liquidacion/:mes/cercanos", async (req, res) => {
+  await responder(res, () => conductores.viajesCercanos(req.params.mes, empresaDe(req)));
+});
+
+/** PUT /api/conductores/liquidacion/viajes/:id/mes: pasa un viaje a la liquidacion de otro mes ({ mes, nota }; vacio = su mes). */
+conductoresRouter.put("/liquidacion/viajes/:id/mes", async (req, res) => {
+  await responder(res, () => conductores.moverDeMes(Number(req.params.id), req.body ?? {}, req.usuario?.id ?? null, empresaDe(req)));
+});
+
 /** PUT /api/conductores/fletes: guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }). */
 conductoresRouter.put("/fletes", async (req, res) => {
   await responder(res, async () => {

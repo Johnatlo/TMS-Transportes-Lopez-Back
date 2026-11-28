@@ -4,7 +4,9 @@ import {
   fleteConductorEn,
   liquidarConductor,
   mesConductores,
+  mesesDelViaje,
   periodoConductores,
+  problemaAlMover,
   tarifaConductorDeducida,
   nombreComparable,
   producidoConductor,
@@ -162,5 +164,22 @@ describe("flete conductor de los viajes sin tarifa en el Cuadro", () => {
     expect(tarifaConductorDeducida("2026-11-10", null, [], fletes)).toBeNull();
     // Antes de que rija el valor, tampoco.
     expect(tarifaConductorDeducida("2025-12-31", null, [425, 426], fletes)).toBeNull();
+  });
+});
+
+describe("pasar un viaje a la liquidacion de otro mes", () => {
+  test("solo a su mes o a los vecinos (por el corte del 27 al 26)", () => {
+    expect(mesesDelViaje("2026-10-28")).toEqual({ anterior: "2026-10", suyo: "2026-11", siguiente: "2026-12" });
+    expect(mesesDelViaje("2026-12-30")).toEqual({ anterior: "2026-12", suyo: "2027-01", siguiente: "2027-02" });
+  });
+
+  test("el viaje del 28/10 que ya se pago en octubre se puede sacar de noviembre aunque octubre este liquidado", () => {
+    expect(problemaAlMover("2026-11", "2026-10", new Set(["2026-10"]))).toBeNull();
+  });
+
+  test("no se saca de una liquidacion hecha ni se pasa a una posterior ya hecha", () => {
+    expect(problemaAlMover("2026-11", "2026-10", new Set(["2026-11"]))).toMatch(/2026-11.*quitala primero para sacar/);
+    expect(problemaAlMover("2026-11", "2026-12", new Set(["2026-12"]))).toMatch(/2026-12.*quitala primero para pasarle/);
+    expect(problemaAlMover("2026-11", "2026-11", new Set(["2026-11"]))).toBeNull();
   });
 });

@@ -48,6 +48,36 @@ export function mesConductores(fecha: string): string {
   return m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, "0")}`;
 }
 
+/** El mes siguiente ("AAAA-MM"). */
+const mesSiguiente = (mes: string) => {
+  const [a, m] = mes.split("-").map(Number);
+  return m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, "0")}`;
+};
+
+/**
+ * Meses de las cuentas de los conductores en que puede contar un viaje: el
+ * suyo (por la fecha) y los dos vecinos. Para los viajes del cierre: el que ya
+ * se liquido el mes anterior (antes del corte del 27 al 26) o el que se quiere
+ * pagar en el mes siguiente.
+ */
+export function mesesDelViaje(fecha: string): { anterior: string; suyo: string; siguiente: string } {
+  const suyo = mesConductores(fecha);
+  return { anterior: mesAnterior(suyo), suyo, siguiente: mesSiguiente(suyo) };
+}
+
+/**
+ * Por que no se puede pasar un viaje de la liquidacion de `desde` a la de
+ * `hasta` (null si se puede): la de donde sale no puede estar liquidada
+ * (cambiaria lo pagado); la de destino tampoco, salvo que sea un mes anterior
+ * (se marca que ya se pago ahi: su liquidacion es una foto y no cambia).
+ */
+export function problemaAlMover(desde: string, hasta: string, liquidadas: Set<string>): string | null {
+  if (desde === hasta) return null;
+  if (liquidadas.has(desde)) return `La liquidacion de ${desde} de este conductor ya esta hecha: quitala primero para sacar este viaje.`;
+  if (liquidadas.has(hasta) && hasta > desde) return `La liquidacion de ${hasta} de este conductor ya esta hecha: quitala primero para pasarle este viaje.`;
+  return null;
+}
+
 /** Centavos exactos. */
 const c2 = (v: number) => Math.round(v * 100 + Number.EPSILON) / 100;
 /** Suma a centavos. */

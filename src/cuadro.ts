@@ -727,6 +727,16 @@ const aPosible = (t: { id: number; nombre: string; valor: number | null; tipo: T
   tipo: t.tipo,
 });
 
+/**
+ * Conductor del manifiesto en SQL (con los alias v = viajes, c = su conductor,
+ * cr = el conductor del catalogo con la cedula del RNDC, ve = vehiculo y ch =
+ * su conductor habitual): su nombre; si el manifiesto (traido del portal) solo
+ * trae la cedula, el nombre de esa cedula en el catalogo o en el habitual del
+ * vehiculo si es la misma persona; si no, la cedula; sin nada, el habitual.
+ */
+export const CONDUCTOR_MANIFIESTO = `COALESCE(c.nombre, cr.nombre,
+  IF(REPLACE(ve.cedulaConductorHabitual, '.', '') = v.conductorRndc, ch.nombre, NULL), v.conductorRndc, ch.nombre)`;
+
 /** Repositorio del cuadro pagos: viajes, notas y anticipos de bomba. */
 export const cuadro = {
   /**
@@ -736,13 +746,13 @@ export const cuadro = {
    */
   async sincronizarManifiestos(): Promise<number> {
     const [res] = await pool.query<ResultSetHeader>(
-      // El conductor del cuadro es el habitual del vehiculo en la flota (el que
-      // de verdad maneja); el del manifiesto queda en conductorManifiesto.
+      // El conductor del cuadro es el del manifiesto (se puede cambiar a mano en
+      // el cuadro); queda tambien en conductorManifiesto. Ver CONDUCTOR_MANIFIESTO.
       `INSERT IGNORE INTO cuadro_viajes
          (fecha, vehiculoId, placa, conductor, conductorManifiesto, empresa, viajeId, viajeRemesaId,
           manifiesto, remesa, pesoKg, fechaDescargue, flujoCorame, creadoPorId)
        SELECT DATE(DATE_SUB(v.fechaCreacion, INTERVAL 5 HOUR)), v.vehiculoId, COALESCE(ve.placa, v.placaRndc),
-              COALESCE(ch.nombre, c.nombre, v.conductorRndc), COALESCE(c.nombre, v.conductorRndc),
+              ${CONDUCTOR_MANIFIESTO}, ${CONDUCTOR_MANIFIESTO},
               UPPER(COALESCE(con.nombre, prop.nombre, vr.propietarioNit, 'SIN CLIENTE')), v.id, vr.id,
               v.consecutivoManifiesto, vr.consecutivoRemesa, vr.pesoReal,
               DATE(DATE_SUB(vr.fechaHoraDescargue, INTERVAL 5 HOUR)),
@@ -752,6 +762,7 @@ export const cuadro = {
          LEFT JOIN vehiculos ve ON ve.id = v.vehiculoId
          LEFT JOIN conductores c ON c.id = v.conductorId
          LEFT JOIN conductores ch ON ch.cedula = ve.cedulaConductorHabitual
+         LEFT JOIN conductores cr ON v.conductorId IS NULL AND cr.cedula = v.conductorRndc
          LEFT JOIN plantillas_viaje p ON p.id = vr.plantillaId
          LEFT JOIN terceros con ON con.id = p.contratanteId
          -- Remesas del portal: el cliente sale del propietario de la carga (por NIT).
@@ -764,6 +775,12 @@ export const cuadro = {
       `UPDATE cuadro_viajes cv JOIN viajes v ON v.id = cv.viajeId
           SET cv.anulado = (v.estado = 'ANULADO')
         WHERE cv.anulado <> (v.estado = 'ANULADO')`,
+    );
+    // Manifiestos del portal que solo traian la cedula: cuando ese conductor ya esta en el catalogo, su nombre.
+    await pool.query(
+      `UPDATE cuadro_viajes cv JOIN conductores cr ON cr.cedula = cv.conductorManifiesto
+          SET cv.conductor = IF(cv.conductor <=> cv.conductorManifiesto, cr.nombre, cv.conductor), cv.conductorManifiesto = cr.nombre
+        WHERE cv.conductorManifiesto REGEXP '^[0-9]+$'`,
     );
     await this.reemplazarAnulados();
     await this.generarReconocidosCorame();

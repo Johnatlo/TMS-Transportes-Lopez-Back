@@ -66,6 +66,7 @@ export const TABLAS_BITACORA: Record<string, { nombre: string; restaurable?: boo
   prestamos_descuentos: { nombre: "Descuento de prestamo", describe: ["mes", "valor"] },
   cuentas_viaje: { nombre: "Cuenta de viaje" },
   transferencias_conductor: { nombre: "Transferencia al conductor", restaurable: true, describe: ["fecha", "valor"] },
+  viajes_mes_conductor: { nombre: "Viaje pasado a otro mes (conductores)", restaurable: true, describe: ["mes", "nota"] },
   fletes_conductor: { nombre: "Flete conductor", restaurable: true, describe: ["valor", "tipo", "desde"] },
   liquidaciones_conductor: { nombre: "Pago de liquidacion de conductor", describe: ["mes", "fechaPago", "total"] },
   socios: { nombre: "Socio", describe: ["nombre"] },

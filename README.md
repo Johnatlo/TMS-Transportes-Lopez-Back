@@ -549,19 +549,19 @@ entrada indica la firma, el tipo (función, método, componente, ruta) y qué
 hace y cómo.
 
 <!-- REFERENCIA:INICIO -->
-_1162 funciones, componentes, métodos y rutas en 77 archivos._
+_1169 funciones, componentes, métodos y rutas en 77 archivos._
 
 - [`src/accesos.ts`](#srcaccesosts) (7)
 - [`src/alertas.ts`](#srcalertasts) (5)
 - [`src/anticipos.ts`](#srcanticiposts) (38)
 - [`src/auth.ts`](#srcauthts) (38)
 - [`src/bitacora.ts`](#srcbitacorats) (13)
-- [`src/calculoConductores.ts`](#srccalculoconductorests) (15)
+- [`src/calculoConductores.ts`](#srccalculoconductorests) (18)
 - [`src/calculoNomina.ts`](#srccalculonominats) (18)
 - [`src/calculoUtilidades.ts`](#srccalculoutilidadests) (10)
 - [`src/cifrado.ts`](#srccifradots) (4)
 - [`src/clientesCobro.ts`](#srcclientescobrots) (3)
-- [`src/conductores.ts`](#srcconductorests) (34)
+- [`src/conductores.ts`](#srcconductorests) (36)
 - [`src/config.ts`](#srcconfigts) (3)
 - [`src/consecutivos.ts`](#srcconsecutivosts) (5)
 - [`src/contexto.ts`](#srccontextots) (1)
@@ -604,7 +604,7 @@ _1162 funciones, componentes, métodos y rutas en 77 archivos._
 - [`src/roles.ts`](#srcrolests) (9)
 - [`src/routes/auth.ts`](#srcroutesauthts) (10)
 - [`src/routes/catalogo.ts`](#srcroutescatalogots) (48)
-- [`src/routes/conductores.ts`](#srcroutesconductorests) (22)
+- [`src/routes/conductores.ts`](#srcroutesconductorests) (24)
 - [`src/routes/control.ts`](#srcroutescontrolts) (5)
 - [`src/routes/cuadro.ts`](#srcroutescuadrots) (52)
 - [`src/routes/despacho.ts`](#srcroutesdespachots) (50)
@@ -1153,6 +1153,21 @@ _1162 funciones, componentes, métodos y rutas en 77 archivos._
 - **`mesConductores(fecha)`** · _función_
   El mes de las cuentas de los conductores al que pertenece un viaje (despues del cierre, el siguiente).
 
+- **`mesSiguiente(mes)`** · _función_
+  El mes siguiente ("AAAA-MM").
+
+- **`mesesDelViaje(fecha)`** · _función_
+  Meses de las cuentas de los conductores en que puede contar un viaje: el
+  suyo (por la fecha) y los dos vecinos. Para los viajes del cierre: el que ya
+  se liquido el mes anterior (antes del corte del 27 al 26) o el que se quiere
+  pagar en el mes siguiente.
+
+- **`problemaAlMover(desde, hasta, liquidadas)`** · _función_
+  Por que no se puede pasar un viaje de la liquidacion de `desde` a la de
+  `hasta` (null si se puede): la de donde sale no puede estar liquidada
+  (cambiaria lo pagado); la de destino tampoco, salvo que sea un mes anterior
+  (se marca que ya se pago ahi: su liquidacion es una foto y no cambia).
+
 - **`c2(v)`** · _función_
   Centavos exactos.
 
@@ -1556,6 +1571,18 @@ _1162 funciones, componentes, métodos y rutas en 77 archivos._
     cuenta de viaje. porCorte (lo de Cuentas conductores): del 27 del mes
     anterior al 26 (ver periodoConductores); sin el, el mes calendario (la
     cuenta del vehiculo en Rentabilidad).
+
+  - **`conductores.viajesCercanos(mes, empresa)`** · _método_
+    Viajes cerca del cierre de un mes que se pueden traer a su liquidacion o
+    que se sacaron de ella: los de la ultima semana del periodo anterior y de
+    la primera del siguiente que cuentan en otro mes, y los del mes que se
+    pasaron a otro.
+
+  - **`conductores.moverDeMes(cuadroViajeId, d, usuarioId, empresa)`** · _método_
+    Pasa un viaje a la liquidacion de otro mes ({ mes, nota }): al anterior
+    (ya se le pago ahi, por ejemplo antes del corte del 27 al 26) o al
+    siguiente; el mes del viaje (o vacio) lo devuelve a su mes. Solo a los
+    meses vecinos y sin tocar liquidaciones ya hechas (ver problemaAlMover).
 
   - **`conductores.producidoEntre(desde, hasta)`** · _método_
     Producido conductor por viaje entre dos fechas y si es integro (lo usa la nomina).
@@ -4810,6 +4837,12 @@ _1162 funciones, componentes, métodos y rutas en 77 archivos._
 
 - **`GET /fletes/sin-tarifa`** · _ruta HTTP_
   GET /api/conductores/fletes/sin-tarifa: viajes de los ultimos 90 dias sin tarifa (no salen en la matriz ni tienen producido conductor), por cliente.
+
+- **`GET /liquidacion/:mes/cercanos`** · _ruta HTTP_
+  GET /api/conductores/liquidacion/:mes/cercanos: viajes del cierre que se pueden traer a ese mes o que se sacaron de el.
+
+- **`PUT /liquidacion/viajes/:id/mes`** · _ruta HTTP_
+  PUT /api/conductores/liquidacion/viajes/:id/mes: pasa un viaje a la liquidacion de otro mes ({ mes, nota }; vacio = su mes).
 
 - **`PUT /fletes`** · _ruta HTTP_
   PUT /api/conductores/fletes: guarda el flete conductor de una tarifa desde una fecha ({ tarifaFleteId, valor, tipo, desde }).

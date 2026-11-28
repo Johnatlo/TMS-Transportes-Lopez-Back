@@ -775,6 +775,20 @@ export async function initSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // Viajes que cuentan en la liquidacion de conductores de otro mes (el anterior,
+  // si ya se le pago ahi, o el siguiente). Sin fila: el mes de su fecha (corte del 27 al 26).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS viajes_mes_conductor (
+      cuadroViajeId INT PRIMARY KEY,
+      mes CHAR(7) NOT NULL,
+      nota VARCHAR(300),
+      creadoPorId INT,
+      creadoEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX ix_viaje_mes_conductor (mes),
+      CONSTRAINT fk_viaje_mes_conductor FOREIGN KEY (cuadroViajeId) REFERENCES cuadro_viajes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // Inicio personalizado de cada usuario (sus tarjetas y donde van). Es una
   // preferencia: no va a la bitacora. Se borra con el usuario.
   await pool.query(`
@@ -1807,6 +1821,34 @@ export async function initSchema(): Promise<void> {
           SET cv.conductor = ch.nombre
         WHERE cv.conductor <=> cv.conductorManifiesto OR cv.conductor IS NULL OR cv.conductor = ''`,
     );
+  }
+
+  // Correcciones de datos que se hacen una sola vez (su nombre queda aqui).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS correcciones_datos (
+      nombre VARCHAR(80) PRIMARY KEY,
+      hechaEn DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // El cuadro volvio a mostrar el conductor del manifiesto (desde el 16/10/2026
+  // mostraba el habitual del vehiculo). Los viajes que quedaron con el
+  // habitual (o sin tocar) pasan al del manifiesto; los cambiados a mano por
+  // otro nombre se respetan.
+  const [[conductorCorregido]] = await pool.query<RowDataPacket[]>("SELECT 1 AS si FROM correcciones_datos WHERE nombre = 'cuadro-conductor-del-manifiesto'");
+  if (!conductorCorregido) {
+    const { CONDUCTOR_MANIFIESTO } = await import("./cuadro");
+    await pool.query(
+      `UPDATE cuadro_viajes cv
+         JOIN viajes v ON v.id = cv.viajeId
+         LEFT JOIN conductores c ON c.id = v.conductorId
+         LEFT JOIN conductores cr ON v.conductorId IS NULL AND cr.cedula = v.conductorRndc
+         LEFT JOIN vehiculos ve ON ve.id = cv.vehiculoId
+         LEFT JOIN conductores ch ON ch.cedula = ve.cedulaConductorHabitual
+          SET cv.conductorManifiesto = ${CONDUCTOR_MANIFIESTO}, cv.conductor = ${CONDUCTOR_MANIFIESTO}
+        WHERE ${CONDUCTOR_MANIFIESTO} IS NOT NULL
+          AND (cv.conductor IS NULL OR cv.conductor = '' OR cv.conductor <=> cv.conductorManifiesto OR cv.conductor <=> ch.nombre)`,
+    );
+    await pool.query("INSERT INTO correcciones_datos (nombre) VALUES ('cuadro-conductor-del-manifiesto')");
   }
 
   // Un tramo puede tener un vale de combustible y otro de efectivo: el indice
